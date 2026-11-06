@@ -48,10 +48,15 @@ export async function createApsViewer(container, { onPick } = {}) {
   const badge = document.createElement('div');
   badge.className = 'aps-status';
   container.appendChild(badge);
+  badge.textContent = 'Starting the Autodesk APS viewer…';
   const viewer = new AV.GuiViewer3D(host);
   viewer.start();
   viewer.setGhosting(true);
-  viewer.setLightPreset?.(1);
+  // Plain background: no environment map (its bright sky distracts from the colours).
+  viewer.setEnvMapBackground?.(false);
+  viewer.setGroundShadow?.(false);
+  viewer.setGroundReflection?.(false);
+  viewer.setBackgroundColor?.(243, 245, 248, 226, 231, 238);
   window.apsViewer = viewer; // for the browser console
 
   let loaded = null;
@@ -83,6 +88,19 @@ export async function createApsViewer(container, { onPick } = {}) {
     }
   });
 
+  // fitToView frames a small part so tightly that the camera ends up inside the hull. Frame the part's
+  // bounds enlarged (at least ~5 m across) so the surrounding structure gives context.
+  function focus(db) {
+    const m = viewer.model, tree = m?.getInstanceTree();
+    if (!tree) return viewer.fitToView([db]);
+    const T = window.THREE, box = new T.Box3(), fl = m.getFragmentList();
+    tree.enumNodeFragments(db, (f) => { const b = new T.Box3(); fl.getWorldBounds(f, b); box.union(b); }, true);
+    if (box.isEmpty()) return viewer.fitToView([db]);
+    const c = box.getCenter(new T.Vector3()), s = box.getSize(new T.Vector3());
+    const half = Math.max(s.x, s.y, s.z) * 1.5 + 100; // model unit: inch
+    viewer.navigation.fitBounds(false, new T.Box3(c.clone().subScalar(half), c.clone().addScalar(half)));
+  }
+
   const vec = (st) => { const c = COLORS[st]; return c ? new window.THREE.Vector4(c[0], c[1], c[2], 1) : null; };
 
   function paint(ids) {
@@ -105,7 +123,7 @@ export async function createApsViewer(container, { onPick } = {}) {
       viewer.clearThemingColors(viewer.model);
       paint();
       viewer.isolate(checked);
-      viewer.fitToView();
+      viewer.fitToView(checked);
     },
     update(r, ids) {
       results = r;
@@ -118,7 +136,7 @@ export async function createApsViewer(container, { onPick } = {}) {
       if (db == null) return;
       if (fly) {
         viewer.isolate([db]);
-        viewer.fitToView([db]);
+        focus(db);
       }
     },
     flyToElement(id) { this.select(id); },
@@ -126,7 +144,7 @@ export async function createApsViewer(container, { onPick } = {}) {
       const dbs = set ? [...set].map((id) => idToDb.get(id)).filter((d) => d != null) : checked;
       viewer.isolate(dbs.length ? dbs : checked);
     },
-    overview() { viewer.isolate(checked); viewer.fitToView(); },
+    overview() { viewer.isolate(checked); viewer.fitToView(checked); },
     setMode(m) { mode = m; },
     setPlan() {},
     screenshot(w = 1280, h = 720) { return new Promise((res) => viewer.getScreenShot(w, h, (blobUrl) => res(blobUrl))); },

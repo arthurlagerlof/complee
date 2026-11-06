@@ -50,6 +50,16 @@ test('server serves the app and API but never .env or source files outside the w
   assert.equal(check.score.pass, true);
   const ai = await (await fetch(`${base}/api/ai/status`)).json();
   assert.equal(typeof ai.enabled, 'boolean');
+
+  // APS: keys are never served; the status only says whether they exist.
+  assert.equal(await code('/3D_Since_AI/.env'), 404);
+  assert.equal(await code('/3D_Since_AI/urn.txt'), 404);
+  const statusText = await (await fetch(`${base}/api/aps/status`)).text();
+  assert.deepEqual(Object.keys(JSON.parse(statusText)).sort(), ['configured', 'reason', 'urn']);
+  assert.doesNotMatch(statusText, /secret|client_id/i);
+  const bad = await fetch(`${base}/api/aps/fallback`, { method: 'POST', body: JSON.stringify({ name: '../x', dataUrl: 'data:image/png;base64,AAAA' }) });
+  assert.equal(bad.status, 400, 'fallback file names are restricted to [a-z0-9-]');
+  assert.equal(await code('/ships/rcrv/results-3d.json'), 200);
 });
 
 test('APS objects are mapped with bounding boxes converted from inches', async () => {

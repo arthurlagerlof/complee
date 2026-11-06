@@ -58,26 +58,41 @@ let viewer = views.three;
 const LIST_PAGE = 400;
 let listLimit = LIST_PAGE;
 
-async function useViewer(sc) {
+// The findings render at once; the APS model (large, streamed from Autodesk) is coloured when it arrives.
+// S.viewerReady resolves when the scenario's viewer is usable (the demo waits for it).
+const NOOP_VIEWER = { build() {}, update() {}, paintNeutral() {}, select() {}, flyToElement() {}, setFilter() {}, overview() {}, setMode() {}, setPlan() {}, mode: 'all', plan: false };
+function useViewer(sc) {
   const want = sc.viewer === 'aps' ? 'aps' : 'three';
   $('#threeView').hidden = want !== 'three';
-  $('#apsView').hidden = true;
+  $('#apsView').hidden = want !== 'aps';
   $('#fallbackView').hidden = true;
   $('#planBtn').disabled = want !== 'three';
-  if (want === 'three') { viewer = views.three; return; }
+  if (want === 'three') { viewer = views.three; S.viewerReady = Promise.resolve('three'); return; }
   views.fallback ??= createFallbackViewer($('#fallbackView'));
   views.fallback.setImages(sc.fallback_images || []);
-  try {
-    views.aps ??= await createApsViewer($('#apsView'), { onPick });
-    await views.aps.load();
-    $('#apsView').hidden = false;
-    viewer = views.aps;
-  } catch (e) {
-    console.warn('APS viewer unavailable, using fallback:', e.message);
-    views.fallback.setReason(e.message);
-    $('#fallbackView').hidden = false;
-    viewer = views.fallback;
-  }
+  viewer = NOOP_VIEWER;
+  S.viewerReady = (async () => {
+    try {
+      views.aps ??= await createApsViewer($('#apsView'), { onPick });
+      await views.aps.load();
+      if (S.sc !== sc) return 'stale';
+      viewer = views.aps;
+      viewer.build(S.norm, S.results);
+      renderList();
+      if (S.selected) viewer.select(S.selected);
+      return 'aps';
+    } catch (e) {
+      console.warn('APS viewer unavailable, using fallback:', e.message);
+      if (S.sc !== sc) return 'stale';
+      views.fallback.setReason(e.message);
+      $('#apsView').hidden = true;
+      $('#fallbackView').hidden = false;
+      viewer = views.fallback;
+      viewer.build();
+      if (S.selected) viewer.select(S.selected);
+      return 'fallback';
+    }
+  })();
 }
 
 // ---------- loading ----------
@@ -148,7 +163,7 @@ async function loadScenario(id) {
   S.baseline = precomputed ? precomputed.score : expected ? scoreResults(checkModel(S.pristine, S.coreRules), expected) : null;
   if (S.baseline && !S.baseline.line) S.baseline.line = scoreLine(S.baseline);
   runCheck();
-  await useViewer(S.sc);
+  useViewer(S.sc);
   viewer.build(S.norm, S.results);
   viewer.setMode('all');
   const decks = S.norm.decks;

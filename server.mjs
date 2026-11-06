@@ -20,9 +20,42 @@ if (fs.existsSync(envFile)) {
   }
 }
 
+// Autodesk APS keys for the 3D viewer: read from 3D_Since_AI/.env into a private object (not process.env),
+// never logged, never served. The browser only gets a short-lived read-only token (scope viewables:read).
+const APS_DIR = path.join(ROOT, '3D_Since_AI');
+const aps = {};
+if (fs.existsSync(path.join(APS_DIR, '.env'))) {
+  for (const line of fs.readFileSync(path.join(APS_DIR, '.env'), 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^\s*(APS_CLIENT_ID|APS_CLIENT_SECRET)\s*=\s*(.*?)\s*$/);
+    if (m) aps[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
+  }
+}
+aps.APS_CLIENT_ID ??= process.env.APS_CLIENT_ID;
+aps.APS_CLIENT_SECRET ??= process.env.APS_CLIENT_SECRET;
+const apsUrn = () => (fs.existsSync(path.join(APS_DIR, 'urn.txt')) ? fs.readFileSync(path.join(APS_DIR, 'urn.txt'), 'utf8').trim() : null);
+let apsToken = null;
+async function apsViewerToken() {
+  if (apsToken && apsToken.expires > Date.now() + 60_000) return apsToken;
+  const res = await fetch('https://developer.api.autodesk.com/authentication/v2/token', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Basic ' + Buffer.from(`${aps.APS_CLIENT_ID}:${aps.APS_CLIENT_SECRET}`).toString('base64'),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ grant_type: 'client_credentials', scope: 'viewables:read' }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) throw Object.assign(new Error(`APS authentication failed (${res.status})`), { status: 502 });
+  const t = await res.json();
+  apsToken = { access_token: t.access_token, expires_in: t.expires_in, expires: Date.now() + t.expires_in * 1000 };
+  return apsToken;
+}
+const isLoopback = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req?.socket?.remoteAddress);
+const localOnly = (req) => { if (!isLoopback(req)) throw Object.assign(new Error('Only available on this computer'), { status: 403 }); };
+
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.js': 'text/javascript',
-  '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.csv': 'text/csv',
+  '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.csv': 'text/csv', '.png': 'image/png',
 };
 // URL prefix -> folder on disk. Anything else is 404.
 const STATIC = [
@@ -82,6 +115,28 @@ const routes = {
     const core = loadRules().filter((r) => !loadApproved().some((a) => a.id === r.id));
     return { rules: approveRule(b.rule, core.map((r) => r.id)) };
   },
+  // APS 3D viewer (real RCRV model).
+  'GET /api/aps/status': () => {
+    const configured = !!(aps.APS_CLIENT_ID && aps.APS_CLIENT_SECRET);
+    return { configured, urn: apsUrn(), reason: configured ? null : 'no APS keys in 3D_Since_AI/.env' };
+  },
+  'GET /api/aps/token': async (q, b, req) => {
+    localOnly(req);
+    if (!aps.APS_CLIENT_ID || !aps.APS_CLIENT_SECRET) throw Object.assign(new Error('APS not configured'), { status: 503 });
+    const t = await apsViewerToken();
+    return { access_token: t.access_token, expires_in: Math.round((t.expires - Date.now()) / 1000) };
+  },
+  // Saves a viewer screenshot as an offline fallback image (public/fallback/<name>.png). Local only.
+  'POST /api/aps/fallback': (q, b, req) => {
+    localOnly(req);
+    const name = String(b.name || '');
+    const m = String(b.dataUrl || '').match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/);
+    if (!/^[a-z0-9-]{1,40}$/.test(name) || !m) throw Object.assign(new Error('Expected { name: [a-z0-9-], dataUrl: PNG }'), { status: 400 });
+    fs.mkdirSync(path.join(ROOT, 'public', 'fallback'), { recursive: true });
+    const file = path.join(ROOT, 'public', 'fallback', `${name}.png`);
+    fs.writeFileSync(file, Buffer.from(m[1], 'base64'));
+    return { saved: `fallback/${name}.png`, bytes: fs.statSync(file).size };
+  },
   // Kept from Plan B: re-runs the check and writes results.json.
   'GET /recheck': (q) => runCheck(q.get('scenario') || 'rcrv').summary,
 };
@@ -94,8 +149,9 @@ export const server = http.createServer(async (req, res) => {
   const handler = routes[`${req.method} ${p}`];
   if (handler) {
     try {
-      const body = req.method === 'POST' ? await readBody(req) : undefined;
-      return sendJSON(res, 200, await handler(url.searchParams, body));
+      const limit = p === '/api/aps/fallback' ? 8_000_000 : 200_000;
+      const body = req.method === 'POST' ? await readBody(req, limit) : undefined;
+      return sendJSON(res, 200, await handler(url.searchParams, body, req));
     } catch (e) {
       return sendJSON(res, e.status || 500, { error: e.message });
     }
