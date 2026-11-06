@@ -1,0 +1,59 @@
+{
+  "note": "Demo rule set. Values marked verified:false are from memory and MUST be checked against the official text before the pitch.",
+  "rules": [
+    {
+      "id": "FSS-13-CORRIDOR",
+      "source": "SOLAS II-2/13 + FSS Code Ch. 13 (means of escape)",
+      "clause": "Corridor clear width (clause to verify)",
+      "applies_to": { "types": ["corridor"] },
+      "check": "min", "parameter": "clear_width", "value": 900, "unit": "mm",
+      "text": "Corridors forming part of the means of escape shall have a clear width of not less than 900 mm.",
+      "verified": false
+    },
+    {
+      "id": "FSS-13-STAIR",
+      "source": "SOLAS II-2/13 + FSS Code Ch. 13 (means of escape)",
+      "clause": "Stairway clear width (clause to verify)",
+      "applies_to": { "types": ["stair"] },
+      "check": "min", "parameter": "clear_width", "value": 900, "unit": "mm",
+      "text": "Stairways shall have a clear width of not less than 900 mm (more depending on the number of persons).",
+      "verified": false
+    },
+    {
+      "id": "ADA-403.5.1",
+      "source": "ADA 2010 Standards / PVAG",
+      "clause": "403.5.1 Clear width of walking surfaces",
+      "applies_to": { "types": ["corridor", "ramp"], "where": { "accessible_route": true } },
+      "check": "min", "parameter": "clear_width", "value": 915, "unit": "mm",
+      "text": "The clear width of walking surfaces on an accessible route shall be 36 inches (915 mm) minimum.",
+      "verified": false
+    },
+    {
+      "id": "ADA-404.2.3",
+      "source": "ADA 2010 Standards / PVAG",
+      "clause": "404.2.3 Door clear width",
+      "applies_to": { "types": ["door"], "where": { "accessible_route": true } },
+      "check": "min", "parameter": "clear_width", "value": 815, "unit": "mm",
+      "text": "Door openings on an accessible route shall provide a clear width of 32 inches (815 mm) minimum.",
+      "verified": false
+    },
+    {
+      "id": "ADA-405.2",
+      "source": "ADA 2010 Standards / PVAG",
+      "clause": "405.2 Ramp slope",
+      "applies_to": { "types": ["ramp"], "where": { "accessible_route": true } },
+      "check": "max", "parameter": "slope", "value": 0.0833, "unit": "ratio",
+      "text": "Ramp runs shall have a running slope not steeper than 1:12.",
+      "verified": false
+    },
+    {
+      "id": "IGF-LNG-LOCATION",
+      "source": "IGF Code (gas-fuelled ships) - simplified for demo",
+      "clause": "Fuel tank location (simplified, to verify)",
+      "applies_to": { "types": ["fuel_tank"], "where": { "fuel": "LNG" } },
+      "check": "not_adjacent_zone", "zones": ["passenger"],
+      "text": "LNG fuel tanks shall be separated from passenger spaces (simplified demo rule).",
+      "verified": false
+    }
+  ]
+}
