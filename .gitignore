@@ -4,3 +4,12 @@ node_modules/
 !.env.example
 results.json
 *.log
+.claude/
+rules-approved.json
+ships/rcrv-aps/
+source/*.pdf
+# APS model folder: secrets and very large files stay local
+3D_Since_AI/.env
+3D_Since_AI/*.nwd
+3D_Since_AI/model-properties.json
+3D_Since_AI/model-tree.json

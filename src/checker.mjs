@@ -11,6 +11,7 @@ export const STATUS_RANK = { non_compliant: 3, not_enough_info: 2, compliant: 1 
 export const CHECK_TYPES = ['min', 'max', 'not_adjacent_zone', 'distance_min_hull', 'count_min', 'requires'];
 const ADJACENCY_TOLERANCE_MM = 50;
 const DEFAULT_DECK_HEIGHT_MM = 2800;
+const SHIP_LENGTH_KEYS = new Set(['length_overall', 'beam', 'draft', 'depth']);
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const round = (v, d = 0) => Math.round(v * 10 ** d) / 10 ** d;
@@ -99,6 +100,7 @@ export function normalizeModel(raw) {
     ship: raw.ship || {},
     decks,
     elements,
+    hull: raw.hull,
     demo: raw.demo,
   };
 }
@@ -133,7 +135,11 @@ function shipCondition(rule, model) {
   const inputs = [];
   const need = (key) => {
     const v = shipValue(model, key);
-    if (v) inputs.push({ name: `ship.${key}`, value: Array.isArray(v.value) ? v.value.join(', ') : String(v.value), source: v.source });
+    if (v) {
+      const shown = Array.isArray(v.value) ? v.value.join(', ')
+        : SHIP_LENGTH_KEYS.has(key) && v.unit in UNIT_TO_MM ? fmtLengthInput(v, toMM(v.value, v.unit)) : String(v.value);
+      inputs.push({ name: `ship.${key}`, value: shown, source: v.source });
+    }
     return v;
   };
   const unknown = (key) => ({ ok: 'unknown', missing: `ship.${key}`, inputs });

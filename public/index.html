@@ -2,179 +2,66 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Compliance check - deck viewer</title>
-<style>
-  :root { --ok:#2e9e5b; --bad:#d64545; --info:#d99a1e; --none:#9aa3ad; --ink:#1d2430; --muted:#5b6573; --line:#e3e6ea; }
-  * { box-sizing: border-box; }
-  body { margin:0; font:14px/1.45 system-ui, sans-serif; color:var(--ink); display:grid; grid-template-columns: 300px 1fr 380px; height:100vh; }
-  aside { overflow:auto; border-right:1px solid var(--line); padding:14px; }
-  #detail { border-right:0; border-left:1px solid var(--line); }
-  #view { position:relative; }
-  #view canvas { display:block; }
-  h1 { font-size:16px; margin:0 0 4px; } h2 { font-size:14px; margin:16px 0 6px; }
-  .muted { color:var(--muted); font-size:12px; }
-  .sum { display:flex; gap:6px; margin:10px 0; }
-  .pill { flex:1; padding:6px; border-radius:6px; color:#fff; text-align:center; font-weight:600; }
-  .item { display:flex; align-items:center; gap:8px; padding:5px 6px; border-radius:5px; cursor:pointer; }
-  .item:hover, .item.sel { background:#eef1f5; }
-  .dot { width:10px; height:10px; border-radius:50%; flex:none; }
-  .res { border:1px solid var(--line); border-left:4px solid; border-radius:6px; padding:8px 10px; margin:8px 0; }
-  .res b { display:block; }
-  .tag { display:inline-block; font-size:11px; padding:1px 6px; border-radius:4px; background:#fff4d6; color:#7a5600; margin-top:4px; }
-  table { width:100%; border-collapse:collapse; font-size:12px; margin-top:4px; }
-  td { padding:2px 0; vertical-align:top; } td:first-child { color:var(--muted); width:80px; }
-  blockquote { margin:6px 0 0; padding-left:8px; border-left:2px solid var(--line); color:var(--muted); font-size:12px; }
-  button { margin-top:8px; padding:6px 10px; border:1px solid var(--line); border-radius:6px; background:#fff; cursor:pointer; }
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ShipCheck - compliance viewer</title>
+<link rel="stylesheet" href="style.css" />
 <script type="importmap">
   { "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      "three": "/node_modules/three/build/three.module.js",
+      "three/addons/": "/node_modules/three/examples/jsm/"
   } }
 </script>
 </head>
 <body>
-<aside>
-  <h1 id="title">Deck</h1>
-  <div class="muted" id="gen"></div>
-  <div class="sum" id="sum"></div>
-  <button id="recheck">Run check again</button>
-  <h2>Elements</h2>
-  <div id="list"></div>
-  <h2>Legend</h2>
-  <div class="item"><span class="dot" style="background:var(--ok)"></span>Compliant</div>
-  <div class="item"><span class="dot" style="background:var(--bad)"></span>Non-compliant</div>
-  <div class="item"><span class="dot" style="background:var(--info)"></span>Not enough info</div>
-  <div class="item"><span class="dot" style="background:var(--none)"></span>No rule applies</div>
-</aside>
-<div id="view"></div>
-<aside id="detail"><p class="muted">Click an element in the model or the list to see why it passes or fails.</p></aside>
+<header class="top">
+  <div class="brand"><b>ShipCheck</b><span>class &amp; regulatory compliance</span></div>
+  <label>Scenario <select id="scenario"></select></label>
+  <label>Decks <select id="deck"></select></label>
+  <button id="planBtn" title="Top-down plan view">Plan view</button>
+  <span class="grow"></span>
+  <button id="demoBtn" class="primary" title="Scripted 30-second run-through (Esc to stop)">&#9654; Demo run-through</button>
+  <button id="reportBtn" title="Printable findings report">Report</button>
+  <button id="csvBtn" title="Download findings as CSV">CSV</button>
+  <label title="Bonus: viewer role cannot edit design values">Role <select id="role"><option value="engineer">Engineer</option><option value="viewer">Viewer (read-only)</option></select></label>
+</header>
+<main>
+  <aside id="side">
+    <section id="ship"></section>
+    <section id="score"></section>
+    <section id="summary"></section>
+    <section id="edits"></section>
+    <section id="aiTools" hidden>
+      <button id="draftBtn">Draft a rule from pasted text (AI)</button>
+    </section>
+    <section>
+      <h2>Findings</h2>
+      <div id="filters"></div>
+      <div id="list"></div>
+    </section>
+    <section class="legend">
+      <span><i class="dot st-compliant"></i>Compliant</span>
+      <span><i class="dot st-non_compliant"></i>Non-compliant</span>
+      <span><i class="dot st-not_enough_info"></i>Not enough info</span>
+      <span><i class="dot st-none"></i>No rule</span>
+    </section>
+  </aside>
+  <section id="view"><div id="caption" hidden></div></section>
+  <aside id="detail"><p class="muted">Click an element in the model or in the list to see every rule that applies, why it passes or fails, and where each value comes from.</p></aside>
+</main>
 
-<script type="module">
-import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+<dialog id="aiDialog">
+  <form method="dialog" class="ai-form">
+    <h2>Draft a rule from regulation text</h2>
+    <p class="muted">Paste one rule paragraph. The AI drafts a structured entry; it never decides pass/fail. The draft is stored as <code>verified: false</code> and is only used after you approve it.</p>
+    <textarea id="aiText" rows="7" placeholder="e.g. 404.2.3 Clear Width. Door openings shall provide a clear width of 32 inches (815 mm) minimum..."></textarea>
+    <input id="aiSource" placeholder="Source (e.g. ADA 2010 Standards)" />
+    <div class="row"><button type="button" id="aiDraft" class="primary">Draft</button><span id="aiStatus" class="muted"></span></div>
+    <pre id="aiOut" hidden></pre>
+    <div id="aiChecks"></div>
+    <div class="row"><button type="button" id="aiApprove" disabled>Approve and add to rule set</button><button value="close">Close</button></div>
+  </form>
+</dialog>
 
-const COLORS = { compliant: 0x2e9e5b, non_compliant: 0xd64545, not_enough_info: 0xd99a1e, null: 0x9aa3ad };
-const CSS = { compliant: 'var(--ok)', non_compliant: 'var(--bad)', not_enough_info: 'var(--info)', null: 'var(--none)' };
-const LABEL = { compliant: 'Compliant', non_compliant: 'Non-compliant', not_enough_info: 'Not enough info' };
-const TO_M = { mm: 0.001, m: 1, in: 0.0254, ft: 0.3048 };
-
-const view = document.getElementById('view');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(devicePixelRatio);
-view.appendChild(renderer.domElement);
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xf4f6f8);
-const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 500);
-const controls = new OrbitControls(camera, renderer.domElement);
-scene.add(new THREE.HemisphereLight(0xffffff, 0x8899aa, 1.1));
-const sun = new THREE.DirectionalLight(0xffffff, 1.2); sun.position.set(10, 30, 15); scene.add(sun);
-
-let meshes = {}, selected = null, deck, results;
-
-function resize() {
-  const w = view.clientWidth, h = view.clientHeight;
-  renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
-}
-addEventListener('resize', resize);
-
-async function load() {
-  [deck, results] = await Promise.all([
-    fetch('deck.json', { cache: 'no-store' }).then((r) => r.json()),
-    fetch('results.json', { cache: 'no-store' }).then((r) => r.json()),
-  ]);
-  build();
-}
-
-function build() {
-  Object.values(meshes).forEach((m) => scene.remove(m));
-  meshes = {};
-  const k = TO_M[deck.units] ?? 0.001;
-  const L = deck.deck.length * k, W = deck.deck.width * k;
-
-  const floor = new THREE.Mesh(new THREE.BoxGeometry(L, 0.05, W), new THREE.MeshStandardMaterial({ color: 0xdfe3e8 }));
-  floor.position.set(L / 2, -0.03, W / 2); scene.add(floor); meshes.__floor = floor;
-
-  for (const el of deck.elements) {
-    const g = el.geom, status = results.elements[el.id]?.worst ?? null;
-    const isSpace = el.type === 'space';
-    const mat = new THREE.MeshStandardMaterial({
-      color: COLORS[status], transparent: isSpace, opacity: isSpace ? 0.55 : 1,
-    });
-    const box = new THREE.Mesh(new THREE.BoxGeometry(g.lx * k, g.h * k, g.ly * k), mat);
-    box.position.set((g.x + g.lx / 2) * k, (g.h * k) / 2, (g.y + g.ly / 2) * k);
-    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(box.geometry), new THREE.LineBasicMaterial({ color: 0x334155, transparent: true, opacity: 0.35 }));
-    box.add(edges);
-    box.userData.id = el.id;
-    scene.add(box); meshes[el.id] = box;
-  }
-
-  controls.target.set(L / 2, 0, W / 2);
-  camera.position.set(L / 2, L * 0.75, W * 2.6);
-  controls.update();
-  renderSidebar();
-  resize();
-}
-
-function renderSidebar() {
-  document.getElementById('title').textContent = deck.name;
-  document.getElementById('gen').textContent = `${results.rule_count} rules - checked ${new Date(results.generated).toLocaleTimeString()}`;
-  const s = results.summary;
-  document.getElementById('sum').innerHTML =
-    `<div class="pill" style="background:var(--ok)">${s.compliant}</div>` +
-    `<div class="pill" style="background:var(--bad)">${s.non_compliant}</div>` +
-    `<div class="pill" style="background:var(--info)">${s.not_enough_info}</div>`;
-  const order = { non_compliant: 0, not_enough_info: 1, compliant: 2, null: 3 };
-  const items = Object.values(results.elements).sort((a, b) => order[a.worst] - order[b.worst]);
-  document.getElementById('list').innerHTML = items.map((e) =>
-    `<div class="item" data-id="${e.id}"><span class="dot" style="background:${CSS[e.worst]}"></span>` +
-    `<span>${e.id} - ${e.name}</span></div>`).join('');
-  document.querySelectorAll('#list .item').forEach((n) => n.onclick = () => select(n.dataset.id));
-}
-
-function esc(s) { return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
-
-function select(id) {
-  if (selected && meshes[selected]) meshes[selected].material.emissive?.setHex(0x000000);
-  selected = id;
-  if (meshes[id]) meshes[id].material.emissive.setHex(0x333333);
-  document.querySelectorAll('#list .item').forEach((n) => n.classList.toggle('sel', n.dataset.id === id));
-  const e = results.elements[id], el = deck.elements.find((x) => x.id === id);
-  const props = Object.entries(el.props || {}).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(Array.isArray(v) ? v.join(', ') : v)}</td></tr>`).join('');
-  const res = e.results.length
-    ? e.results.map((r) => `
-      <div class="res" style="border-left-color:${CSS[r.status]}">
-        <b>${LABEL[r.status]} - ${esc(r.rule_id)}</b>
-        <div class="muted">${esc(r.source)} - ${esc(r.clause)}</div>
-        <table><tr><td>Measured</td><td>${esc(r.measured ?? 'missing')}</td></tr>
-        <tr><td>Required</td><td>${esc(r.required)}</td></tr></table>
-        <div style="margin-top:4px">${esc(r.explanation)}</div>
-        <blockquote>${esc(r.rule_text)}</blockquote>
-        ${r.verified ? '' : '<span class="tag">Rule value not yet verified against official text</span>'}
-      </div>`).join('')
-    : '<p class="muted">No rule in the current rule set applies to this element.</p>';
-  document.getElementById('detail').innerHTML =
-    `<h1>${esc(e.id)} - ${esc(e.name)}</h1><div class="muted">${esc(e.type)}</div>` +
-    `<h2>Rules applied (${e.results.length})</h2>${res}<h2>Design data</h2><table>${props}</table>`;
-}
-
-const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
-renderer.domElement.addEventListener('click', (ev) => {
-  const r = renderer.domElement.getBoundingClientRect();
-  mouse.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
-  ray.setFromCamera(mouse, camera);
-  const hit = ray.intersectObjects(Object.values(meshes).filter((m) => m.userData.id)).find((h) => h.object.userData.id);
-  if (hit) select(hit.object.userData.id);
-});
-
-document.getElementById('recheck').onclick = async () => {
-  await fetch('/recheck');
-  await load();
-  if (selected) select(selected);
-};
-
-(function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
-load();
-</script>
+<script type="module" src="app.js"></script>
 </body>
 </html>

@@ -167,6 +167,7 @@ const ship = {
     source: PUB,
   },
   decks,
+  hull: { deck: 'MD', source: EST },
   demo: { focus: '01-GR1', fix: { prop: 'height', value: 1000, unit: 'mm' } },
   elements,
 };

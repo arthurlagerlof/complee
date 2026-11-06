@@ -6,9 +6,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCheck, loadRules, loadScenarios } from './check.mjs';
+import { providerConfig, draftRule, explainResult, approveRule, loadApproved } from './rule-assistant.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.PORT) || 8080;
+const PORT = Number(process.env.PORT ?? 8080);
 
 // Minimal .env loader (no dependency). Values are never logged.
 const envFile = path.join(ROOT, '.env');
@@ -69,7 +70,18 @@ function serveStatic(p, res) {
 const routes = {
   'GET /api/scenarios': () => loadScenarios(),
   'GET /api/rules': () => ({ rules: loadRules() }),
-  'GET /api/check': (q) => runCheck(q.get('scenario') || 'rcrv', 'rules.json', null),
+  'GET /rules-approved.json': () => (fs.existsSync(path.join(ROOT, 'rules-approved.json'))
+    ? JSON.parse(fs.readFileSync(path.join(ROOT, 'rules-approved.json'), 'utf8')) : { rules: [] }),
+  'GET /api/check':(q) => runCheck(q.get('scenario') || 'rcrv', 'rules.json', null),
+  // Optional AI layer: drafts and explanations only, never pass/fail.
+  'GET /api/ai/status': () => { const c = providerConfig(); return { enabled: !!c, provider: c?.name ?? null, model: c?.model ?? null }; },
+  'POST /api/ai/draft-rule': (q, b) => draftRule(String(b.text || '').slice(0, 8000), b.source, loadRules().map((r) => r.id)),
+  'POST /api/ai/explain': (q, b) => explainResult(b.element, b.result),
+  'POST /api/rules/approve': (q, b) => {
+    if (!b.rule) throw Object.assign(new Error('Missing rule'), { status: 400 });
+    const core = loadRules().filter((r) => !loadApproved().some((a) => a.id === r.id));
+    return { rules: approveRule(b.rule, core.map((r) => r.id)) };
+  },
   // Kept from Plan B: re-runs the check and writes results.json.
   'GET /recheck': (q) => runCheck(q.get('scenario') || 'rcrv').summary,
 };

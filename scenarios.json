@@ -1,6 +1,21 @@
 {
   "scenarios": [
-    { "id": "rcrv", "name": "RCRV research vessel (reconstructed)", "model": "ships/rcrv/ship.json", "expected": "tests/expected/rcrv.json" },
-    { "id": "cruise", "name": "Cruise passenger deck (fictional)", "model": "ships/cruise/deck.json", "expected": "tests/expected/cruise.json" }
+    {
+      "id": "rcrv",
+      "name": "RCRV research vessel (reconstructed)",
+      "model": "ships/rcrv/ship.json",
+      "expected": "tests/expected/rcrv.json"
+    },
+    {
+      "id": "cruise",
+      "name": "Cruise passenger deck (fictional)",
+      "model": "ships/cruise/deck.json",
+      "expected": "tests/expected/cruise.json"
+    },
+    {
+      "id": "rcrv-aps",
+      "name": "RCRV from APS model (extracted, optional)",
+      "model": "ships/rcrv-aps/ship.json"
+    }
   ]
 }
