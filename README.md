@@ -17,4 +17,7 @@ Create a production build with `npm run build`.
 
 React, TypeScript, Vite, GSAP/ScrollTrigger, and Lucide icons.
 
+## Development
+Push changes to the dev branch, main branch will be deployed automatically when you put your changes there.
+
 - Created by team KEEP
