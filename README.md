@@ -4,10 +4,14 @@ Since AI Hackathon 2026 (Turku), Meyer Turku challenge. ShipCheck checks a ship 
 for every element, which rules apply, whether it passes, **why**, and where every value comes from.
 
 - **Deterministic checker.** Pass/fail comes from plain code, never from an LLM. Same input, same result.
-- **Two scenarios.** *RCRV research vessel (reconstructed)*, 5 decks and 67 elements, and *Cruise passenger deck (fictional)*.
-- **15 rules.** They cover SOLAS/FSS means of escape, ADA/PVAG accessibility, IGF Code LNG tanks, Load Line, MARPOL and a DNV class rule example. Applicability depends on ship type, operating area, size and class society.
+- **Three scenarios.** *RCRV: real 3D model*, the OSU ShipConstructor production model (330,760 objects, inches) converted with Autodesk APS and shown in the APS viewer.
+  *Cruise passenger deck (fictional)* with planted findings. *RCRV layout reconstruction* (5 decks, 67 estimated elements).
+- **Real-data rules** on the 3D model: IACS UR W11 hull steel grades, UR S6 Table 7 grade vs thickness, a 600 × 600 mm hatch opening, SOLAS II-2/4.2.2.5.1 oil fuel
+  pipe material, and design-status / error-value data checks. A draft rule (minimum thickness) is listed but never run: no official value yet.
+- **15 layout rules.** They cover SOLAS/FSS means of escape, ADA/PVAG accessibility, IGF Code LNG tanks, Load Line, MARPOL and a DNV class rule example. Applicability depends on ship type, operating area, size and class society.
 - **Real-time.** Edit a value in the detail panel and the element is re-checked and recoloured instantly (the checker runs in the browser).
-- **Trust.** `npm test` runs the ground truth for every planted finding, edge cases and the server whitelist. The UI shows the score: *8/8 expected findings detected, 0 false alarms*.
+- **Trust.** `npm test` runs the ground truth for every planted finding, the hand-checked findings of the real model (every bulk count recomputed by an
+  independent scan of the source data), edge cases and the server whitelist. The top bar shows the badge, e.g. *✓ 7/7 expected findings, 0 false alarms*.
 
 ## Run (Windows on ARM / PowerShell, macOS, Linux; Node 20+)
 
@@ -25,7 +29,17 @@ Open http://localhost:8080. Then run the tests:
 npm test
 ```
 
-You can also check from the terminal only: `npm run check` covers all scenarios, and `node check.mjs rcrv` writes `results.json`.
+You can also check from the terminal only: `npm run check` covers all scenarios, and `node check.mjs rcrv-3d` writes `results.json`.
+
+| Command | What it does |
+| --- | --- |
+| `node prepare-model.mjs` | Streams `3D_Since_AI/model-properties.json` (150 MB, never loaded whole) into `ships/rcrv/parts.json`: objectid, name, source file, ShipConstructor and piping fields, mm/kg plus the original text. Prints counts. |
+| `node check.mjs --precompute` | Writes `ships/rcrv/results-3d.json`, the offline fallback (used when `parts.json` cannot be loaded). `npm test` fails if it is out of date. |
+| `node check.mjs --report [scenario]` | Writes `reports/<scenario>.html` and `.csv`, the same output as the Report and CSV buttons. |
+
+**3D viewer (APS).** `server.mjs` reads `APS_CLIENT_ID` / `APS_CLIENT_SECRET` from `3D_Since_AI/.env` (gitignored, never served or logged) and hands the
+browser a read-only token (`/api/aps/token`, scope `viewables:read`, localhost only). Parts are coloured by dbId = objectid. Without internet or keys, the
+app shows saved screenshots (`public/fallback/`) next to the locally computed findings. `?noaps` forces that fallback, for rehearsing an offline demo.
 No Python, Navisworks, Blender or internet connection is needed after `npm install`.
 
 ## Using it
@@ -50,6 +64,10 @@ extract-aps.mjs: optional APS Model Derivative extraction -> ships/rcrv-aps/ship
 | File | Purpose |
 | --- | --- |
 | `src/checker.mjs` | Normalises units to mm (`mm`, `cm`, `m`, `in`, `ft`), keeps the original unit for display, evaluates rules. Check types: `min`, `max`, `not_adjacent_zone` (declared or derived from 3D geometry), `distance_min_hull` (e.g. IGF B/5), `count_min` (e.g. escape routes), `requires` (if X exists, Y must exist). Missing data always gives `not_enough_info`. |
+| `src/parts-model.mjs` | Turns `parts.json` into a checker model: material family, steel grade, SWBS group, oil fuel systems, openings parsed from names. Every derived value names its derivation. |
+| `src/units.mjs`, `src/json-stream.mjs` | Feet-inch / lb parsing (unknown text gives null, never a guess) and the streaming JSON reader. |
+| `src/report.mjs` | HTML report and CSV, shared by the UI and the CLI. |
+| `public/viewer-aps.js` | Autodesk APS viewer with the same interface as the Three.js viewer, plus the screenshot fallback. |
 | `src/score.mjs` | Compares results with `tests/expected/<scenario>.json`: detected, missed, wrong status, false alarms, expected passes. |
 | `public/` | `index.html`, `app.js` (UI, editing, demo, export), `viewer3d.js` (Three.js from `node_modules`). |
 | `ships/rcrv/build-ship.mjs` | Generates the RCRV reconstruction `ship.json`. |

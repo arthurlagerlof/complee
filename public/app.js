@@ -3,6 +3,7 @@
 import { checkModel, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK } from '/src/checker.mjs';
 import { scoreResults, scoreLine } from '/src/score.mjs';
 import { partsToModel } from '/src/parts-model.mjs';
+import { reportRows, toCSV, toHTML, badgeText } from '/src/report.mjs';
 import { createViewer } from './viewer3d.js';
 import { createApsViewer, createFallbackViewer } from './viewer-aps.js';
 
@@ -231,8 +232,20 @@ function renderShip() {
     ${S.model.provenance_note ? `<div class="note">${esc(S.model.provenance_note)}</div>` : ''}`;
 }
 
+// Draft rules are only mentioned where the model has elements they would apply to.
+function relevantDrafts() {
+  const types = new Set(S.norm.elements.map((e) => e.type));
+  return (S.results.draft_rules || []).filter((d) => (ruleById(d.id)?.applies_to?.types || []).some((t) => types.has(t)));
+}
+
 function renderScore() {
   const b = S.baseline;
+  const badge = $('#accBadge');
+  badge.hidden = !b;
+  if (b) {
+    badge.className = `accbadge ${b.pass ? '' : 'bad'}`;
+    badge.textContent = `${b.pass ? '✓' : '✗'} ${badgeText(b)}`;
+  }
   const verified = S.coreRules.filter((r) => r.verified).length;
   $('#score').innerHTML = (b ? `
     <div class="scorebox ${b.pass ? 'pass' : 'fail'}" id="scorebox" title="Computed on the unedited design against tests/expected/${esc(S.sc.id)}.json (also run by npm test)">
@@ -240,7 +253,7 @@ function renderScore() {
       <span class="muted">Ground truth for the unedited design (tests/expected/${esc(S.sc.id)}.json)</span>
     </div>` : '') +
     `<div class="muted" style="margin-top:6px">${allRules().length} rules · ${verified}/${S.coreRules.length} values verified against official text <a href="#" id="verifyLink" title="See VERIFY.md">(why?)</a></div>` +
-    ((S.results.draft_rules || []).length ? `<div class="drafts note">${S.results.draft_rules.map((d) =>
+    (relevantDrafts().length ? `<div class="drafts note">${relevantDrafts().map((d) =>
       `<b>${esc(d.id)}</b>: draft, not run. ${esc(d.reason)}`).join('<br>')}</div>` : '');
   $('#verifyLink').onclick = (e) => { e.preventDefault(); alert('All rule values are marked verified:false until the team has checked them against the official text. VERIFY.md lists each value with the source to check against.'); };
 }
@@ -474,38 +487,15 @@ function applyEdit(id, key, value, unit) {
   $('#dStatus').classList.remove('flash'); void $('#dStatus').offsetWidth; $('#dStatus').classList.add('flash');
 }
 
-// ---------- report export ----------
-
-function reportRows() {
-  return findingsOf(S.results).map((f) => ({
-    status: LABEL[f.status], element: f.element, name: f.name, deck: deckName(f.deck), rule: f.rule_id,
-    source: f.source, clause: f.clause, measured: f.measured ?? 'missing', required: f.required, explanation: f.explanation,
-    provenance: f.inputs.map((i) => `${i.name}=${i.value} [${i.source}]`).join('; '), verified: f.verified ? 'yes' : 'no',
-  }));
-}
+// ---------- report export (shared with the CLI: src/report.mjs) ----------
 
 function exportCSV() {
-  const rows = reportRows();
-  const cols = Object.keys(rows[0] || { status: '' });
-  const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  download(`findings-${S.sc.id}.csv`, '﻿' + [cols.join(','), ...rows.map((r) => cols.map((c) => q(r[c])).join(','))].join('\r\n'), 'text/csv');
+  download(`findings-${S.sc.id}.csv`, toCSV(reportRows(S.results, S.model, allRules())), 'text/csv');
 }
 
 function exportReport() {
-  const rows = reportRows(), s = S.results.summary;
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Compliance findings - ${esc(S.model.name)}</title>
-  <style>body{font:12px/1.4 system-ui,sans-serif;margin:24px;color:#1d2430}h1{font-size:18px;margin:0}table{border-collapse:collapse;width:100%;margin-top:12px}
-  th,td{border:1px solid #d5dae0;padding:4px 6px;text-align:left;vertical-align:top}th{background:#f3f5f8}.nc{color:#b42318;font-weight:600}.ni{color:#9a6700;font-weight:600}
-  .muted{color:#5b6573}@media print{button{display:none}}</style></head><body>
-  <button onclick="print()">Print / save as PDF</button>
-  <h1>Compliance findings: ${esc(S.model.name)}</h1>
-  <p class="muted">Generated ${new Date().toLocaleString()} by ShipCheck (deterministic checker). ${allRules().length} rules, ${S.coreRules.filter((r) => r.verified).length} values verified against official text.
-  Result: ${s.non_compliant} non-compliant, ${s.not_enough_info} not enough info, ${s.compliant} compliant.
-  ${S.edits.size ? `<br><b>${S.edits.size} value(s) edited in session:</b> ${[...S.edits.values()].map((x) => `${esc(x.id)}.${esc(x.key)} ${esc(x.before)} → ${esc(x.after)}`).join('; ')}` : ''}</p>
-  <table><tr><th>Status</th><th>Element</th><th>Deck</th><th>Rule</th><th>Source / clause</th><th>Measured</th><th>Required</th><th>Explanation</th><th>Input provenance</th><th>Verified</th></tr>
-  ${rows.map((r) => `<tr><td class="${r.status === 'Non-compliant' ? 'nc' : 'ni'}">${esc(r.status)}</td><td><b>${esc(r.element)}</b><br>${esc(r.name)}</td><td>${esc(r.deck)}</td><td>${esc(r.rule)}</td>
-  <td>${esc(r.source)}<br><span class="muted">${esc(r.clause)}</span></td><td>${esc(r.measured)}</td><td>${esc(r.required)}</td><td>${esc(r.explanation)}</td><td class="muted">${esc(r.provenance)}</td><td>${r.verified}</td></tr>`).join('')}
-  </table><p class="muted">Rule values marked "no" must be checked against the official text before submission (see VERIFY.md). Values with source "estimated" or "planted test case" are not design data.</p></body></html>`;
+  const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(),
+    score: S.baseline, edits: [...S.edits.values()] });
   const w = window.open('', '_blank');
   if (w) { w.document.write(html); w.document.close(); } else download(`report-${S.sc.id}.html`, html, 'text/html');
 }
@@ -636,7 +626,7 @@ async function runDemo() {
       const s = S.results.summary;
       caption(`${s.non_compliant} non-compliant · ${s.not_enough_info.toLocaleString('en')} not enough info · ${s.compliant.toLocaleString('en')} compliant`,
         S.baseline ? `Ground truth: ${S.baseline.line ?? scoreLine(S.baseline)}` : 'Deterministic checker: same input, same result');
-      pulse('#pills'); pulse('#scorebox');
+      pulse('#pills'); pulse('#scorebox'); pulse('#accBadge');
       await step(3000);
 
       // 3. Fly to the first red part, with the rule quote.

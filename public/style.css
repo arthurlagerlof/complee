@@ -120,3 +120,5 @@ dialog { border: 1px solid var(--line); border-radius: 10px; width: min(720px, 9
 .check-ok { color: var(--ok); } .check-bad { color: var(--bad); }
 
 @media print { .top, #view, #side { display: none; } main { display: block; } }
+.accbadge { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 12px; background: #e3f4ea; color: #1d6b3d; border: 1px solid #b7dfc5; white-space: nowrap; }
+.accbadge.bad { background: #fde8e8; color: #9b2c2c; border-color: #f1c1c1; }

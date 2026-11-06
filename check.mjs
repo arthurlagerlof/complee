@@ -1,12 +1,14 @@
 // CLI: checks one scenario (or a model file) against the rule set and writes results.json.
 // Usage: node check.mjs [scenario-id | model.json] [rules.json]
 //        node check.mjs --precompute     writes the compact offline results of every scenario with "precomputed"
+//        node check.mjs --report [id]    writes reports/<id>.html and reports/<id>.csv (same as the UI export)
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { checkModel, findingsOf } from './src/checker.mjs';
 import { scoreResults, scoreLine } from './src/score.mjs';
 import { partsToModel } from './src/parts-model.mjs';
+import { reportRows, toCSV, toHTML } from './src/report.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const readJSON = (p) => JSON.parse(fs.readFileSync(path.resolve(ROOT, p), 'utf8'));
@@ -66,6 +68,21 @@ export function precompute() {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (process.argv[2] === '--report') {
+    const ids = process.argv[3] ? [process.argv[3]] : loadScenarios().map((s) => s.id);
+    fs.mkdirSync(path.join(ROOT, 'reports'), { recursive: true });
+    for (const id of ids) {
+      const sc = loadScenarios().find((s) => s.id === id);
+      if (!sc) { console.error(`Unknown scenario ${id}`); process.exit(1); }
+      const model = loadModel(sc), rules = loadRules();
+      const out = checkModel(model, rules);
+      const score = sc.expected ? scoreResults(out, readJSON(sc.expected)) : null;
+      fs.writeFileSync(path.join(ROOT, 'reports', `${id}.html`), toHTML({ title: model.name, scenario: id, results: out, model, rules, score }));
+      fs.writeFileSync(path.join(ROOT, 'reports', `${id}.csv`), toCSV(reportRows(out, model, rules)));
+      console.log(`Wrote reports/${id}.html and reports/${id}.csv (${findingsOf(out).length} findings)${score ? ` - ${scoreLine(score)}` : ''}`);
+    }
+    process.exit(0);
+  }
   if (process.argv[2] === '--precompute') {
     for (const w of precompute()) console.log(`Wrote ${w.file}: ${w.findings} findings ${JSON.stringify(w.summary)}${w.score ? `\n  Ground truth: ${w.score}` : ''}`);
     process.exit(0);
