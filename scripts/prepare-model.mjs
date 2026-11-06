@@ -1,5 +1,5 @@
 // Streams the APS property dump of the real OSU RCRV model and writes a compact parts file.
-// Usage: node prepare-model.mjs [path/to/model-properties.json] [out.json]
+// Usage: node scripts/prepare-model.mjs [path/to/model-properties.json] [out.json]
 //   defaults: 3D_Since_AI/model-properties.json -> ships/rcrv/parts.json
 //
 // The input (~150 MB, 330,760 objects) is never loaded whole. Kept per part: objectid (= viewer dbId),
@@ -10,10 +10,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { streamArray } from './src/json-stream.mjs';
-import { parseFeetInch, inchToMM, parseWeightKg, parseOpening } from './src/units.mjs';
+import { streamArray } from '../src/json-stream.mjs';
+import { parseFeetInch, inchToMM, parseWeightKg, parseOpening } from '../src/units.mjs';
 
-const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const IN = path.resolve(ROOT, process.argv[2] || '3D_Since_AI/model-properties.json');
 const OUT = path.resolve(ROOT, process.argv[3] || 'ships/rcrv/parts.json');
 const URN_FILE = path.join(path.dirname(IN), 'urn.txt');

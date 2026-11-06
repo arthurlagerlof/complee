@@ -59,7 +59,7 @@ Reference URLs in `rules.json` point to the convention overview pages (IMO, US A
 
 ## Mentor questions
 
-1. **Which class society applies to the RCRV, ABS or DNV?** The model's materials say "CS ABS A", so `rcrv-3d` assumes ABS; the reconstructed scenario assumes DNV.
+1. **Which class society applies to the RCRV, ABS or DNV?** The model's materials say "CS ABS A", so `rcrv-3d` assumes ABS; the layout test fixture assumes DNV.
 2. **Drawing codes:** what do **BHP, BHK, TTP, FLT, MDK, SSH** mean in drawing names such as `021-D05-00_BHP` or `091-SSH`? We have not guessed them; they could give the member category needed for UR S6 Table 1.
 3. Which steel-grade table applies to a vessel under 90 m (ABS or DNV)? Is UR S6 Table 7 an acceptable reference?
 4. Origin and direction of LCG / TCG / VCG (frame 0, AP, midship?), so that "within 0.4L amidships" can be computed.
@@ -68,7 +68,7 @@ Reference URLs in `rules.json` point to the convention overview pages (IMO, US A
 7. Does SOLAS II-2 apply to the RCRV, and are the 5083 aluminium oil fuel pipes approved?
 8. Is "AIR AIR" the placeholder material of superpanel plates, or a modelling error?
 
-## Ship particulars (RCRV, `ships/rcrv/ship.json`)
+## Ship particulars (RCRV: `ships/rcrv/rcrv-3d.meta.json`, and the layout test fixture `tests/fixtures/rcrv-layout.json`)
 
 | Value | Used | Check against |
 | --- | --- | --- |
@@ -78,11 +78,11 @@ Reference URLs in `rules.json` point to the convention overview pages (IMO, US A
 | Berths 31 (16 science, 2 technicians, 13 crew) | display only | OSU / UNOLS |
 | Diesel-electric propulsion | display only | OSU |
 | Gross tonnage 1200 | MARPOL Annex I applicability (≥ 400 GT) | **Estimated.** Find the official GT; any value above 400 gives the same result. |
-| Class society DNV | DNV class rule applicability | **Assumed for the demo.** Check the real class society of the RCRV. |
+| Class society: ABS (real model) / DNV (layout fixture) | class rule applicability | ABS is inferred from material names; DNV in the fixture is an assumption. Check the real class society of the RCRV. |
 
-## Layout (RCRV)
+## Layout test fixture (RCRV, `tests/fixtures/rcrv-layout.json`)
 
 All deck outlines, rooms, corridors, stairs, doors and tanks are `"source": "estimated"`: no GA drawing PDF was available
 when the model was built. To improve: put the GA sheets into `source/`, take dimensions from them, and change the
 element's `source` to `"GA drawing <sheet>"`. Planted values (`"source": "planted test case (fictional value)"`) are
-deliberate test cases and must stay as they are, or `tests/expected/rcrv.json` must be updated with them.
+deliberate test cases and must stay as they are, or `tests/expected/rcrv-layout.json` must be updated with them.

@@ -1,16 +1,30 @@
+# Dependencies
 node_modules/
+
+# Secrets: never commit keys (APS keys live in 3D_Since_AI/.env)
 .env
 .env.*
-!.env.example
-results.json
-*.log
-.claude/
-rules-approved.json
-ships/rcrv-aps/
-source/*.pdf
-# APS model folder: secrets and very large files stay local
-3D_Since_AI/.env
+**/.env
+**/.env.*
+
+# APS model folder: the source model and the large extracted JSON stay local
+# (regenerate parts.json with: npm run prepare-model)
 3D_Since_AI/*.nwd
 3D_Since_AI/model-properties.json
 3D_Since_AI/model-tree.json
+
+# Generated output
+results.json
 reports/
+*.log
+
+# Source documents (rule PDFs, GA drawings): licensed, keep local
+source/
+
+# Editor, OS and tool files
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

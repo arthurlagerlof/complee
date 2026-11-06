@@ -9,7 +9,7 @@ import { scoreResults, scoreLine } from '../src/score.mjs';
 
 const read = (p) => JSON.parse(fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8'));
 const HAVE = fs.existsSync(new URL('../ships/rcrv/parts.json', import.meta.url));
-const skip = !HAVE && 'ships/rcrv/parts.json missing (node prepare-model.mjs)';
+const skip = !HAVE && 'ships/rcrv/parts.json missing (npm run prepare-model)';
 const RULES = read('rules.json').rules;
 const res = (out, el, rule) => out.elements[el]?.results.find((r) => r.rule_id === rule);
 
@@ -118,7 +118,7 @@ test('rcrv-3d: draft rule (no official value) is listed and never run', { skip }
 test('rcrv-3d: the precomputed offline results match a fresh run', { skip }, () => {
   const { out } = load();
   const pre = read('ships/rcrv/results-3d.json');
-  assert.deepEqual(pre.summary, out.summary, 'run: node check.mjs --precompute');
+  assert.deepEqual(pre.summary, out.summary, 'run: npm run precompute');
   assert.equal(pre.findings.length, findingsOf(out).length);
   assert.ok(pre.findings.every((f) => Number.isInteger(f.objectid)));
 });

@@ -1,9 +1,8 @@
 // ShipCheck UI. The pass/fail decision always comes from the shared deterministic checker
 // (/src/checker.mjs), which runs right here in the browser so edits re-check instantly.
 import { checkModel, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK } from '/src/checker.mjs';
-import { scoreResults, scoreLine } from '/src/score.mjs';
+import { scoreResults, scoreLine, badgeText } from '/src/score.mjs';
 import { partsToModel } from '/src/parts-model.mjs';
-import { reportRows, toCSV, toHTML, badgeText } from '/src/report.mjs';
 import { createViewer } from './viewer3d.js';
 import { createApsViewer, createFallbackViewer } from './viewer-aps.js';
 
@@ -41,12 +40,12 @@ const prov = (src) => (src ? `<span class="prov ${provClass(src)}" title="${esc(
 
 const S = {
   scenarios: [], sc: null, pristine: null, model: null, norm: null,
-  coreRules: [], extraRules: [], expected: null, baseline: null, results: null,
-  selected: null, edits: new Map(), role: 'engineer', ai: { enabled: false },
+  coreRules: [], expected: null, baseline: null, results: null,
+  selected: null, edits: new Map(),
   filter: { status: new Set(['non_compliant', 'not_enough_info', 'compliant', 'null']), family: '', deck: '' },
-  lastCheckMs: 0, demo: null,
+  lastCheckMs: 0,
 };
-const allRules = () => [...S.coreRules, ...S.extraRules];
+const allRules = () => S.coreRules;
 const ruleById = (id) => allRules().find((r) => r.id === id);
 const elById = (id) => S.model.elements.find((e) => e.id === id);
 const deckName = (id) => S.norm.decks.find((d) => d.id === id)?.name ?? id;
@@ -60,7 +59,7 @@ const LIST_PAGE = 400;
 let listLimit = LIST_PAGE;
 
 // The findings render at once; the APS model (large, streamed from Autodesk) is coloured when it arrives.
-// S.viewerReady resolves when the scenario's viewer is usable (the demo waits for it).
+// S.viewerReady resolves when the scenario's viewer is usable.
 const NOOP_VIEWER = { build() {}, update() {}, paintNeutral() {}, select() {}, flyToElement() {}, setFilter() {}, overview() {}, setMode() {}, setPlan() {}, mode: 'all', plan: false };
 function useViewer(sc) {
   const want = sc.viewer === 'aps' ? 'aps' : 'three';
@@ -74,7 +73,7 @@ function useViewer(sc) {
   viewer = NOOP_VIEWER;
   S.viewerReady = (async () => {
     try {
-      // ?noaps forces the offline fallback (rehearse the demo without internet).
+      // ?noaps forces the offline fallback (test without internet).
       if (new URLSearchParams(location.search).has('noaps')) throw new Error('disabled with ?noaps');
       views.aps ??= await createApsViewer($('#apsView'), { onPick });
       await views.aps.load();
@@ -104,9 +103,6 @@ async function init() {
   const [scen, core] = await Promise.all([fetchJSON('/api/scenarios'), fetchJSON('/rules.json')]);
   S.scenarios = scen;
   S.coreRules = core.rules;
-  S.extraRules = await fetchJSON('/rules-approved.json').then((j) => j.rules).catch(() => []);
-  S.ai = await fetchJSON('/api/ai/status').catch(() => ({ enabled: false }));
-  $('#aiTools').hidden = !S.ai.enabled;
   $('#scenario').innerHTML = S.scenarios.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
   const want = new URLSearchParams(location.search).get('scenario');
   await loadScenario(S.scenarios.find((s) => s.id === want)?.id ?? S.scenarios[0].id);
@@ -376,10 +372,8 @@ function renderResults(id) {
         <span class="tag grey">${r.text_status === 'verbatim' ? 'verbatim text' : 'paraphrased text'}</span>
         ${r.basis !== 'explicit' ? `<span class="tag grey" title="${esc(ruleById(r.rule_id)?.basis_note || '')}">basis: ${esc(r.basis)}</span>` : ''}
         ${r.reference_url ? `<a class="tag grey" href="${esc(r.reference_url)}" target="_blank" rel="noopener">official source ↗</a>` : ''}
-        ${S.ai.enabled ? `<button class="tag grey aiExplain" data-rule="${esc(r.rule_id)}" title="AI rewrites the explanation and suggests a fix; the status does not change">Explain + suggest fix (AI)</button>` : ''}
       </div>
-      <div class="aiOut"></div>
-    </div>`).join('') || '<p class="muted">No rule in the current rule set applies to this element.</p>';
+      </div>`).join('') || '<p class="muted">No rule in the current rule set applies to this element.</p>';
 
   // "Also required": related rules not applied to this element, and where they are checked in the model.
   const applied = new Set(e.results.map((r) => r.rule_id));
@@ -405,7 +399,6 @@ function renderResults(id) {
     ${also || '<p class="muted">No related rules outside the ones applied above.</p>'}
     ${na ? `<h2>Considered, not applicable (${e.not_applicable.length})</h2>${na}` : ''}`;
   document.querySelectorAll('#dResults .goto').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); select(a.dataset.id); }));
-  document.querySelectorAll('#dResults .aiExplain').forEach((b) => (b.onclick = () => aiExplain(id, b.dataset.rule, b.closest('.res').querySelector('.aiOut'))));
 }
 
 function lengthParams() {
@@ -424,7 +417,7 @@ function renderEditor(id) {
   const lens = lengthParams();
   const needed = e.results.map((r) => r.parameter).filter((p) => p && !(p in (el.props || {})));
   const keys = [...new Set([...Object.keys(el.props || {}), ...needed])];
-  const ro = S.role !== 'engineer' || S.precomputed ? 'disabled' : '';
+  const ro = S.precomputed ? 'disabled' : '';
   const rows = keys.map((k) => {
     const raw = el.props?.[k];
     const v = readValue(raw, S.norm.units, el.source || S.model.source || 'not stated');
@@ -449,7 +442,7 @@ function renderEditor(id) {
     return `<tr class="${!v ? 'missing' : ''} ${changed ? 'changed' : ''}"><td>${esc(k)}${!v ? ' (missing)' : ''}</td><td>${input}${orig}</td><td>${v ? prov(v.source) : raw?.source ? prov(raw.source) : ''}</td></tr>`;
   }).join('');
   $('#dEditor').innerHTML = `<table class="editor">${rows}</table>
-    <div class="muted" style="margin-top:4px">${S.role === 'engineer' ? 'Change a value: the element is re-checked instantly. Edits stay in this session until you export the model.' : 'Viewer role: values are read-only.'}</div>`;
+    <div class="muted" style="margin-top:4px">${S.precomputed ? 'Precomputed results: values are read-only.' : 'Change a value: the element is re-checked instantly. Edits stay in this session until you export the model.'}</div>`;
   $('#dEditor').querySelectorAll('[data-key]').forEach((inp) => {
     const commit = () => {
       const k = inp.dataset.key, kind = inp.dataset.kind;
@@ -470,7 +463,7 @@ function renderEditor(id) {
 }
 
 function applyEdit(id, key, value, unit) {
-  if (S.role !== 'engineer' || S.precomputed) return;
+  if (S.precomputed) return;
   const el = elById(id);
   const pristineEl = S.pristine.elements.find((x) => x.id === id);
   const before = display(pristineEl?.props?.[key], S.norm.units);
@@ -487,201 +480,12 @@ function applyEdit(id, key, value, unit) {
   $('#dStatus').classList.remove('flash'); void $('#dStatus').offsetWidth; $('#dStatus').classList.add('flash');
 }
 
-// ---------- report export (shared with the CLI: src/report.mjs) ----------
-
-function exportCSV() {
-  download(`findings-${S.sc.id}.csv`, toCSV(reportRows(S.results, S.model, allRules())), 'text/csv');
-}
-
-function exportReport() {
-  const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(),
-    score: S.baseline, edits: [...S.edits.values()] });
-  const w = window.open('', '_blank');
-  if (w) { w.document.write(html); w.document.close(); } else download(`report-${S.sc.id}.html`, html, 'text/html');
-}
-
 function download(name, text, type) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([text], { type }));
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
-
-// ---------- AI (optional; never decides pass/fail) ----------
-
-async function aiExplain(elId, ruleId, out) {
-  const r = S.results.elements[elId].results.find((x) => x.rule_id === ruleId);
-  out.innerHTML = '<div class="ai-box">Asking the AI…</div>';
-  try {
-    const j = await fetchJSON('/api/ai/explain', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ element: { id: elId, name: elById(elId).name, type: elById(elId).type }, result: r }) });
-    out.innerHTML = `<div class="ai-box"><b>AI (${esc(j.provider)}), does not change the result:</b>\n${esc(j.explanation)}\n<b>Suggested fix:</b> ${esc(j.fix)}${j.quote_ok ? '' : '\n⚠ The AI quote did not match the rule text and was removed.'}</div>`;
-  } catch (e) {
-    out.innerHTML = `<div class="ai-box">AI not available: ${esc(e.message)}</div>`;
-  }
-}
-
-let draft = null;
-$('#draftBtn').onclick = () => { $('#aiDialog').showModal(); };
-$('#aiDraft').onclick = async () => {
-  $('#aiStatus').textContent = 'Drafting…';
-  $('#aiApprove').disabled = true;
-  try {
-    const j = await fetchJSON('/api/ai/draft-rule', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: $('#aiText').value, source: $('#aiSource').value }) });
-    draft = j.rule;
-    $('#aiOut').hidden = false;
-    $('#aiOut').textContent = j.found ? JSON.stringify(j.rule, null, 2) : 'not found: the text does not contain a checkable rule.';
-    $('#aiChecks').innerHTML = (j.checks || []).map((c) => `<div class="${c.ok ? 'check-ok' : 'check-bad'}">${c.ok ? '✓' : '✗'} ${esc(c.label)}</div>`).join('');
-    $('#aiApprove').disabled = !(j.found && j.valid) || S.role !== 'engineer';
-    $('#aiStatus').textContent = `Drafted by ${j.provider}. Review every field before approving.`;
-  } catch (e) {
-    $('#aiStatus').textContent = e.message;
-  }
-};
-$('#aiApprove').onclick = async () => {
-  const j = await fetchJSON('/api/rules/approve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rule: draft }) });
-  S.extraRules = j.rules;
-  $('#aiStatus').textContent = `Added ${draft.id} (verified: false). Re-checked.`;
-  $('#aiApprove').disabled = true;
-  recheck();
-  renderScore();
-  renderFilters();
-};
-
-// ---------- demo run-through (about 28 s after the 3D model is loaded) ----------
-
-function caption(text, sub = '') {
-  const c = $('#caption');
-  c.hidden = !text;
-  c.innerHTML = `${esc(text)}${sub ? `<small>${esc(sub)}</small>` : ''}`;
-}
-function pulse(sel) {
-  const n = typeof sel === 'string' ? document.querySelector(sel) : sel;
-  if (!n) return;
-  n.classList.remove('pulse'); void n.offsetWidth; n.classList.add('pulse');
-}
-
-// Scenario-independent pieces of the run-through.
-async function waitViewer(step, token) {
-  const ready = S.viewerReady ?? Promise.resolve();
-  let done = false;
-  ready.finally(() => { done = true; });
-  if (!done) caption('Loading the real 3D model from Autodesk APS…', 'Streamed once per session; the check itself already ran locally');
-  while (!done) { await step(250); if (token.stop) return; }
-}
-
-function ruleQuote(r, match) {
-  const t = r.rule_text || '';
-  const sentences = t.split(/(?<=\.)\s+(?=\d|[A-Z])/);
-  const s = (match && sentences.find((x) => x.toLowerCase().includes(match.toLowerCase()))) || sentences[0] || t;
-  return s.length > 230 ? `${s.slice(0, 228)}…` : s;
-}
-
-async function paintProgressively(step, chunks = 8) {
-  viewer.paintNeutral();
-  const ids = S.norm.elements.map((e) => e.id);
-  const per = Math.ceil(ids.length / chunks);
-  for (let i = 0; i < ids.length; i += per) { viewer.update(S.results, ids.slice(i, i + per)); await step(Math.round(2400 / chunks)); }
-  viewer.update(S.results);
-}
-
-async function demoTypeFix(step, focus, fix) {
-  const inp = fix.prop && $('#dEditor').querySelector(`[data-key="${CSS.escape(fix.prop)}"]`);
-  if (!inp) return false;
-  inp.closest('tr').scrollIntoView({ block: 'center', behavior: 'smooth' });
-  const unitSel = $('#dEditor').querySelector(`[data-unit-for="${CSS.escape(fix.prop)}"]`);
-  if (unitSel && fix.unit) unitSel.value = fix.unit;
-  inp.focus();
-  inp.value = '';
-  for (const ch of String(fix.value)) { inp.value += ch; await step(150); }
-  inp.dispatchEvent(new Event('input'));
-  return true;
-}
-
-// Demo run-through, about 28 s once the 3D model is loaded:
-// RCRV real model -> check -> first red part with the rule quote -> cruise deck -> C2 overlap -> live fix -> green -> export.
-async function runDemo() {
-  if (S.demo) { S.demo.stop = true; return; }
-  const token = (S.demo = { stop: false });
-  const step = async (ms) => { await sleep(ms); if (token.stop) throw new Error('stopped'); };
-  $('#demoBtn').textContent = '■ Stop demo';
-  const real = S.scenarios.find((s) => s.kind === 'parts');
-  const cruise = S.scenarios.find((s) => s.id === 'cruise');
-  try {
-    if (views.three.plan) { views.three.setPlan(false); $('#planBtn').classList.remove('on'); }
-    // 1. Open the real RCRV model (reuse it if it is already open and unedited).
-    if (real) {
-      if (S.sc.id !== real.id || S.edits.size) await loadScenario(real.id);
-      await waitViewer(step, token);
-      const c = S.model.counts;
-      caption('OSU RCRV: real ShipConstructor production model', `${c ? `${c.objects.toLocaleString('en')} objects in the model · ` : ''}${S.norm.elements.length.toLocaleString('en')} parts checked · inches converted to mm`);
-      viewer.overview();
-      viewer.paintNeutral();
-      await step(2800);
-
-      // 2. Run the check: colours appear group by group.
-      const run = allRules().filter((r) => !r.draft && Object.values(S.results.elements).some((e) => e.results.some((x) => x.rule_id === r.id)));
-      caption(`Checking ${run.length} rules on real design data`, [...new Set(run.map((r) => family(r.source)))].join(' · '));
-      await paintProgressively(step);
-      const s = S.results.summary;
-      caption(`${s.non_compliant} non-compliant · ${s.not_enough_info.toLocaleString('en')} not enough info · ${s.compliant.toLocaleString('en')} compliant`,
-        S.baseline ? `Ground truth: ${S.baseline.line ?? scoreLine(S.baseline)}` : 'Deterministic checker: same input, same result');
-      pulse('#pills'); pulse('#scorebox'); pulse('#accBadge');
-      await step(3000);
-
-      // 3. Fly to the first red part, with the rule quote.
-      const d = S.model.demo || {};
-      const first = findingsOf(S.results).find((f) => f.status === 'non_compliant' && (!d.focus_rule || f.rule_id === d.focus_rule)) ?? findingsOf(S.results)[0];
-      if (first) {
-        select(first.element);
-        const r = S.results.elements[first.element].results.find((x) => x.rule_id === first.rule_id);
-        caption(`${first.element}: ${r.measured} in hull structure (SWBS ${elById(first.element)?.props?.swbs_group?.value ?? '1xx'})`,
-          `“${ruleQuote(r, d.quote_match)}” (${r.source.split(':')[0]})`);
-        document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
-        await step(4800);
-      }
-    }
-
-    // 4. Switch to the cruise deck: C2 fails two overlapping rules.
-    if (cruise) {
-      caption('Cruise passenger deck: same checker, passenger rules', 'SOLAS/FSS means of escape + ADA/PVAG accessibility');
-      await loadScenario(cruise.id);
-      await step(1600);
-      const d = S.model.demo || {};
-      const focus = d.focus;
-      select(focus);
-      const fe = S.results.elements[focus];
-      const bad = fe.results.filter((r) => r.status === 'non_compliant');
-      const gov = fe.governing[d.fix?.prop];
-      caption(`${focus} fails ${bad.length} overlapping rules: ${bad.map((r) => `${r.rule_id} (${r.required})`).join(' + ')}`,
-        gov ? `The strictest governs: ${gov.required} (${gov.rule_id}). Measured: ${bad[0]?.measured}` : '');
-      document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
-      pulse('#dResults .gov');
-      await step(4200);
-
-      // 5. Fix it live and watch it turn green.
-      const fix = d.fix || {};
-      caption(`Engineer sets ${fix.prop} to ${fix.value} ${fix.unit || 'mm'}`, 'Every edit is re-checked instantly by the deterministic checker');
-      if (await demoTypeFix(step, focus, fix)) {
-        await step(500);
-        const now = S.results.elements[focus].worst;
-        caption(now === 'compliant' ? `${focus} is now compliant with both rules` : `${focus}: ${LABEL[now]}`,
-          `Re-checked in ${S.lastCheckMs.toFixed(1)} ms · logged as a session edit for the class submission report`);
-        $('#detail').scrollTo({ top: 0, behavior: 'smooth' });
-        pulse('#dStatus');
-        await step(3000);
-      }
-    }
-    caption('Export the findings: HTML report and CSV', 'Rule references, measured vs required, value provenance, inch → mm conversions');
-    pulse('#reportBtn'); pulse('#csvBtn');
-    await step(2600);
-  } catch (e) {
-    if (e.message !== 'stopped') console.error(e);
-  } finally {
-    caption('');
-    S.demo = null;
-    $('#demoBtn').innerHTML = '&#9654; Demo run-through';
-  }
 }
 
 // ---------- wiring ----------
@@ -692,12 +496,6 @@ $('#deck').onchange = (e) => {
   if (S.selected) viewer.select(S.selected, { fly: false });
 };
 $('#planBtn').onclick = () => { viewer.setPlan(!viewer.plan); $('#planBtn').classList.toggle('on', viewer.plan); };
-$('#demoBtn').onclick = runDemo;
-$('#reportBtn').onclick = exportReport;
-$('#csvBtn').onclick = exportCSV;
-$('#role').onchange = (e) => { S.role = e.target.value; if (S.selected) renderEditor(S.selected); };
-addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.demo) S.demo.stop = true; });
 
 window.__shipcheck = S; // for debugging in the console
-init().then(() => { if (new URLSearchParams(location.search).has('demo')) runDemo(); })
-  .catch((e) => { $('#detail').innerHTML = `<p class="check-bad">Failed to load: ${esc(e.message)}</p>`; console.error(e); });
+init().catch((e) => { $('#detail').innerHTML = `<p class="check-bad">Failed to load: ${esc(e.message)}</p>`; console.error(e); });

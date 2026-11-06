@@ -1,6 +1,6 @@
 {
   "scenario": "rcrv",
-  "note": "Ground truth for the planted cases in ships/rcrv/ship.json. Every finding the checker reports must be listed here, otherwise it counts as a false alarm.",
+  "note": "Ground truth for the planted cases in tests/fixtures/rcrv-layout.json. Every finding the checker reports must be listed here, otherwise it counts as a false alarm.",
   "findings": [
     { "element": "MD-C1", "rule": "FSS-13-CORRIDOR", "status": "non_compliant", "why": "Lab corridor 850 mm < 900 mm escape width" },
     { "element": "02-ST1", "rule": "FSS-13-STAIR", "status": "non_compliant", "why": "Stair 31.5 in = 800 mm < 900 mm (unit conversion)" },

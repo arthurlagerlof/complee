@@ -20,11 +20,6 @@
   <label>Decks <select id="deck"></select></label>
   <button id="planBtn" title="Top-down plan view">Plan view</button>
   <span id="accBadge" class="accbadge" hidden title="Ground truth of the unedited design: the same files and scoring as npm test"></span>
-  <span class="grow"></span>
-  <button id="demoBtn" class="primary" title="Scripted 30-second run-through (Esc to stop)">&#9654; Demo run-through</button>
-  <button id="reportBtn" title="Printable findings report">Report</button>
-  <button id="csvBtn" title="Download findings as CSV">CSV</button>
-  <label title="Bonus: viewer role cannot edit design values">Role <select id="role"><option value="engineer">Engineer</option><option value="viewer">Viewer (read-only)</option></select></label>
 </header>
 <main>
   <aside id="side">
@@ -32,9 +27,6 @@
     <section id="score"></section>
     <section id="summary"></section>
     <section id="edits"></section>
-    <section id="aiTools" hidden>
-      <button id="draftBtn">Draft a rule from pasted text (AI)</button>
-    </section>
     <section>
       <h2>Findings</h2>
       <div id="filters"></div>
@@ -51,23 +43,9 @@
     <div id="threeView" class="viewpane"></div>
     <div id="apsView" class="viewpane" hidden></div>
     <div id="fallbackView" class="viewpane" hidden></div>
-    <div id="caption" hidden></div>
   </section>
   <aside id="detail"><p class="muted">Click an element in the model or in the list to see every rule that applies, why it passes or fails, and where each value comes from.</p></aside>
 </main>
-
-<dialog id="aiDialog">
-  <form method="dialog" class="ai-form">
-    <h2>Draft a rule from regulation text</h2>
-    <p class="muted">Paste one rule paragraph. The AI drafts a structured entry; it never decides pass/fail. The draft is stored as <code>verified: false</code> and is only used after you approve it.</p>
-    <textarea id="aiText" rows="7" placeholder="e.g. 404.2.3 Clear Width. Door openings shall provide a clear width of 32 inches (815 mm) minimum..."></textarea>
-    <input id="aiSource" placeholder="Source (e.g. ADA 2010 Standards)" />
-    <div class="row"><button type="button" id="aiDraft" class="primary">Draft</button><span id="aiStatus" class="muted"></span></div>
-    <pre id="aiOut" hidden></pre>
-    <div id="aiChecks"></div>
-    <div class="row"><button type="button" id="aiApprove" disabled>Approve and add to rule set</button><button value="close">Close</button></div>
-  </form>
-</dialog>
 
 <script type="module" src="app.js"></script>
 </body>

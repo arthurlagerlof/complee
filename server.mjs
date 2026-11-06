@@ -5,20 +5,10 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runCheck, loadRules, loadScenarios } from './check.mjs';
-import { providerConfig, draftRule, explainResult, approveRule, loadApproved } from './rule-assistant.mjs';
+import { runCheck, loadRules, loadScenarios } from './src/load.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8080);
-
-// Minimal .env loader (no dependency). Values are never logged.
-const envFile = path.join(ROOT, '.env');
-if (fs.existsSync(envFile)) {
-  for (const line of fs.readFileSync(envFile, 'utf8').split(/\r?\n/)) {
-    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/i);
-    if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
-  }
-}
 
 // Autodesk APS keys for the 3D viewer: read from 3D_Since_AI/.env into a private object (not process.env),
 // never logged, never served. The browser only gets a short-lived read-only token (scope viewables:read).
@@ -65,7 +55,7 @@ const STATIC = [
   ['/node_modules/three/', 'node_modules/three'],
   ['/', 'public'],
 ];
-const ROOT_FILES = new Set(['/rules.json', '/scenarios.json', '/rules-approved.json']);
+const ROOT_FILES = new Set(['/rules.json', '/scenarios.json']);
 
 function sendJSON(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
@@ -103,18 +93,7 @@ function serveStatic(p, res) {
 const routes = {
   'GET /api/scenarios': () => loadScenarios(),
   'GET /api/rules': () => ({ rules: loadRules() }),
-  'GET /rules-approved.json': () => (fs.existsSync(path.join(ROOT, 'rules-approved.json'))
-    ? JSON.parse(fs.readFileSync(path.join(ROOT, 'rules-approved.json'), 'utf8')) : { rules: [] }),
-  'GET /api/check':(q) => runCheck(q.get('scenario') || 'rcrv', 'rules.json', null),
-  // Optional AI layer: drafts and explanations only, never pass/fail.
-  'GET /api/ai/status': () => { const c = providerConfig(); return { enabled: !!c, provider: c?.name ?? null, model: c?.model ?? null }; },
-  'POST /api/ai/draft-rule': (q, b) => draftRule(String(b.text || '').slice(0, 8000), b.source, loadRules().map((r) => r.id)),
-  'POST /api/ai/explain': (q, b) => explainResult(b.element, b.result),
-  'POST /api/rules/approve': (q, b) => {
-    if (!b.rule) throw Object.assign(new Error('Missing rule'), { status: 400 });
-    const core = loadRules().filter((r) => !loadApproved().some((a) => a.id === r.id));
-    return { rules: approveRule(b.rule, core.map((r) => r.id)) };
-  },
+  'GET /api/check': (q) => runCheck(q.get('scenario') || 'rcrv-3d'),
   // APS 3D viewer (real RCRV model).
   'GET /api/aps/status': () => {
     const configured = !!(aps.APS_CLIENT_ID && aps.APS_CLIENT_SECRET);
@@ -137,8 +116,6 @@ const routes = {
     fs.writeFileSync(file, Buffer.from(m[1], 'base64'));
     return { saved: `fallback/${name}.png`, bytes: fs.statSync(file).size };
   },
-  // Kept from Plan B: re-runs the check and writes results.json.
-  'GET /recheck': (q) => runCheck(q.get('scenario') || 'rcrv').summary,
 };
 
 export function addRoute(key, handler) { routes[key] = handler; }
@@ -162,7 +139,7 @@ export const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
   for (const s of loadScenarios()) {
-    const out = runCheck(s.id, 'rules.json', null);
+    const out = runCheck(s.id);
     console.log(`${s.name}: ${JSON.stringify(out.summary)}`);
   }
   console.log(`Open http://localhost:${PORT}`);

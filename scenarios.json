@@ -9,24 +9,16 @@
       "expected": "tests/expected/rcrv-3d.json",
       "precomputed": "ships/rcrv/results-3d.json",
       "viewer": "aps",
-      "fallback_images": ["fallback/rcrv-overview.png", "fallback/rcrv-finding.png"]
+      "fallback_images": [
+        "fallback/rcrv-overview.png",
+        "fallback/rcrv-finding.png"
+      ]
     },
     {
       "id": "cruise",
       "name": "Cruise passenger deck (fictional)",
       "model": "ships/cruise/deck.json",
       "expected": "tests/expected/cruise.json"
-    },
-    {
-      "id": "rcrv",
-      "name": "RCRV layout reconstruction (estimated decks and rooms)",
-      "model": "ships/rcrv/ship.json",
-      "expected": "tests/expected/rcrv.json"
-    },
-    {
-      "id": "rcrv-aps",
-      "name": "RCRV from APS model (extracted, optional)",
-      "model": "ships/rcrv-aps/ship.json"
     }
   ]
 }

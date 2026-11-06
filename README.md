@@ -1,19 +1,20 @@
 # ShipCheck: automated class & regulatory compliance checking
 
 Since AI Hackathon 2026 (Turku), Meyer Turku challenge. ShipCheck checks a ship design model against a rule database and shows,
-for every element, which rules apply, whether it passes, **why**, and where every value comes from.
+for every part, which rules apply, whether it passes, **why**, and where every value comes from.
 
 - **Deterministic checker.** Pass/fail comes from plain code, never from an LLM. Same input, same result.
-- **Three scenarios.** *RCRV: real 3D model*, the OSU ShipConstructor production model (330,760 objects, inches) converted with Autodesk APS and shown in the APS viewer.
-  *Cruise passenger deck (fictional)* with planted findings. *RCRV layout reconstruction* (5 decks, 67 estimated elements).
-- **Real-data rules** on the 3D model: IACS UR W11 hull steel grades, UR S6 Table 7 grade vs thickness, a 600 × 600 mm hatch opening, SOLAS II-2/4.2.2.5.1 oil fuel
-  pipe material, and design-status / error-value data checks. A draft rule (minimum thickness) is listed but never run: no official value yet.
-- **15 layout rules.** They cover SOLAS/FSS means of escape, ADA/PVAG accessibility, IGF Code LNG tanks, Load Line, MARPOL and a DNV class rule example. Applicability depends on ship type, operating area, size and class society.
-- **Real-time.** Edit a value in the detail panel and the element is re-checked and recoloured instantly (the checker runs in the browser).
-- **Trust.** `npm test` runs the ground truth for every planted finding, the hand-checked findings of the real model (every bulk count recomputed by an
-  independent scan of the source data), edge cases and the server whitelist. The top bar shows the badge, e.g. *✓ 7/7 expected findings, 0 false alarms*.
+- **Real 3D model.** The OSU RCRV ShipConstructor production model (330,760 objects, inches) converted with Autodesk APS and shown in the APS viewer:
+  parts are coloured red (non-compliant), amber (not enough info) or green (compliant). Clicking a finding isolates the part and flies to it.
+- **Cruise passenger deck (fictional)** with planted findings, shown in a Three.js deck view, with live editing.
+- **No guessing.** Missing or unparseable data gives *not enough info*. Every rule value is `verified: false` until checked against the official text
+  ([VERIFY.md](VERIFY.md)); interpretations are labelled.
+- **Ground truth.** `npm test` checks every planted and hand-checked finding; the top bar shows the score, e.g. *✓ 7/7 expected findings, 0 false alarms*.
 
-## Run (Windows on ARM / PowerShell, macOS, Linux; Node 20+)
+> This is the **core** branch (`shipcheck`). The bonus features (scripted demo run-through, optional AI rule drafting, HTML/CSV report export,
+> viewer role, the estimated RCRV deck-layout scenario) are on the branch **`shipcheck-full`**.
+
+## Run (Node 20+)
 
 ```bash
 npm install
@@ -23,116 +24,80 @@ npm install
 npm start
 ```
 
-Open http://localhost:8080. Then run the tests:
+Open http://localhost:8080. Run the tests:
 
 ```bash
 npm test
 ```
 
-You can also check from the terminal only: `npm run check` covers all scenarios, and `node check.mjs rcrv-3d` writes `results.json`.
-
 | Command | What it does |
 | --- | --- |
-| `node prepare-model.mjs` | Streams `3D_Since_AI/model-properties.json` (150 MB, never loaded whole) into `ships/rcrv/parts.json`: objectid, name, source file, ShipConstructor and piping fields, mm/kg plus the original text. Prints counts. |
-| `node check.mjs --precompute` | Writes `ships/rcrv/results-3d.json`, the offline fallback (used when `parts.json` cannot be loaded). `npm test` fails if it is out of date. |
-| `node check.mjs --report [scenario]` | Writes `reports/<scenario>.html` and `.csv`, the same output as the Report and CSV buttons. |
+| `npm start` | Local server on port 8080 (static files from a whitelist, check API, APS token). |
+| `npm test` | All tests (checker, real-model ground truth, unit parsing, server whitelist). |
+| `npm run check` | Checks every scenario in the terminal. `node scripts/check.mjs rcrv-3d` also writes `results.json`. |
+| `npm run prepare-model` | Streams `3D_Since_AI/model-properties.json` (150 MB, never loaded whole) into `ships/rcrv/parts.json`. Needs the local APS export. |
+| `npm run precompute` | Rewrites `ships/rcrv/results-3d.json` (offline results). Run it after changing rules or parts; `npm test` fails if it is stale. |
 
-**3D viewer (APS).** `server.mjs` reads `APS_CLIENT_ID` / `APS_CLIENT_SECRET` from `3D_Since_AI/.env` (gitignored, never served or logged) and hands the
-browser a read-only token (`/api/aps/token`, scope `viewables:read`, localhost only). Parts are coloured by dbId = objectid. Without internet or keys, the
-app shows saved screenshots (`public/fallback/`) next to the locally computed findings. `?noaps` forces that fallback, for rehearsing an offline demo.
-No Python, Navisworks, Blender or internet connection is needed after `npm install`.
+### 3D viewer (Autodesk APS)
 
-## Using it
+`server.mjs` reads `APS_CLIENT_ID` and `APS_CLIENT_SECRET` from `3D_Since_AI/.env` (gitignored: ask the team for the keys) and gives the browser a
+short-lived read-only token (`/api/aps/token`, scope `viewables:read`, localhost only). The model URN is in `3D_Since_AI/urn.txt`.
+Without keys or internet, the app shows saved screenshots (`public/fallback/`) next to the locally computed findings. `?noaps` forces that fallback.
 
-| Area | What it does |
-| --- | --- |
-| Top bar | Scenario switcher. Deck selector: all decks, exploded, or one deck. Plan view (top-down). **Demo run-through**. Report (printable HTML, PDF via print). CSV. Role (engineer/viewer). |
-| Left | Ship particulars with provenance, ground-truth score, summary, session edits, and findings filtered by status, rule source and deck. Click a finding to fly to the element. |
-| Right | Every applicable rule, with measured vs required value, explanation, quoted rule text, input provenance and verification status. Also: the governing value when rules overlap, **Also required** (related rules and where they are checked), rules considered but not applicable (with the reason), and the editable design data. |
-
-## Architecture
+## Project structure
 
 ```
-ships/*/ship.json, deck.json ──┐
-rules.json (+ rules-approved.json)  ├─> src/checker.mjs (pure ES module) ─> results ─> UI (public/), CLI (check.mjs), tests
-tests/expected/*.json ─────────┘          src/score.mjs (ground truth)
-server.mjs: static files (whitelist, never .env) + /api/check, /api/scenarios, /api/rules, /recheck, /api/ai/*
-rule-assistant.mjs: optional LLM drafting/explanations (Mistral EU, Anthropic, OpenAI-compatible/local)
-extract-aps.mjs: optional APS Model Derivative extraction -> ships/rcrv-aps/ship.json
+server.mjs                 local server: whitelisted static files, /api/check, /api/aps/*
+rules.json                 rule database (all verified:false, see VERIFY.md)
+scenarios.json             the scenarios shown in the UI
+src/                       checker and data code (pure modules run in the browser and in Node, except load.mjs)
+  checker.mjs              deterministic checker: units to mm, applicability, check types, governing value on overlap
+  parts-model.mjs          parts.json -> checker model (material family, steel grade, SWBS group, oil fuel systems, openings)
+  units.mjs                feet-inch / inch / lb parsing (unknown text -> null, never a guess)
+  json-stream.mjs          streams a huge JSON array (Node only)
+  score.mjs                compares results with the ground truth (tests/expected)
+  load.mjs                 Node: loads rules, scenarios, models; runs and precomputes checks
+public/                    the web UI
+  app.js                   sidebar, findings list, detail panel, live editing
+  viewer3d.js              Three.js deck view (cruise scenario)
+  viewer-aps.js            Autodesk APS viewer + screenshot fallback (real RCRV model)
+  fallback/                screenshots used when APS is unreachable
+ships/
+  rcrv/parts.json          69,993 prepared parts of the real model (mm/kg + original inch text, objectid = viewer dbId)
+  rcrv/rcrv-3d.meta.json   ship particulars with provenance
+  rcrv/results-3d.json     precomputed results (offline fallback)
+  cruise/deck.json         fictional cruise deck with planted findings
+scripts/
+  check.mjs                CLI check / precompute
+  prepare-model.mjs        APS property dump -> ships/rcrv/parts.json
+tests/                     node:test suites, ground truth (expected/), fixtures/
+3D_Since_AI/               APS pipeline scripts (upload, status, extract, analyze), urn.txt, model-summary.txt.
+                           Local only (gitignored): .env with the keys, the .nwd model, the large JSON exports.
+VERIFY.md                  unverified values, interpretations, mentor questions
 ```
 
-| File | Purpose |
-| --- | --- |
-| `src/checker.mjs` | Normalises units to mm (`mm`, `cm`, `m`, `in`, `ft`), keeps the original unit for display, evaluates rules. Check types: `min`, `max`, `not_adjacent_zone` (declared or derived from 3D geometry), `distance_min_hull` (e.g. IGF B/5), `count_min` (e.g. escape routes), `requires` (if X exists, Y must exist). Missing data always gives `not_enough_info`. |
-| `src/parts-model.mjs` | Turns `parts.json` into a checker model: material family, steel grade, SWBS group, oil fuel systems, openings parsed from names. Every derived value names its derivation. |
-| `src/units.mjs`, `src/json-stream.mjs` | Feet-inch / lb parsing (unknown text gives null, never a guess) and the streaming JSON reader. |
-| `src/report.mjs` | HTML report and CSV, shared by the UI and the CLI. |
-| `public/viewer-aps.js` | Autodesk APS viewer with the same interface as the Three.js viewer, plus the screenshot fallback. |
-| `src/score.mjs` | Compares results with `tests/expected/<scenario>.json`: detected, missed, wrong status, false alarms, expected passes. |
-| `public/` | `index.html`, `app.js` (UI, editing, demo, export), `viewer3d.js` (Three.js from `node_modules`). |
-| `ships/rcrv/build-ship.mjs` | Generates the RCRV reconstruction `ship.json`. |
-| `VERIFY.md` | Every unverified rule value and ship particular, and the official source to check it against. |
-| `DEMO_SCRIPT.md` | The 30-second opening shot and the pitch outline. |
+## Rules
 
-## Model format (`ship.json`)
-
-```jsonc
-{
-  "name": "...", "units": "mm",               // geometry and plain values in these units
-  "ship": { "type": "research", "operating_area": ["US"], "class_society": "DNV",
-            "length_overall": { "value": 60650, "unit": "mm", "source": "public particulars" }, "beam": ..., "gross_tonnage": ... },
-  "decks": [ { "id": "MD", "name": "Main deck", "elevation": 5000, "height": 2700,
-               "outline": [[x, y], ...], "side_lines": [[[x, y], ...]] } ],   // side_lines optional: ship shell for distance checks
-  "hull": { "deck": "MD" },                   // optional: draw the hull shell up to this deck
-  "elements": [ { "id": "MD-C1", "type": "corridor", "name": "...", "deck": "MD", "source": "estimated",
-                  "geom": { "x": 20100, "y": -425, "z": 0, "lx": 23900, "ly": 850, "h": 150 },   // relative to the deck
-                  "props": { "clear_width": { "value": 850, "unit": "mm", "source": "GA drawing 101" }, "dead_end_length": 0 } } ],
-  "demo": { "focus": "01-GR1", "fix": { "prop": "height", "value": 1000, "unit": "mm" } }
-}
-```
-
-The older `deck.json` format (one `deck` with `length`/`width`, no `decks[]`) still loads. The cruise scenario uses it, and a
-test loads the unmodified Plan B file. Element types used by the rules are `corridor`, `stair`, `ramp`, `door`, `guard_rail`, `fuel_tank`,
-`sludge_tank`, `machinery_space`, `escape_zone` (virtual, groups an accommodation area), `ladder`, `escape_trunk` and `space`.
+| Area | Rules | Runs on |
+| --- | --- | --- |
+| Hull materials (real data) | IACS UR W11 hull steel grades; UR S6 Table 7 grade vs thickness (interpretation: RCRV is below 90 m) | RCRV 3D |
+| Openings | 600 × 600 mm hatch clear opening, sizes parsed from names like `30"X36"` (interpretation) | RCRV 3D |
+| Piping | SOLAS II-2/4.2.2.5.1 oil fuel pipes of steel or approved material | RCRV 3D |
+| Data quality | design status must be Final; no "Error" fields | RCRV 3D |
+| Means of escape, accessibility, Load Line, IGF, MARPOL, class | 15 layout rules (SOLAS/FSS, ADA/PVAG, ICLL, IGF Code, MARPOL, DNV) | cruise deck, layout fixture in tests |
+| Draft | minimum plate thickness per structural group: listed, never run (no official value yet) | - |
 
 ## How to add a rule
 
-1. Add an entry to `rules.json`:
-   ```json
-   { "id": "LL-REG25-GUARDRAIL", "source": "International Convention on Load Lines 1966, Annex I",
-     "clause": "Regulation 25", "text": "<exact rule text>", "text_status": "paraphrase",
-     "check": "min", "parameter": "height", "value": 1000, "unit": "mm",
-     "applies_to": { "types": ["guard_rail"], "where": { }, "ship": { "type_in": ["passenger"], "operating_area_any": ["US"],
-                     "min": { "length_overall": { "value": 24, "unit": "m" } }, "equals": { "class_society": "DNV" } } },
-     "related": ["DNV-GUARDRAIL"], "verified": false, "reference_url": "https://..." }
-   ```
-2. Add the rule id to `VERIFY.md`. `npm test` fails otherwise.
-3. If a model now produces a new finding, add it to `tests/expected/<scenario>.json`. Otherwise it counts as a false alarm.
-4. Or use the AI assistant: paste the paragraph and review the draft. It is accepted only if the quote is verbatim and the value appears in the text. Approve it, and it goes to `rules-approved.json`, still `verified: false`.
-
-## How to add a ship
-
-1. Create `ships/<id>/ship.json` (format above). Use `"units": "in"` if the source is in inches; everything is converted.
-2. Add it to `scenarios.json`. Optionally add ground truth in `tests/expected/<id>.json` and a test in `tests/checker.test.mjs`.
-3. From Autodesk APS: once `../3D_Since_AI/urn.txt` exists, run `node extract-aps.mjs`. It maps object names, categories and
-   bounding boxes (from inches) into `ships/rcrv-aps/ship.json`, which then appears as an extra scenario. This step is optional.
+1. Add an entry to `rules.json` (`id`, `source`, `clause`, `text`, `text_status`, `check`, parameters, `applies_to`, `verified: false`).
+   Check types: `min`, `max`, `in_set`, `table_lookup`, `data_quality`, `not_adjacent_zone`, `distance_min_hull`, `count_min`, `requires`.
+   `applies_to.where` takes a value or `{ "prefix" }`, `{ "in" }`, `{ "not_in" }`, `{ "exists" }`.
+2. Add the rule id to `VERIFY.md` (`npm test` fails otherwise).
+3. If it produces new findings, add them to `tests/expected/<scenario>.json` (otherwise they count as false alarms) and run `npm run precompute`.
 
 ## Data provenance policy
 
-- **No invented rule values.** Every rule value is `verified: false` until checked against the official text (`VERIFY.md`). The UI tags
-  each result that uses an unverified value. Rule texts are marked as `paraphrase` until replaced by the verbatim text.
-- **Every model value says where it comes from**: `public particulars`, `GA drawing <sheet>`, `estimated`, `planted test case (fictional value)`,
-  `assumed for the demo`, `derived from 3D geometry`, or `edited in session by engineer`. The UI shows this next to every value.
-- **RCRV**: the GA drawing PDFs were not available locally, so the layout is a simplified reconstruction (`estimated`). The particulars
-  are public figures still to verify (LOA 199 ft vs 193 ft in OSU press material). The class society DNV is assumed for the demo.
-- **Missing data → `not_enough_info`**, never a guess. That includes ship particulars needed to decide whether a rule applies at all.
-- **AI** (optional) never decides pass/fail. It quotes rule text verbatim or says "not found", and its drafts need engineer approval.
-  Keys live in `.env` (see `.env.example`), which is never committed or served.
-
-## Known limitations
-
-- Rule values and clause numbers are not yet verified (see `VERIFY.md`). Some rules are simplified: the IGF location rule, and the IGF distance
-  measured on the deck plan instead of at the summer load line.
-- "Widely separated" escape routes and travel distances are not checked geometrically. Escape routes are declared per zone.
-- Metric equivalents of imperial ADA values (915 mm for 36 in) are kept as in Plan B; a design of exactly 36 in fails by 0.6 mm.
-  This is documented in a test and in `VERIFY.md`.
+- **No invented rule values.** Every value is `verified: false` until checked against the official text. A rule without an official value is a draft and does not run.
+- **Every model value says where it comes from**: the ShipConstructor model (with the source drawing), derived by ShipCheck (with the field it was derived from),
+  public particulars, estimated, fictional, or edited in session. The UI shows this next to every value, and inch values next to their mm conversion.
+- **Missing data gives *not enough info***, never a guess.

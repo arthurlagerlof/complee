@@ -39,7 +39,7 @@ test('streamArray yields every object across chunk boundaries, including braces 
 });
 
 const PARTS = new URL('../ships/rcrv/parts.json', import.meta.url);
-test('prepared parts file: counts match the parts and values keep their original text', { skip: !fs.existsSync(PARTS) && 'run node prepare-model.mjs first' }, () => {
+test('prepared parts file: counts match the parts and values keep their original text', { skip: !fs.existsSync(PARTS) && 'run npm run prepare-model first' }, () => {
   const j = JSON.parse(fs.readFileSync(PARTS, 'utf8'));
   assert.equal(j.parts.length, j.counts.kept);
   assert.equal(j.source.model_unit, 'in');

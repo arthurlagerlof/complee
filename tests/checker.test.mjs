@@ -7,7 +7,8 @@ import { scoreResults, scoreLine } from '../src/score.mjs';
 
 const read = (p) => JSON.parse(fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8'));
 const RULES = read('rules.json').rules;
-const RCRV = read('ships/rcrv/ship.json');
+// Estimated RCRV deck layout with planted findings: test data for the layout rules (escape, Load Line, ...).
+const RCRV = read('tests/fixtures/rcrv-layout.json');
 const CRUISE = read('ships/cruise/deck.json');
 const clone = (o) => structuredClone(o);
 const resultOf = (out, el, rule) => out.elements[el]?.results.find((r) => r.rule_id === rule);
@@ -16,7 +17,7 @@ const notApplied = (out, el, rule) => out.elements[el]?.not_applicable.find((r) 
 // ---------- ground truth ----------
 
 for (const [name, model, expected] of [
-  ['rcrv', RCRV, read('tests/expected/rcrv.json')],
+  ['rcrv-layout', RCRV, read('tests/expected/rcrv-layout.json')],
   ['cruise', CRUISE, read('tests/expected/cruise.json')],
 ]) {
   test(`${name}: every planted finding detected, no false alarms`, () => {
@@ -230,15 +231,6 @@ test('overlapping rules: the strictest value governs', () => {
 
 // ---------- backwards compatibility and provenance ----------
 
-test('original Plan B deck.json (no ship block) still loads and checks', () => {
-  const out = checkModel(read('tests/fixtures/planb-deck-original.json'), RULES);
-  assert.equal(out.schema, 'deck/1 (legacy)');
-  assert.equal(resultOf(out, 'C2', 'FSS-13-CORRIDOR').status, 'non_compliant');
-  // Without ship particulars the checker cannot know whether ADA applies, so it says so.
-  assert.equal(resultOf(out, 'D2', 'ADA-404.2.3').status, 'not_enough_info');
-  assert.equal(resultOf(out, 'T1', 'IGF-LNG-LOCATION').status, 'non_compliant');
-});
-
 test('every RCRV element and every planted value has provenance', () => {
   for (const e of RCRV.elements) {
     assert.ok(e.source, `${e.id} has no source`);
@@ -253,7 +245,7 @@ test('every RCRV element and every planted value has provenance', () => {
   }
 });
 
-test('cruise demo: C2 fails FSS and ADA (915 mm governs); 1000 mm fixes both', () => {
+test('cruise: C2 fails FSS and ADA (915 mm governs); 1000 mm fixes both', () => {
   const out = checkModel(CRUISE, RULES);
   assert.equal(resultOf(out, 'C2', 'FSS-13-CORRIDOR').status, 'non_compliant');
   assert.equal(resultOf(out, 'C2', 'ADA-403.5.1').status, 'non_compliant');
@@ -261,5 +253,4 @@ test('cruise demo: C2 fails FSS and ADA (915 mm governs); 1000 mm fixes both', (
   const m = clone(CRUISE);
   m.elements.find((e) => e.id === 'C2').props.clear_width = { value: 1000, unit: 'mm', source: 'edited in session by engineer' };
   assert.equal(checkModel(m, RULES).elements.C2.worst, 'compliant');
-  assert.deepEqual(CRUISE.demo, { focus: 'C2', fix: { prop: 'clear_width', value: 1000 } }, 'demo script depends on this');
 });

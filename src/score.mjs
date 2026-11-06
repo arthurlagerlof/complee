@@ -63,3 +63,11 @@ export function scoreLine(s) {
   return `${s.detected}/${s.expected} expected findings detected, ${fa}` +
     (s.passes_expected ? `, ${s.passes_ok}/${s.passes_expected} expected passes` : '');
 }
+
+// Short form for the top-bar badge: "7/7 expected findings, 0 false alarms".
+export function badgeText(score) {
+  if (!score) return 'No ground truth for this scenario';
+  const fa = `${score.false_alarms.length} false alarm${score.false_alarms.length === 1 ? '' : 's'}`;
+  if (score.bulk?.length) return `${score.detected}/${score.expected} hand-checked findings + ${score.bulk.length - score.bulk_failed.length}/${score.bulk.length} counts, ${fa}`;
+  return `${score.detected}/${score.expected} expected findings, ${fa}`;
+}

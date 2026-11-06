@@ -19,7 +19,6 @@
     "side_lines": [[[0, 12000], [30000, 12000]]],
     "source": "fictional: 30 m x 12 m section of deck 5; the edge y = 12000 is the starboard shell"
   },
-  "demo": { "focus": "C2", "fix": { "prop": "clear_width", "value": 1000 } },
   "elements": [
     { "id": "C1", "type": "corridor", "name": "Main longitudinal corridor",
       "geom": { "x": 0, "y": 5400, "lx": 30000, "ly": 1200, "h": 150 },
