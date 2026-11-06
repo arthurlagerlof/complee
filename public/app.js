@@ -1,8 +1,10 @@
 // ShipCheck UI. The pass/fail decision always comes from the shared deterministic checker
 // (/src/checker.mjs), which runs right here in the browser so edits re-check instantly.
-import { checkModel, normalizeModel, findingsOf, readValue, UNIT_TO_MM } from '/src/checker.mjs';
+import { checkModel, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK } from '/src/checker.mjs';
 import { scoreResults, scoreLine } from '/src/score.mjs';
+import { partsToModel } from '/src/parts-model.mjs';
 import { createViewer } from './viewer3d.js';
+import { createApsViewer, createFallbackViewer } from './viewer-aps.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -19,6 +21,9 @@ export function family(source = '') {
   if (/IGF/.test(source)) return 'IGF Code';
   if (/Load Lines/.test(source)) return 'Load Line';
   if (/MARPOL/.test(source)) return 'MARPOL';
+  if (/IACS/.test(source)) return 'IACS unified requirements';
+  if (/IGC/.test(source)) return 'IGC Code';
+  if (/data quality/i.test(source)) return 'Data quality';
   if (/DNV|Lloyd|class/i.test(source)) return 'Class rules';
   return source;
 }
@@ -26,7 +31,8 @@ export function family(source = '') {
 function provClass(src = '') {
   if (/edited/.test(src)) return 'edit';
   if (/planted/.test(src)) return 'plant';
-  if (/public|GA drawing/.test(src)) return 'pub';
+  if (/derived by ShipCheck|not in the model/.test(src)) return 'der';
+  if (/public|GA drawing|ShipConstructor model|viewer dbId/.test(src)) return 'pub';
   if (/estimated|assumed/.test(src)) return 'est';
   return '';
 }
@@ -44,7 +50,35 @@ const ruleById = (id) => allRules().find((r) => r.id === id);
 const elById = (id) => S.model.elements.find((e) => e.id === id);
 const deckName = (id) => S.norm.decks.find((d) => d.id === id)?.name ?? id;
 
-const viewer = createViewer($('#view'), { onPick: (id) => select(id, { fly: false }) });
+// Two viewers share the centre pane: Three.js for deck models, the Autodesk APS viewer for the real
+// production model (with a screenshot + findings fallback when APS cannot be reached).
+const onPick = (id) => { if (S.results?.elements[id]) select(id, { fly: false }); };
+const views = { three: createViewer($('#threeView'), { onPick }), aps: null, fallback: null };
+let viewer = views.three;
+const LIST_PAGE = 400;
+let listLimit = LIST_PAGE;
+
+async function useViewer(sc) {
+  const want = sc.viewer === 'aps' ? 'aps' : 'three';
+  $('#threeView').hidden = want !== 'three';
+  $('#apsView').hidden = true;
+  $('#fallbackView').hidden = true;
+  $('#planBtn').disabled = want !== 'three';
+  if (want === 'three') { viewer = views.three; return; }
+  views.fallback ??= createFallbackViewer($('#fallbackView'));
+  views.fallback.setImages(sc.fallback_images || []);
+  try {
+    views.aps ??= await createApsViewer($('#apsView'), { onPick });
+    await views.aps.load();
+    $('#apsView').hidden = false;
+    viewer = views.aps;
+  } catch (e) {
+    console.warn('APS viewer unavailable, using fallback:', e.message);
+    views.fallback.setReason(e.message);
+    $('#fallbackView').hidden = false;
+    viewer = views.fallback;
+  }
+}
 
 // ---------- loading ----------
 
@@ -60,22 +94,61 @@ async function init() {
   await loadScenario(S.scenarios.find((s) => s.id === want)?.id ?? S.scenarios[0].id);
 }
 
+// Real production models come as a parts file (kind "parts") and are turned into a checker model here,
+// in the browser. If the parts file cannot be loaded, the precomputed results are shown read-only.
+async function fetchModel(sc) {
+  if (sc.kind !== 'parts') return { model: await fetchJSON('/' + sc.model) };
+  try {
+    const [parts, meta] = await Promise.all([fetchJSON('/' + sc.model), sc.meta ? fetchJSON('/' + sc.meta) : {}]);
+    return { model: partsToModel(parts, meta) };
+  } catch (e) {
+    if (!sc.precomputed) throw e;
+    const [pre, meta] = await Promise.all([fetchJSON('/' + sc.precomputed), sc.meta ? fetchJSON('/' + sc.meta).catch(() => ({})) : {}]);
+    return { model: modelFromPrecomputed(pre, meta), precomputed: pre };
+  }
+}
+
+function modelFromPrecomputed(pre, meta) {
+  const els = new Map();
+  for (const f of pre.findings) if (!els.has(f.element)) els.set(f.element, { id: f.element, objectid: f.objectid, type: 'part', name: f.name, deck: f.deck, props: {} });
+  const decks = [...new Set(pre.findings.map((f) => f.deck))].map((d) => ({ id: d, name: d, outline: [] }));
+  return { name: `${meta.name ?? pre.model} (precomputed, read-only)`, units: 'mm', kind: 'parts', ship: meta.ship ?? {}, decks, elements: [...els.values()],
+    provenance_note: `Parts file not available: showing the precomputed results of ${pre.generated}. Editing is disabled.` };
+}
+
+function resultsFromPrecomputed(pre) {
+  const rules = Object.fromEntries(allRules().map((r) => [r.id, r]));
+  const elements = {};
+  for (const f of pre.findings) {
+    const e = (elements[f.element] ??= { id: f.element, name: f.name, type: 'part', deck: f.deck, worst: null, results: [], not_applicable: [], governing: {} });
+    e.results.push({ ...f, rule_text: rules[f.rule_id]?.text ?? '', related: [] });
+    if ((STATUS_RANK[f.status] ?? 0) > (STATUS_RANK[e.worst] ?? 0)) e.worst = f.status;
+  }
+  return { ...pre, elements };
+}
+
 async function loadScenario(id) {
   S.sc = S.scenarios.find((s) => s.id === id);
   $('#scenario').value = id;
-  const [model, expected] = await Promise.all([
-    fetchJSON('/' + S.sc.model),
+  const [{ model, precomputed }, expected] = await Promise.all([
+    fetchModel(S.sc),
     S.sc.expected ? fetchJSON('/' + S.sc.expected).catch(() => null) : null,
   ]);
+  S.precomputed = precomputed ?? null;
   S.pristine = model;
   S.model = structuredClone(model);
   S.norm = normalizeModel(S.model);
   S.expected = expected;
   S.edits.clear();
   S.selected = null;
+  listLimit = LIST_PAGE;
+  // Large real models start with the findings only (thousands of compliant parts otherwise).
+  S.filter.status = new Set(S.norm.elements.length > 2000 ? ['non_compliant', 'not_enough_info'] : ['non_compliant', 'not_enough_info', 'compliant', 'null']);
   // Ground-truth score is computed on the unedited design with the core rule set only.
-  S.baseline = expected ? scoreResults(checkModel(S.pristine, S.coreRules), expected) : null;
+  S.baseline = precomputed ? precomputed.score : expected ? scoreResults(checkModel(S.pristine, S.coreRules), expected) : null;
+  if (S.baseline && !S.baseline.line) S.baseline.line = scoreLine(S.baseline);
   runCheck();
+  await useViewer(S.sc);
   viewer.build(S.norm, S.results);
   viewer.setMode('all');
   const decks = S.norm.decks;
@@ -89,7 +162,7 @@ async function loadScenario(id) {
 
 function runCheck() {
   const t0 = performance.now();
-  S.results = checkModel(S.model, allRules());
+  S.results = S.precomputed ? resultsFromPrecomputed(S.precomputed) : checkModel(S.model, allRules());
   S.lastCheckMs = performance.now() - t0;
 }
 
@@ -124,7 +197,9 @@ function renderShip() {
   const list = (v) => [].concat(v.value).join(', ');
   $('#ship').innerHTML = `
     <h1>${esc(S.model.name)}</h1>
-    <div class="muted">${S.norm.decks.length} deck${S.norm.decks.length > 1 ? 's' : ''} · ${S.norm.elements.length} elements · model units ${esc(S.norm.units)} · schema ${esc(S.norm.schema)}</div>
+    <div class="muted">${S.model.kind === 'parts'
+      ? `${S.norm.elements.length.toLocaleString('en')} parts checked${S.model.counts ? ` (of ${S.model.counts.kept.toLocaleString('en')} prepared from ${S.model.counts.objects.toLocaleString('en')} model objects)` : ''} · ${S.norm.decks.length} SWBS / system groups · source unit inch, shown in mm`
+      : `${S.norm.decks.length} deck${S.norm.decks.length > 1 ? 's' : ''} · ${S.norm.elements.length} elements · model units ${esc(S.norm.units)} · schema ${esc(S.norm.schema)}`}</div>
     <table class="kv" style="margin-top:6px">
       ${row('Ship type', 'type', (v) => v.value)}
       ${row('Operating area', 'operating_area', list)}
@@ -147,7 +222,9 @@ function renderScore() {
       <b>${b.pass ? '✓' : '✗'} ${esc(scoreLine(b))}</b>
       <span class="muted">Ground truth for the unedited design (tests/expected/${esc(S.sc.id)}.json)</span>
     </div>` : '') +
-    `<div class="muted" style="margin-top:6px">${allRules().length} rules · ${verified}/${S.coreRules.length} values verified against official text <a href="#" id="verifyLink" title="See VERIFY.md">(why?)</a></div>`;
+    `<div class="muted" style="margin-top:6px">${allRules().length} rules · ${verified}/${S.coreRules.length} values verified against official text <a href="#" id="verifyLink" title="See VERIFY.md">(why?)</a></div>` +
+    ((S.results.draft_rules || []).length ? `<div class="drafts note">${S.results.draft_rules.map((d) =>
+      `<b>${esc(d.id)}</b>: draft, not run. ${esc(d.reason)}`).join('<br>')}</div>` : '');
   $('#verifyLink').onclick = (e) => { e.preventDefault(); alert('All rule values are marked verified:false until the team has checked them against the official text. VERIFY.md lists each value with the source to check against.'); };
 }
 
@@ -204,14 +281,18 @@ function visibleElements() {
 function renderList() {
   const deckOrder = Object.fromEntries(S.norm.decks.map((d, i) => [d.id, i]));
   const items = visibleElements().sort((a, b) => ORDER[a.worst] - ORDER[b.worst] || deckOrder[a.deck] - deckOrder[b.deck]);
-  $('#list').innerHTML = items.map((e) => {
+  // Long lists (real models): render a page at a time.
+  const shown = items.slice(0, Math.max(listLimit, items.findIndex((e) => e.id === S.selected) + 1));
+  $('#list').innerHTML = `<div class="muted">${items.length.toLocaleString('en')} element${items.length === 1 ? '' : 's'} match the filters</div>` + shown.map((e) => {
     const bad = e.results.filter((r) => r.status !== 'compliant');
     return `<div class="item ${S.selected === e.id ? 'sel' : ''}" data-id="${esc(e.id)}">
       <span class="dot st-${e.worst ?? 'none'}"></span>
       <span><b>${esc(e.id)}</b> ${esc(e.name)} <span class="deckTag">· ${esc(S.norm.decks.length > 1 ? e.deck : '')}</span></span>
       ${bad.length ? `<span class="rules">${bad.map((r) => `<span class="rtag st-${r.status}">${esc(r.rule_id)}</span>`).join('')}</span>` : ''}
     </div>`;
-  }).join('') || '<p class="muted">No element matches the filters.</p>';
+  }).join('') + (items.length > shown.length ? `<button class="more" id="moreBtn">Show ${Math.min(LIST_PAGE, items.length - shown.length)} more (${(items.length - shown.length).toLocaleString('en')} hidden)</button>` : '');
+  if (!items.length) $('#list').innerHTML = '<p class="muted">No element matches the filters.</p>';
+  if ($('#moreBtn')) $('#moreBtn').onclick = () => { listLimit += LIST_PAGE; renderList(); };
   document.querySelectorAll('#list .item').forEach((n) => (n.onclick = () => select(n.dataset.id)));
   const all = S.filter.status.size === 4 && !S.filter.family && !S.filter.deck;
   viewer.setFilter(all ? null : new Set(items.map((e) => e.id)));
@@ -236,7 +317,7 @@ function renderDetail(id) {
   const e = S.results.elements[id], el = elById(id);
   $('#detail').innerHTML = `
     <h1>${esc(id)} · ${esc(el.name)}</h1>
-    <div class="muted">${esc(el.type)} · ${esc(deckName(el.deck))} · source: ${prov(el.source || S.model.source || 'not stated')}</div>
+    <div class="muted">${esc(el.type)} · ${esc(deckName(el.deck))}${el.objectid != null ? ` · viewer dbId ${el.objectid}` : ''} · source: ${prov(el.source || S.model.source || 'not stated')}</div>
     <div id="dStatus" style="margin-top:6px"></div>
     ${el.note ? `<div class="note"><b>Model note:</b> ${esc(el.note)}</div>` : ''}
     <div id="dResults"></div>
@@ -313,13 +394,16 @@ function renderEditor(id) {
   const lens = lengthParams();
   const needed = e.results.map((r) => r.parameter).filter((p) => p && !(p in (el.props || {})));
   const keys = [...new Set([...Object.keys(el.props || {}), ...needed])];
-  const ro = S.role !== 'engineer' ? 'disabled' : '';
+  const ro = S.role !== 'engineer' || S.precomputed ? 'disabled' : '';
   const rows = keys.map((k) => {
     const raw = el.props?.[k];
     const v = readValue(raw, S.norm.units, el.source || S.model.source || 'not stated');
     const changed = S.edits.has(`${id}.${k}`);
     let input;
-    if (v && typeof v.value === 'boolean') {
+    if (raw?.options) {
+      input = `<select data-key="${esc(k)}" data-kind="text" ${ro}><option value="">${v ? '' : 'missing'}</option>${raw.options.map((o) =>
+        `<option ${v?.value === o ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+    } else if (v && typeof v.value === 'boolean') {
       input = `<input type="checkbox" data-key="${esc(k)}" data-kind="bool" ${v.value ? 'checked' : ''} ${ro}>`;
     } else if (v && Array.isArray(v.value)) {
       input = `<input type="text" data-key="${esc(k)}" data-kind="list" value="${esc(v.value.join(', '))}" ${ro}>`;
@@ -331,7 +415,8 @@ function renderEditor(id) {
     } else {
       input = `<input type="text" data-key="${esc(k)}" data-kind="text" value="${esc(v.value)}" ${ro}>`;
     }
-    return `<tr class="${!v ? 'missing' : ''} ${changed ? 'changed' : ''}"><td>${esc(k)}${!v ? ' (missing)' : ''}</td><td>${input}</td><td>${v ? prov(v.source) : ''}</td></tr>`;
+    const orig = v?.original != null && !changed ? `<div class="muted">model: ${esc(v.original)}</div>` : '';
+    return `<tr class="${!v ? 'missing' : ''} ${changed ? 'changed' : ''}"><td>${esc(k)}${!v ? ' (missing)' : ''}</td><td>${input}${orig}</td><td>${v ? prov(v.source) : raw?.source ? prov(raw.source) : ''}</td></tr>`;
   }).join('');
   $('#dEditor').innerHTML = `<table class="editor">${rows}</table>
     <div class="muted" style="margin-top:4px">${S.role === 'engineer' ? 'Change a value: the element is re-checked instantly. Edits stay in this session until you export the model.' : 'Viewer role: values are read-only.'}</div>`;
@@ -355,12 +440,13 @@ function renderEditor(id) {
 }
 
 function applyEdit(id, key, value, unit) {
-  if (S.role !== 'engineer') return;
+  if (S.role !== 'engineer' || S.precomputed) return;
   const el = elById(id);
   const pristineEl = S.pristine.elements.find((x) => x.id === id);
   const before = display(pristineEl?.props?.[key], S.norm.units);
   el.props = el.props || {};
-  el.props[key] = { value, ...(unit ? { unit } : {}), source: EDIT_SOURCE };
+  const opts = el.props[key]?.options;
+  el.props[key] = { value, ...(unit ? { unit } : {}), ...(opts ? { options: opts } : {}), source: EDIT_SOURCE };
   S.edits.set(`${id}.${key}`, { id, key, before, after: unit ? `${value} ${unit}` : Array.isArray(value) ? value.join(', ') : String(value) });
   recheck();
   const row = $('#dEditor').querySelector(`[data-key="${CSS.escape(key)}"]`)?.closest('tr');

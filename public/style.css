@@ -28,6 +28,18 @@ aside { overflow: auto; padding: 10px 14px 24px; }
 #detail { border-left: 1px solid var(--line); }
 #view { position: relative; min-width: 0; overflow: hidden; }
 #view canvas { display: block; }
+.viewpane { position: absolute; inset: 0; }
+.viewpane[hidden] { display: none; }
+#caption { z-index: 20; }
+#fallbackView { overflow: auto; padding: 16px; background: var(--soft); }
+#fallbackView .fb-head { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+#fallbackView figure { margin: 0 0 12px; background: #fff; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+#fallbackView img { display: block; width: 100%; }
+#fallbackView figcaption { padding: 6px 10px; font-size: 12px; color: var(--muted); }
+.aps-status { position: absolute; left: 10px; top: 10px; z-index: 5; font-size: 11px; color: var(--muted); background: rgba(255,255,255,.9); padding: 3px 8px; border-radius: 6px; }
+.prov.der { background: #eef1f5; color: #4a5563; }
+.more { margin: 6px 0; width: 100%; }
+.drafts { margin-top: 6px; font-size: 12px; }
 
 .kv { width: 100%; border-collapse: collapse; font-size: 12px; }
 .kv td { padding: 1px 0; vertical-align: top; }

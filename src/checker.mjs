@@ -8,7 +8,7 @@
 
 export const UNIT_TO_MM = { mm: 1, cm: 10, m: 1000, in: 25.4, ft: 304.8 };
 export const STATUS_RANK = { non_compliant: 3, not_enough_info: 2, compliant: 1 };
-export const CHECK_TYPES = ['min', 'max', 'not_adjacent_zone', 'distance_min_hull', 'count_min', 'requires'];
+export const CHECK_TYPES = ['min', 'max', 'not_adjacent_zone', 'distance_min_hull', 'count_min', 'requires', 'in_set', 'table_lookup', 'data_quality'];
 const ADJACENCY_TOLERANCE_MM = 50;
 const DEFAULT_DECK_HEIGHT_MM = 2800;
 const SHIP_LENGTH_KEYS = new Set(['length_overall', 'beam', 'draft', 'depth']);
@@ -24,7 +24,7 @@ export function readValue(v, defaultUnit, defaultSource) {
   if (v == null) return null;
   if (isObj(v) && 'value' in v) {
     if (v.value == null) return null;
-    return { value: v.value, unit: v.unit ?? defaultUnit, source: v.source ?? defaultSource, note: v.note };
+    return { value: v.value, unit: v.unit ?? defaultUnit, source: v.source ?? defaultSource, note: v.note, original: v.original };
   }
   return { value: v, unit: defaultUnit, source: defaultSource };
 }
@@ -35,10 +35,13 @@ export function toMM(value, unit) {
   return value * k;
 }
 
-export const fmtMM = (mm) => `${round(mm)} mm`;
+// Whole mm for room-scale values; two decimals below 100 mm (plate thickness 5/16" = 7.94 mm).
+export const fmtMM = (mm) => `${Math.abs(mm) < 100 ? round(mm, 2) : round(mm)} mm`;
 export const fmtRatio = (v) => (v > 0 ? `1:${round(1 / v, 1)} (${round(v * 100, 1)}%)` : `${v}`);
 
+// Shows the value as written in the source model and its mm conversion: 5/16" = 7.94 mm.
 function fmtLengthInput(rv, mm) {
+  if (rv.original != null) return `${rv.original} = ${fmtMM(mm)}`;
   return rv.unit === 'mm' ? fmtMM(mm) : `${rv.value} ${rv.unit} (${fmtMM(mm)})`;
 }
 
@@ -120,11 +123,29 @@ function elementCondition(rule, el, model) {
   if (a.types && !a.types.includes(el.type)) return { ok: false, silent: true };
   for (const [key, want] of Object.entries(a.where || {})) {
     const p = prop(el, key, model);
-    if (!p || p.value !== want) {
-      return { ok: false, reason: `${key} is ${p ? JSON.stringify(p.value) : 'not set'}; rule applies when ${key} = ${JSON.stringify(want)}` };
+    if (!whereMatches(p?.value, want)) {
+      return { ok: false, reason: `${key} is ${p ? JSON.stringify(p.value) : 'not set'}; rule applies when ${key} ${describeWhere(want)}` };
     }
   }
   return { ok: true };
+}
+
+// `where` values: a plain value (equality) or one operator object:
+//   { "prefix": "1" }  { "in": [..] }  { "not_in": [..] }  { "exists": true|false }
+export function whereMatches(have, want) {
+  if (!isObj(want)) return have === want;
+  if ('exists' in want) return (have != null) === want.exists;
+  if ('prefix' in want) return have != null && String(have).startsWith(want.prefix);
+  if ('in' in want) return want.in.includes(have);
+  if ('not_in' in want) return !want.not_in.includes(have);
+  return false;
+}
+function describeWhere(want) {
+  if (!isObj(want)) return `= ${JSON.stringify(want)}`;
+  if ('exists' in want) return want.exists ? 'is set' : 'is not set';
+  if ('prefix' in want) return `starts with "${want.prefix}"`;
+  if ('in' in want) return `is one of ${want.in.map((v) => JSON.stringify(v)).join(', ')}`;
+  return `is not one of ${want.not_in.map((v) => JSON.stringify(v)).join(', ')}`;
 }
 
 // Ship-level conditions: ship type, operating area, minimum size, class society.
@@ -395,7 +416,128 @@ function checkRequires(rule, el, ctx) {
   });
 }
 
+// in_set: a text value must be one of an allowed list (e.g. hull steel grades).
+// rule.aliases maps other spellings to the listed value (e.g. "AH36" -> "A36").
+// Outside the list -> rule.else_status (default non_compliant).
+function checkInSet(rule, el, ctx) {
+  const p = prop(el, rule.parameter, ctx.model);
+  const required = `${rule.parameter} one of: ${rule.values.join(', ')}`;
+  if (!p || p.value === '') return missing(rule, el, `"${rule.parameter}"`, required, extraInputs(rule, el, ctx));
+  const canon = rule.aliases?.[p.value] ?? p.value;
+  const inputs = [{ name: rule.parameter, value: canon === p.value ? String(p.value) : `${p.value} (= ${canon})`, source: p.source }, ...extraInputs(rule, el, ctx)];
+  if (rule.values.includes(canon)) {
+    return result(rule, 'compliant', { measured: String(p.value), required, inputs, explanation: `${rule.parameter} "${p.value}" is in the allowed list.` });
+  }
+  return result(rule, rule.else_status || 'non_compliant', {
+    measured: String(p.value), required, inputs,
+    explanation: `${rule.parameter} "${p.value}" is not in the allowed list (${rule.values.join(', ')}). ${rule.else_explanation || ''}`.trim(),
+  });
+}
+
+function extraInputs(rule, el, ctx) {
+  return (rule.show_inputs || []).map((k) => [k, prop(el, k, ctx.model)]).filter(([, x]) => x)
+    .map(([k, x]) => ({ name: k, value: Array.isArray(x.value) ? x.value.join(', ') : String(x.value), source: x.source }));
+}
+
+// table_lookup: the required value of `rule.key` (a steel grade) depends on a length parameter
+// (thickness) and a column (material class I/II/III). Grades are compared by toughness rank.
+//   rule.rows: [{ min, max, cols: { I: { MS: "A", HT: "AH" }, ... } }]   (min exclusive, max inclusive, in rule.unit)
+//   rule.column_param: prop that selects the column. If it is missing every column is evaluated:
+//   pass in all -> compliant; fail in all -> non_compliant; mixed -> not_enough_info.
+const GRADE_RANK = { A: 0, B: 1, D: 2, E: 3, F: 4 };
+export function parseSteelGrade(g) {
+  const s = String(g ?? '').toUpperCase().replace(/\s+/g, '');
+  let m = s.match(/^([ABDE])$/);
+  if (m) return { strength: 'MS', letter: m[1] };
+  m = s.match(/^(?:H([ADEF])|([ADEF])H?)(32|36|40)$/);
+  if (m) return { strength: 'HT', letter: m[1] || m[2], level: +m[3] };
+  return null;
+}
+
+function checkTableLookup(rule, el, ctx) {
+  const { model } = ctx;
+  const t = prop(el, rule.parameter, model);
+  const g = prop(el, rule.key, model);
+  const cols = Object.keys(rule.rows[0].cols);
+  const colP = rule.column_param ? prop(el, rule.column_param, model) : null;
+  const useCols = colP && cols.includes(String(colP.value)) ? [String(colP.value)] : cols;
+  const required = `${rule.key} per ${rule.table_name || 'table'}`;
+  if (!t) return missing(rule, el, `"${rule.parameter}"`, required);
+  if (!g) return missing(rule, el, `"${rule.key}"`, required);
+  if (typeof t.value !== 'number' || !(t.unit in UNIT_TO_MM)) {
+    return result(rule, 'not_enough_info', { required, explanation: `"${rule.parameter}" of ${el.name} is not a length the checker can convert.` });
+  }
+  const mm = toMM(t.value, t.unit);
+  const shownT = fmtLengthInput(t, mm);
+  const inputs = [{ name: rule.parameter, value: shownT, source: t.source }, { name: rule.key, value: String(g.value), source: g.source }];
+  if (colP) inputs.push({ name: rule.column_param, value: String(colP.value), source: colP.source });
+  const measured = `grade ${g.value}, t = ${shownT}`;
+  const grade = parseSteelGrade(g.value);
+  if (!grade) {
+    return result(rule, 'not_enough_info', { measured, required, inputs,
+      explanation: `"${g.value}" is not a hull steel grade the table covers (A, B, D, E or AH/DH/EH/FH 32-40).` });
+  }
+  const row = rule.rows.find((r) => mm <= toMM(r.max, rule.unit));
+  if (!row) {
+    return result(rule, 'not_enough_info', { measured, required, inputs,
+      explanation: `Thickness ${shownT} is above the largest band of the table (${rule.rows.at(-1).max} ${rule.unit}); the table gives no grade for it.` });
+  }
+  const verdicts = useCols.map((c) => {
+    const need = row.cols[c][grade.strength];
+    return { c, need, ok: GRADE_RANK[grade.letter] >= GRADE_RANK[need[0]] };
+  });
+  const band = `${row.min != null ? `${row.min} < ` : ''}t ≤ ${row.max} ${rule.unit}`;
+  const list = verdicts.map((v) => `Class ${v.c} needs ${v.need}${v.ok ? ' ✓' : ' ✗'}`).join(', ');
+  const allOk = verdicts.every((v) => v.ok), noneOk = verdicts.every((v) => !v.ok);
+  // Without the column (material class) a failure in every column may still be acceptable when the rule
+  // has an exception the model cannot evaluate (UR S6: Grade A/AH outside 0.4L amidships).
+  const unknownCol = !(colP && cols.includes(String(colP.value)));
+  const status = allOk ? 'compliant' : noneOk && !(unknownCol && rule.unknown_column_status) ? 'non_compliant' : 'not_enough_info';
+  let explanation;
+  if (allOk) explanation = `Grade ${g.value} at ${shownT} meets ${useCols.length > 1 ? 'every material class' : `Class ${useCols[0]}`} for ${band}.`;
+  else if (noneOk && status === 'not_enough_info') {
+    explanation = `Grade ${g.value} at ${shownT} is below the grade of every material class (${list}). ${rule.unknown_column_note || ''} Set "${rule.column_param}" to decide.`.replace(/\s+/g, ' ');
+  } else if (noneOk) explanation = `Grade ${g.value} at ${shownT} is below the required grade (${list}). Use a tougher grade or a thinner plate.`;
+  else {
+    explanation = `Grade ${g.value} at ${shownT} meets ${verdicts.filter((v) => v.ok).map((v) => `Class ${v.c}`).join('/')} but not ` +
+      `${verdicts.filter((v) => !v.ok).map((v) => `Class ${v.c} (needs ${v.need})`).join(', ')}. The material class depends on the member ` +
+      `category and position (${rule.column_hint || 'see the rule'}); set "${rule.column_param}" to decide.`;
+  }
+  return result(rule, status, { measured, required: `${band}: ${list}`, inputs, explanation });
+}
+
+// data_quality: flags design data that is not final or not usable. It never passes or fails the design:
+// the outcome is compliant (data usable) or not_enough_info.
+//   status_param must equal final_value; error_param lists fields holding "Error"; require_params must exist.
+function checkDataQuality(rule, el, ctx) {
+  const { model } = ctx;
+  const issues = [], inputs = [];
+  if (rule.status_param) {
+    const s = prop(el, rule.status_param, model);
+    if (s) {
+      inputs.push({ name: rule.status_param, value: String(s.value), source: s.source });
+      if (s.value !== rule.final_value) issues.push(`${rule.status_param} is "${s.value}", not "${rule.final_value}" (values may still change)`);
+    }
+  }
+  if (rule.error_param) {
+    const e = prop(el, rule.error_param, model);
+    const list = e ? [].concat(e.value) : [];
+    if (list.length) {
+      issues.push(`${list.join(', ')} hold${list.length === 1 ? 's' : ''} "Error"`);
+      inputs.push({ name: rule.error_param, value: list.join(', '), source: e.source });
+    }
+  }
+  for (const k of rule.require_params || []) if (!prop(el, k, model)) issues.push(`"${k}" is missing`);
+  return result(rule, issues.length ? 'not_enough_info' : 'compliant', {
+    measured: issues.length ? issues.join('; ') : 'final and complete', required: 'final, complete design data', inputs,
+    explanation: issues.length ? `Design data of ${el.name} is not ready for a final check: ${issues.join('; ')}.` : `Design data of ${el.name} is final and complete.`,
+  });
+}
+
 const CHECKS = {
+  in_set: checkInSet,
+  table_lookup: checkTableLookup,
+  data_quality: checkDataQuality,
   min: checkMinMax,
   max: checkMinMax,
   not_adjacent_zone: checkNotAdjacentZone,
@@ -412,9 +554,12 @@ export function validateRule(rule) {
   if (rule.check && !CHECK_TYPES.includes(rule.check)) errors.push(`unknown check "${rule.check}"`);
   if (['min', 'max', 'count_min'].includes(rule.check)) {
     if (!rule.parameter) errors.push('missing "parameter"');
-    if (typeof rule.value !== 'number') errors.push('"value" must be a number');
+    if (typeof rule.value !== 'number' && !(rule.draft && rule.value == null)) errors.push('"value" must be a number (null only in a draft rule)');
   }
-  if (['min', 'max', 'distance_min_hull'].includes(rule.check) && !rule.unit) errors.push('missing "unit"');
+  if (rule.check === 'in_set' && (!rule.parameter || !Array.isArray(rule.values))) errors.push('in_set needs "parameter" and "values"');
+  if (rule.check === 'table_lookup' && (!rule.parameter || !rule.key || !Array.isArray(rule.rows) || !rule.rows.length)) errors.push('table_lookup needs "parameter", "key" and "rows"');
+  if (rule.draft && !rule.draft_reason) errors.push('a draft rule needs "draft_reason"');
+  if (['min', 'max', 'distance_min_hull', 'table_lookup'].includes(rule.check) && !rule.unit) errors.push('missing "unit"');
   if (rule.unit && rule.check !== 'count_min' && !(rule.unit in UNIT_TO_MM) && rule.unit !== 'ratio') errors.push(`unit "${rule.unit}" not supported`);
   if (rule.check === 'not_adjacent_zone' && !Array.isArray(rule.zones)) errors.push('missing "zones"');
   if (rule.check === 'requires' && !rule.requires?.type) errors.push('missing "requires.type"');
@@ -425,8 +570,11 @@ export function validateRule(rule) {
 
 // ---------- main entry ----------
 
-export function checkModel(rawModel, rules) {
+export function checkModel(rawModel, allRules) {
   const model = normalizeModel(rawModel);
+  // Draft rules (value not known yet) are listed, never run: no value is guessed.
+  const drafts = allRules.filter((r) => r.draft);
+  const rules = allRules.filter((r) => !r.draft);
   const byId = Object.fromEntries(model.elements.map((e) => [e.id, e]));
   const deckById = Object.fromEntries(model.decks.map((d) => [d.id, d]));
   const ctx = { model, byId, deckById };
@@ -482,6 +630,7 @@ export function checkModel(rawModel, rules) {
     schema: model.schema,
     rule_count: rules.length,
     rules_verified: rules.filter((r) => r.verified === true).length,
+    draft_rules: drafts.map((r) => ({ id: r.id, source: r.source, clause: r.clause, reason: r.draft_reason })),
     summary,
     element_summary: elementSummary,
     elements,
