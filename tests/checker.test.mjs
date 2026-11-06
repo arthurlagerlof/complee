@@ -252,3 +252,14 @@ test('every RCRV element and every planted value has provenance', () => {
     assert.match(srcs, /planted test case|estimated|computed/, `${f.element} ${f.rule_id}`);
   }
 });
+
+test('cruise demo: C2 fails FSS and ADA (915 mm governs); 1000 mm fixes both', () => {
+  const out = checkModel(CRUISE, RULES);
+  assert.equal(resultOf(out, 'C2', 'FSS-13-CORRIDOR').status, 'non_compliant');
+  assert.equal(resultOf(out, 'C2', 'ADA-403.5.1').status, 'non_compliant');
+  assert.equal(out.elements.C2.governing.clear_width.rule_id, 'ADA-403.5.1');
+  const m = clone(CRUISE);
+  m.elements.find((e) => e.id === 'C2').props.clear_width = { value: 1000, unit: 'mm', source: 'edited in session by engineer' };
+  assert.equal(checkModel(m, RULES).elements.C2.worst, 'compliant');
+  assert.deepEqual(CRUISE.demo, { focus: 'C2', fix: { prop: 'clear_width', value: 1000 } }, 'demo script depends on this');
+});
