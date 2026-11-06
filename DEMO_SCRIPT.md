@@ -2,61 +2,61 @@
 
 ## Before recording
 
-1. `npm install` (once, with internet), then `npm start`. Everything runs offline after that (Three.js comes from `node_modules`).
-2. Open http://localhost:8080 in a full-screen browser window (1920×1080 works best). Close the browser's dev tools.
-3. Scenario: **RCRV research vessel (reconstructed)**. Decks: **All decks**. Role: **Engineer**.
-4. Optional: `http://localhost:8080/?demo` starts the run-through on load. **Esc** stops it.
-5. Run `npm test` once in a terminal you can show later (32 tests, both scenarios 100 % of the ground truth).
+1. `npm install` (once), then `npm start`, and open http://localhost:8080 full screen (1920×1080 works best). Close the dev tools.
+2. The default scenario is **RCRV: real 3D model (ShipConstructor via APS)**. Wait until the badge in the 3D view says
+   **"Autodesk APS viewer · real RCRV model"** (about 20 s the first time). The demo waits for it if you start earlier, but the 28 s timing assumes it is loaded.
+3. Role: **Engineer**. Run `npm test` once in a terminal you can show later.
+4. No internet, or APS is down: open http://localhost:8080/?noaps. The 3D view switches to the saved screenshots and the findings
+   still come from the local check. Every caption and step stays the same.
+5. `?demo` starts the run-through on load. **Esc** stops it.
 
-## Opening shot: first 25-30 seconds (the "Demo run-through" button)
+## Opening shot: the "Demo run-through" button (about 27 s)
 
-The button plays exactly this sequence (about 28 s). The captions are generated from the data, so the numbers are always correct.
+The captions are generated from the data, so the numbers are always correct.
 
 | Time | On screen | Caption | Voice-over (suggestion) |
 | --- | --- | --- | --- |
-| 0-3 s | Ship loads, all elements grey | "Loading OSU Regional Class Research Vessel (RCRV) - 5 decks, 67 elements" | "This is the RCRV research vessel, rebuilt as a multi-deck model." |
-| 3-6 s | Elements turn red/amber/green, deck by deck | "Checking 15 rules: SOLAS/FSS, Load Line, IGF, ADA/PVAG, MARPOL, class rules" | "We check it against SOLAS, Load Line, IGF, accessibility and class rules." |
-| 6-10 s | Summary and ground-truth box pulse | "7 non-compliant, 1 missing value, 23 compliant - 8/8 expected findings detected, 0 false alarms" | "Every planted issue is found, with no false alarms." |
-| 10-13 s | Camera flies to guard rail 01-GR1 | "Flying to 01-GR1: Guard rail, 01 level aft" | "Here is one." |
-| 13-17 s | Both failing rule cards pulse | "Fails 2 overlapping rules: LL-REG25-GUARDRAIL + DNV-GUARDRAIL" | "37.4 inches is 950 mm. It fails the Load Line convention and the class rule." |
-| 17-21 s | "Also required" section | "Also required: related rules and where they are checked" | "And it shows what else applies, with the rule text quoted." |
-| 21-25 s | Value typed into the editor, element turns green | "01-GR1 is now compliant - re-checked in < 1 ms" | "The engineer fixes it and gets the answer instantly." |
-| 25-28 s | Report / CSV buttons pulse | "Export the findings report for review or class submission" | "Then exports the findings for the class review." |
+| 0-3 s | The real RCRV model, neutral | "OSU RCRV: real ShipConstructor production model. 330,760 objects in the model, 35,328 parts checked, inches converted to mm" | "This is the real production model of the OSU research vessel, straight from ShipConstructor." |
+| 3-6 s | Parts turn green / amber / red group by group | "Checking 6 rules on real design data: IACS unified requirements, SOLAS, IGC Code, data quality" | "We check it against IACS steel rules, SOLAS and the data quality itself." |
+| 6-9 s | Summary and ground-truth box pulse | "6 non-compliant, 3,651 not enough info, 19,875 compliant. Ground truth: 13/13 hand-checked findings, 6/6 counts match an independent scan, 0 false alarms" | "Every result is checked against a ground truth: no false alarms." |
+| 9-14 s | Camera isolates the first red part (P1770, the rest dimmed); its rule card pulses | "P1770: ASTM A106 in hull structure (SWBS 100)", plus the UR W11 1.4 quote | "This hull stiffener is a 12-inch pipe of ASTM A106. That is not a hull steel grade, so it needs special approval from class. The tool quotes the rule." |
+| 14-16 s | Switch to the cruise deck (Three.js view) | "Cruise passenger deck: same checker, passenger rules" | "Same checker, a passenger deck." |
+| 16-20 s | Corridor C2 selected; both failing rule cards and the governing note pulse | "C2 fails 2 overlapping rules: FSS-13-CORRIDOR (≥ 900 mm) + ADA-403.5.1 (≥ 915 mm). The strictest governs: ≥ 915 mm" | "800 mm fails SOLAS and the ADA at once, and the tool shows which value governs." |
+| 20-24 s | "1000" is typed into clear_width; C2 turns green | "C2 is now compliant with both rules. Re-checked in < 1 ms, logged as a session edit" | "The engineer fixes it and gets the answer instantly." |
+| 24-27 s | Report and CSV buttons pulse | "Export the findings: HTML report and CSV" | "And exports the findings for the class review." |
 
-Backup if anything fails: switch to **Cruise passenger deck (fictional)**. Its demo flies to corridor C2, which fails SOLAS/FSS 900 mm **and** ADA 915 mm (the governing value is 915 mm), and fixes it to 1000 mm.
+Backup if anything fails: pick **Cruise passenger deck (fictional)** and click C2 by hand. It is the same story without the 3D model.
 
 ## Pitch: 2-3 minutes
 
-**1. Problem (20 s).** Cruise ships must comply with SOLAS, MARPOL, Load Line, class rules, ADA and PVAG. Checking is manual,
-needs a lot of experience, and issues found in the 3-4 week class review come back late, often after the design has moved on.
-Rules overlap, and some are not written down at all.
+**1. Problem (20 s).** Ships must comply with SOLAS, MARPOL, Load Line, class rules, ADA and PVAG. Checking is manual,
+needs years of experience, and issues found in the 3-4 week class review come back late, often after the design has moved on.
 
-**2. Solution (20 s).** ShipCheck reads the design model (decks, spaces, doors, stairs, tanks), applies a rule database and
-flags issues while the engineer works. Every finding says what was measured, what is required, quotes the rule, and shows
-where each value came from.
+**2. Solution (20 s).** ShipCheck reads the design model, as it comes out of the design tool (here a real ShipConstructor model
+via Autodesk APS, in inches), applies a rule database and flags issues while the engineer works. Every finding shows what
+was measured, what is required, the rule text, and where each value came from (5/16" = 7.94 mm).
 
 **3. Live demo (60 s).** The run-through above, then live:
-- Click **01-Z1** (science berthing area): only one escape route. Add `01-EXT1` to `escape_routes`: it turns green.
-- Click **01-C2**: a 7.5 m dead end fails the 7 m cargo/SPS rule. Show *Considered, not applicable*: the 13 m passenger rule
-  and ADA are not applied to a research vessel, and the tool says why.
-- Click **MD-D2**: the sill height is missing, so the result is *not enough info*. The tool never guesses.
-- Switch to the cruise scenario: the LNG tank fails the IGF distance from the ship side (computed from geometry: 0 mm vs 6.4 m)
-  and borders a passenger cabin (the unwritten "LNG outside passenger areas" practice from the mentors).
+- In the RCRV model, open an amber Grade A shell plate (e.g. **P977**, 5/8" = 15.88 mm). UR S6 Table 7 passes for Class I/II
+  but not Class III. The material class is not in the model, so the tool says *not enough info* instead of guessing. Set
+  `material_class` to III: it turns red. Set it to I: green.
+- Show the oil fuel system: 5083 aluminium pipes and hoses are amber. SOLAS allows "other approved material", and the
+  approval is not in the model.
+- Show **MIN-THK-SWBS**: a draft rule that is listed but never run, because no official value is in the project yet.
+- Show VERIFY.md: the mentor questions (ABS or DNV? What do BHP, BHK, TTP, FLT, MDK and SSH mean?).
 
 **4. Trust (30 s).**
-- The pass/fail decision comes from a deterministic checker: same input, same result. No LLM is involved in it.
-- `npm test`: 32 tests, ground truth for every planted case, 0 false alarms, plus edge cases (unit conversion, missing values,
-  applicability by ship type, operating area, size and class society).
-- Every rule quotes its text and source. Unchecked values are marked *not yet verified* in the UI and listed in VERIFY.md.
-- Provenance on every value: public particulars, estimated, planted test case, or edited by the engineer.
-- AI is optional (EU-hosted Mistral, Anthropic, or a local model). It drafts rules from pasted regulation text, only with a
-  verbatim quote and values that appear in the text, and an engineer approves each draft before it is used.
+- Pass/fail comes only from the deterministic checker: same input, same result. No LLM is involved in it.
+- `npm test` (48 tests): ground truth for every planted case (cruise 7/7, RCRV layout 8/8) and for the real model (13 hand-checked
+  findings, plus every bulk count recomputed by an independent scan of the source data), 0 false alarms, edge cases and
+  boundary values (UR S6 table bands, 36 in vs 915 mm).
+- No invented rule values: every value is marked *not yet verified*, interpretations are labelled (UR S6 is for ships of 90 m and above,
+  and the RCRV is about 60 m), and unknown values stay empty.
+- Works offline: the check runs locally; precomputed results and screenshots cover a missing 3D viewer.
 
-**5. Roadmap (20 s).**
-- Read real 3D data: APS/Navisworks extraction (script exists), OCX/IFC import, units converted automatically.
-- More rules, verified against the official texts with Meyer's rule experts; class rule packages (DNV).
-- EU hosting on partner servers, or fully local on a 32 GB engineering laptop.
-- Integration into the design tool, so issues are flagged as the design changes, before the class review.
+**5. Roadmap (20 s).** Verify the rule set with Meyer's rule experts and the class society; map drawing codes to member categories
+(UR S6 Table 1); add spaces and escape routes from the GA/OCX data; integrate into the design tool so issues are flagged as the
+design changes, before the class review.
 
-**6. Ask (10 s).** Access to a real (anonymised) cruise deck model and a verified rule set for one area such as means of escape,
-to run a pilot with one design team.
+**6. Ask (10 s).** A verified rule set for one area (hull materials or means of escape) and an anonymised cruise model, to run a
+pilot with one design team.

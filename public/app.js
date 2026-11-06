@@ -21,8 +21,8 @@ export function family(source = '') {
   if (/IGF/.test(source)) return 'IGF Code';
   if (/Load Lines/.test(source)) return 'Load Line';
   if (/MARPOL/.test(source)) return 'MARPOL';
-  if (/IACS/.test(source)) return 'IACS unified requirements';
   if (/IGC/.test(source)) return 'IGC Code';
+  if (/IACS/.test(source)) return 'IACS unified requirements';
   if (/data quality/i.test(source)) return 'Data quality';
   if (/DNV|Lloyd|class/i.test(source)) return 'Class rules';
   return source;
@@ -73,6 +73,8 @@ function useViewer(sc) {
   viewer = NOOP_VIEWER;
   S.viewerReady = (async () => {
     try {
+      // ?noaps forces the offline fallback (rehearse the demo without internet).
+      if (new URLSearchParams(location.search).has('noaps')) throw new Error('disabled with ?noaps');
       views.aps ??= await createApsViewer($('#apsView'), { onPick });
       await views.aps.load();
       if (S.sc !== sc) return 'stale';
@@ -556,7 +558,7 @@ $('#aiApprove').onclick = async () => {
   renderFilters();
 };
 
-// ---------- demo run-through (about 28 s) ----------
+// ---------- demo run-through (about 28 s after the 3D model is loaded) ----------
 
 function caption(text, sub = '') {
   const c = $('#caption');
@@ -569,73 +571,118 @@ function pulse(sel) {
   n.classList.remove('pulse'); void n.offsetWidth; n.classList.add('pulse');
 }
 
+// Scenario-independent pieces of the run-through.
+async function waitViewer(step, token) {
+  const ready = S.viewerReady ?? Promise.resolve();
+  let done = false;
+  ready.finally(() => { done = true; });
+  if (!done) caption('Loading the real 3D model from Autodesk APS…', 'Streamed once per session; the check itself already ran locally');
+  while (!done) { await step(250); if (token.stop) return; }
+}
+
+function ruleQuote(r, match) {
+  const t = r.rule_text || '';
+  const sentences = t.split(/(?<=\.)\s+(?=\d|[A-Z])/);
+  const s = (match && sentences.find((x) => x.toLowerCase().includes(match.toLowerCase()))) || sentences[0] || t;
+  return s.length > 230 ? `${s.slice(0, 228)}…` : s;
+}
+
+async function paintProgressively(step, chunks = 8) {
+  viewer.paintNeutral();
+  const ids = S.norm.elements.map((e) => e.id);
+  const per = Math.ceil(ids.length / chunks);
+  for (let i = 0; i < ids.length; i += per) { viewer.update(S.results, ids.slice(i, i + per)); await step(Math.round(2400 / chunks)); }
+  viewer.update(S.results);
+}
+
+async function demoTypeFix(step, focus, fix) {
+  const inp = fix.prop && $('#dEditor').querySelector(`[data-key="${CSS.escape(fix.prop)}"]`);
+  if (!inp) return false;
+  inp.closest('tr').scrollIntoView({ block: 'center', behavior: 'smooth' });
+  const unitSel = $('#dEditor').querySelector(`[data-unit-for="${CSS.escape(fix.prop)}"]`);
+  if (unitSel && fix.unit) unitSel.value = fix.unit;
+  inp.focus();
+  inp.value = '';
+  for (const ch of String(fix.value)) { inp.value += ch; await step(150); }
+  inp.dispatchEvent(new Event('input'));
+  return true;
+}
+
+// Demo run-through, about 28 s once the 3D model is loaded:
+// RCRV real model -> check -> first red part with the rule quote -> cruise deck -> C2 overlap -> live fix -> green -> export.
 async function runDemo() {
   if (S.demo) { S.demo.stop = true; return; }
   const token = (S.demo = { stop: false });
   const step = async (ms) => { await sleep(ms); if (token.stop) throw new Error('stopped'); };
   $('#demoBtn').textContent = '■ Stop demo';
+  const real = S.scenarios.find((s) => s.kind === 'parts');
+  const cruise = S.scenarios.find((s) => s.id === 'cruise');
   try {
-    if (viewer.plan) { viewer.setPlan(false); $('#planBtn').classList.remove('on'); }
-    $('#deck').value = 'all'; viewer.setMode('all');
-    await loadScenario(S.sc.id);
-    const nDecks = S.norm.decks.length, nEl = S.norm.elements.length;
-    caption(`Loading ${S.model.name}`, `${nDecks} deck${nDecks > 1 ? 's' : ''} · ${nEl} elements · units converted to mm`);
-    viewer.paintNeutral();
-    await step(2600);
+    if (views.three.plan) { views.three.setPlan(false); $('#planBtn').classList.remove('on'); }
+    // 1. Open the real RCRV model (reuse it if it is already open and unedited).
+    if (real) {
+      if (S.sc.id !== real.id || S.edits.size) await loadScenario(real.id);
+      await waitViewer(step, token);
+      const c = S.model.counts;
+      caption('OSU RCRV: real ShipConstructor production model', `${c ? `${c.objects.toLocaleString('en')} objects in the model · ` : ''}${S.norm.elements.length.toLocaleString('en')} parts checked · inches converted to mm`);
+      viewer.overview();
+      viewer.paintNeutral();
+      await step(2800);
 
-    const fams = [...new Set(allRules().map((r) => family(r.source)))];
-    caption(`Checking ${allRules().length} rules`, fams.join(' · '));
-    const ids = S.norm.elements.map((e) => e.id);
-    for (let i = 0; i < ids.length; i += 4) { viewer.update(S.results, ids.slice(i, i + 4)); await step(45); }
-    viewer.update(S.results);
-    await step(900);
+      // 2. Run the check: colours appear group by group.
+      const run = allRules().filter((r) => !r.draft && Object.values(S.results.elements).some((e) => e.results.some((x) => x.rule_id === r.id)));
+      caption(`Checking ${run.length} rules on real design data`, [...new Set(run.map((r) => family(r.source)))].join(' · '));
+      await paintProgressively(step);
+      const s = S.results.summary;
+      caption(`${s.non_compliant} non-compliant · ${s.not_enough_info.toLocaleString('en')} not enough info · ${s.compliant.toLocaleString('en')} compliant`,
+        S.baseline ? `Ground truth: ${S.baseline.line ?? scoreLine(S.baseline)}` : 'Deterministic checker: same input, same result');
+      pulse('#pills'); pulse('#scorebox');
+      await step(3000);
 
-    const s = S.results.summary;
-    caption(`${s.non_compliant} non-compliant · ${s.not_enough_info} missing value${s.not_enough_info === 1 ? '' : 's'} · ${s.compliant} compliant`,
-      S.baseline ? `Ground truth: ${scoreLine(S.baseline)}` : 'Deterministic checker: same input, same result');
-    pulse('#pills'); pulse('#scorebox');
-    await step(3400);
-
-    const d = S.model.demo || {};
-    const focus = d.focus && S.results.elements[d.focus] ? d.focus : findingsOf(S.results)[0]?.element;
-    if (!focus) { caption('No findings in this design.'); await step(2500); return; }
-    const fe = S.results.elements[focus];
-    caption(`Flying to ${focus}: ${fe.name}`);
-    select(focus);
-    await step(2600);
-
-    const bad = fe.results.filter((r) => r.status === 'non_compliant');
-    caption(bad.length > 1 ? `Fails ${bad.length} overlapping rules: ${bad.map((r) => r.rule_id).join(' + ')}` : `Fails ${bad[0]?.rule_id}`,
-      bad[0] ? bad[0].explanation : '');
-    document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
-    $('#dResults .res')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    await step(4200);
-
-    caption('Also required: related rules and where they are checked', 'Rule overlap is shown, with the rule text quoted');
-    $('#alsoHead')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    document.querySelectorAll('#dResults .also').forEach(pulse);
-    await step(3600);
-
-    const fix = d.fix || {};
-    const inp = fix.prop && $('#dEditor').querySelector(`[data-key="${CSS.escape(fix.prop)}"]`);
-    if (inp) {
-      caption(`Engineer changes ${fix.prop} to ${fix.value} ${fix.unit || ''}`.trim(), 'Every edit is re-checked instantly');
-      inp.closest('tr').scrollIntoView({ block: 'center', behavior: 'smooth' });
-      await step(700);
-      const unitSel = $('#dEditor').querySelector(`[data-unit-for="${CSS.escape(fix.prop)}"]`);
-      if (unitSel && fix.unit) unitSel.value = fix.unit;
-      inp.focus();
-      inp.value = '';
-      for (const ch of String(fix.value)) { inp.value += ch; await step(160); }
-      inp.dispatchEvent(new Event('input'));
-      await step(600);
-      const now = S.results.elements[focus].worst;
-      caption(now === 'compliant' ? `${focus} is now compliant` : `${focus}: ${LABEL[now]}`, `Re-checked in ${S.lastCheckMs.toFixed(1)} ms · change logged for the class submission report`);
-      $('#detail').scrollTo({ top: 0, behavior: 'smooth' });
-      pulse('#dStatus');
-      await step(3200);
+      // 3. Fly to the first red part, with the rule quote.
+      const d = S.model.demo || {};
+      const first = findingsOf(S.results).find((f) => f.status === 'non_compliant' && (!d.focus_rule || f.rule_id === d.focus_rule)) ?? findingsOf(S.results)[0];
+      if (first) {
+        select(first.element);
+        const r = S.results.elements[first.element].results.find((x) => x.rule_id === first.rule_id);
+        caption(`${first.element}: ${r.measured} in hull structure (SWBS ${elById(first.element)?.props?.swbs_group?.value ?? '1xx'})`,
+          `“${ruleQuote(r, d.quote_match)}” (${r.source.split(':')[0]})`);
+        document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
+        await step(4800);
+      }
     }
-    caption('Export the findings report for review or class submission', 'Report (HTML/PDF) or CSV, with rule references and value provenance');
+
+    // 4. Switch to the cruise deck: C2 fails two overlapping rules.
+    if (cruise) {
+      caption('Cruise passenger deck: same checker, passenger rules', 'SOLAS/FSS means of escape + ADA/PVAG accessibility');
+      await loadScenario(cruise.id);
+      await step(1600);
+      const d = S.model.demo || {};
+      const focus = d.focus;
+      select(focus);
+      const fe = S.results.elements[focus];
+      const bad = fe.results.filter((r) => r.status === 'non_compliant');
+      const gov = fe.governing[d.fix?.prop];
+      caption(`${focus} fails ${bad.length} overlapping rules: ${bad.map((r) => `${r.rule_id} (${r.required})`).join(' + ')}`,
+        gov ? `The strictest governs: ${gov.required} (${gov.rule_id}). Measured: ${bad[0]?.measured}` : '');
+      document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
+      pulse('#dResults .gov');
+      await step(4200);
+
+      // 5. Fix it live and watch it turn green.
+      const fix = d.fix || {};
+      caption(`Engineer sets ${fix.prop} to ${fix.value} ${fix.unit || 'mm'}`, 'Every edit is re-checked instantly by the deterministic checker');
+      if (await demoTypeFix(step, focus, fix)) {
+        await step(500);
+        const now = S.results.elements[focus].worst;
+        caption(now === 'compliant' ? `${focus} is now compliant with both rules` : `${focus}: ${LABEL[now]}`,
+          `Re-checked in ${S.lastCheckMs.toFixed(1)} ms · logged as a session edit for the class submission report`);
+        $('#detail').scrollTo({ top: 0, behavior: 'smooth' });
+        pulse('#dStatus');
+        await step(3000);
+      }
+    }
+    caption('Export the findings: HTML report and CSV', 'Rule references, measured vs required, value provenance, inch → mm conversions');
     pulse('#reportBtn'); pulse('#csvBtn');
     await step(2600);
   } catch (e) {

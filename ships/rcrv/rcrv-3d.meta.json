@@ -14,5 +14,5 @@
     "propulsion": { "value": "diesel-electric", "source": "public particulars" },
     "source": "public particulars"
   },
-  "demo": { "focus_rule": "IACS-W11-HULL-GRADE" }
+  "demo": { "focus_rule": "IACS-W11-HULL-GRADE", "quote_match": "special approval" }
 }
