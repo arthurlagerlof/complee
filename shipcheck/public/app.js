@@ -67,7 +67,9 @@ function useViewer(sc) {
   $('#threeView').hidden = want !== 'three';
   $('#apsView').hidden = want !== 'aps';
   $('#fallbackView').hidden = true;
-  $('#planBtn').disabled = want !== 'three';
+  $('#planBtn').hidden = want !== 'three';
+  $('#simpleBtn').hidden = $('#cutSel').hidden = true;
+  $('#simpleBtn').classList.remove('on');
   if (want === 'three') { viewer = views.three; S.viewerReady = Promise.resolve('three'); return; }
   views.fallback ??= createFallbackViewer($('#fallbackView'));
   views.fallback.setImages(sc.fallback_images || []);
@@ -81,8 +83,11 @@ function useViewer(sc) {
       if (S.sc !== sc) return 'stale';
       viewer = views.aps;
       viewer.build(S.norm, S.results);
+      if (viewer.simple) viewer.setSimple(false);
+      $('#simpleBtn').hidden = $('#cutSel').hidden = false;
+      $('#cutSel').innerHTML = '<option value="">No deck cut</option>';
       renderList();
-      if (S.selected) viewer.select(S.selected);
+      if (S.selected) select(S.selected);
       return 'aps';
     } catch (e) {
       console.warn('APS viewer unavailable, using fallback:', e.message);
@@ -92,7 +97,7 @@ function useViewer(sc) {
       $('#fallbackView').hidden = false;
       viewer = views.fallback;
       viewer.build();
-      if (S.selected) viewer.select(S.selected);
+      if (S.selected) select(S.selected);
       return 'fallback';
     }
   })();
@@ -650,6 +655,18 @@ $('#demoBtn').onclick = runDemo;
 $('#reportBtn').onclick = exportReport;
 $('#csvBtn').onclick = exportCSV;
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.demo) S.demo.stop = true; });
+// Simple view (real model): context (shell + decks) and checked parts only; deck cut from the deck plating.
+$('#simpleBtn').onclick = () => {
+  const on = !viewer.simple;
+  viewer.setSimple?.(on);
+  $('#simpleBtn').classList.toggle('on', on);
+};
+$('#cutSel').onfocus = () => {
+  if ($('#cutSel').options.length > 1 || !viewer.deckLevels) return;
+  const lv = viewer.deckLevels();
+  $('#cutSel').innerHTML = '<option value="">No deck cut</option>' + lv.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join('');
+};
+$('#cutSel').onchange = (e) => viewer.setDeckCut?.(e.target.value);
 $('#planBtn').onclick = () => { viewer.setPlan(!viewer.plan); $('#planBtn').classList.toggle('on', viewer.plan); };
 
 window.__shipcheck = S; // for debugging in the console

@@ -20,6 +20,8 @@
   <label>Scenario <select id="scenario"></select></label>
   <label>Decks <select id="deck"></select></label>
   <button id="planBtn" title="Top-down plan view">Plan view</button>
+  <button id="simpleBtn" hidden title="Show only the shell, the decks and the checked parts">Simple view</button>
+  <select id="cutSel" hidden title="Cut the model above one deck (Autodesk.Section) and look at it like a plan"><option value="">No deck cut</option></select>
   <span id="accBadge" class="accbadge" hidden title="Ground truth of the unedited design: the same files and scoring as npm test"></span>
   <span class="grow"></span>
   <button id="demoBtn" class="primary" title="Scripted run-through (Esc to stop)">&#9654; Demo run-through</button>
