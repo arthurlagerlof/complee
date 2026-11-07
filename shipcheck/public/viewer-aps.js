@@ -85,18 +85,27 @@ export async function createApsViewer(container, { onPick } = {}) {
   }
   const setFlag = (on) => { try { on ? localStorage.setItem(FLAG, '1') : localStorage.removeItem(FLAG); } catch { /* ignore */ } };
 
+  let geometryDone = false, onGeometryDone = null;
   function load() {
     if (loaded) return loaded;
     badge.textContent = 'Loading the RCRV model from Autodesk APS…';
     loaded = clearStaleCache().then(() => { setFlag(true); return withTimeout(new Promise((res, rej) => {
       AV.Document.load(`urn:${status.urn}`, (doc) => {
         const node = doc.getRoot().getDefaultGeometry();
-        viewer.addEventListener(AV.GEOMETRY_LOADED_EVENT, () => res(), { once: true });
+        // Ready as soon as the object tree exists (dbIds can be coloured, isolated and framed); the geometry of
+        // 330,000 objects keeps streaming. Colours and visibility are re-applied once all of it has arrived.
+        viewer.addEventListener(AV.OBJECT_TREE_CREATED_EVENT, () => res(), { once: true });
+        viewer.addEventListener(AV.GEOMETRY_LOADED_EVENT, () => {
+          geometryDone = true;
+          badge.textContent = 'Autodesk APS viewer · real RCRV model';
+          onGeometryDone?.();
+          res();
+        }, { once: true });
         viewer.loadDocumentNode(doc, node).catch(rej);
       }, (code, msg) => rej(new Error(`APS model load failed (${code}): ${msg}`)));
     }), LOAD_TIMEOUT_MS, 'Loading the APS model'); }).then(async () => {
       setFlag(false);
-      badge.textContent = 'Autodesk APS viewer · real RCRV model';
+      badge.textContent = geometryDone ? 'Autodesk APS viewer · real RCRV model' : 'Autodesk APS viewer · real RCRV model (geometry still streaming)';
       await viewer.loadExtension('Autodesk.Section').catch(() => null); // section tool in the toolbar; our deck cut uses its cut planes
     });
     return loaded;
@@ -190,6 +199,16 @@ export async function createApsViewer(container, { onPick } = {}) {
     }
   }
   function repaint() { viewer.clearThemingColors(viewer.model); paint(); }
+  // Isolation and colours are set by dbId; geometry that streams in later gets them re-applied in one pass.
+  let lastIsolate = null;
+  function isolate(dbs) { lastIsolate = dbs; viewer.isolate(dbs); }
+  onGeometryDone = () => {
+    levels = null;
+    if (!results) return;
+    repaint();
+    if (lastIsolate) viewer.isolate(lastIsolate);
+    viewer.impl.invalidate(true, true, true);
+  };
   function visibleDbs() {
     if (override) return [...override.keys()].map((id) => idToDb.get(id)).filter((d) => d != null);
     if (simple) return [...new Set([...checked, ...[...context].map((id) => idToDb.get(id))])];
@@ -199,7 +218,7 @@ export async function createApsViewer(container, { onPick } = {}) {
   function applyVisibility(fit = false) {
     viewer.setGhosting(!simple || !!override);
     const dbs = visibleDbs();
-    viewer.isolate(dbs);
+    isolate(dbs);
     // Frame the hull (context) rather than every part: a few outfitting items far from the ship would zoom out too far.
     const hull = override ? dbs : [...context].map((id) => idToDb.get(id)).filter((d) => d != null);
     if (fit) viewer.fitToView(hull.length ? hull : dbs);
@@ -274,7 +293,7 @@ export async function createApsViewer(container, { onPick } = {}) {
       const box = boxOf(db);
       if (fly) {
         viewer.setGhosting(true);
-        viewer.isolate([db]);
+        isolate([db]);
         focus(db);
       }
       drawOutline(box);
@@ -288,7 +307,7 @@ export async function createApsViewer(container, { onPick } = {}) {
       if (!set) { applyVisibility(); return; }
       const dbs = [...set].map((id) => idToDb.get(id)).filter((d) => d != null);
       viewer.setGhosting(true);
-      viewer.isolate(dbs.length ? dbs : checked);
+      isolate(dbs.length ? dbs : checked);
     },
     // Rule view: only the parts a rule applies to, coloured by that rule's result.
     highlight(statusById) {
