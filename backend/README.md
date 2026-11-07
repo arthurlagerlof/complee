@@ -59,12 +59,6 @@ Apply the app-owned migration after an administrator has granted schema creation
 python -m alembic upgrade head
 ```
 
-To enable local semantic and hybrid retrieval later, install the optional dependency set if you did not already do so above:
-
-```powershell
-python -m pip install -r requirements-retrieval.txt
-```
-
 The pinned configuration is `BAAI/bge-m3`, snapshot `5617a9f61b028005a4858fdac845db406aefb181`, CPU by default, 1,024-dimensional L2-normalized query vectors. The supported settings are `EMBEDDING_MODEL`, `EMBEDDING_MODEL_REVISION`, `EMBEDDING_DEVICE`, and optional `EMBEDDING_CACHE_FOLDER`. Do not change the model, revision, normalization, or dimension to match a local convenience; these query vectors must be compatible with the existing provision embeddings. If `EMBEDDING_CACHE_FOLDER` is unset, Hugging Face uses its normal cache location (on Windows, typically `%USERPROFILE%\.cache\huggingface\hub`). `HF_HOME` can be set in the process environment to relocate the Hugging Face cache.
 
 Download and verify the exact snapshot with the configured settings:
@@ -220,7 +214,7 @@ Geometry calculations require explicit coordinates/dimensions and compatible uni
 
 ## Migrations and tests
 
-The initial migration creates exactly the nine application-owned `sc_*` tables. It adds database-level same-revision constraints for relationships, component-associated facts, and finding-component links. `sc_findings` stores provision/retrieval identifiers without legacy foreign keys and snapshots the exact text, edition and source metadata. Downgrade drops only these app tables. Extensions, embeddings and legacy tables are not created, altered or dropped.
+The migration chain creates fourteen application-owned `sc_*` tables. It adds database-level same-revision constraints for relationships, component-associated facts, and finding-component links. `sc_findings` stores provision/retrieval identifiers without legacy foreign keys and snapshots the exact text, edition and source metadata. The follow-up AI migration adds provider/model/task configuration, execution history and reviewable extraction results. Downgrade drops only these app tables. Extensions, embeddings and legacy tables are not created, altered or dropped.
 
 Run unit and API tests without production access:
 
@@ -237,20 +231,101 @@ The configured production migration is intentionally unapplied. Before approval:
 1. Take a database backup using the organization's established procedure and confirm that the backup is restorable. Capture the current schema/table inventory and confirm `public` contains no `sc_*` tables.
 2. Confirm `DATABASE_URL` points to the intended production database without printing or logging it. Check the Alembic head with `python -m alembic heads` and current revision with `python -m alembic current`.
 3. Confirm the role has database `CONNECT` and `USAGE`/`CREATE` on `public`. Separately verify legacy-table read access and pgvector schema/embedding-column access for retrieval. The configured role's relevant grants were verified on 2026-11-07; do not repeat or broaden grants without a failed exact privilege check.
-4. Review the migration file and its scope. It creates only the nine tables listed above and does not create or alter legacy provisions, embeddings, extensions, or other regulatory data.
+4. Review the migration files and their scope. They create only the fourteen `sc_*` tables and do not create or alter legacy provisions, embeddings, extensions, or other regulatory data.
 5. In an approved change window, run from `backend`:
 
    ```powershell
    python -m alembic upgrade head
    ```
 
-6. Verify `python -m alembic current`, `python -m alembic check`, the exact nine `sc_*` tables, expected same-revision foreign keys, and unchanged legacy table/extension inventories and row counts. Then perform health and read-only retrieval checks.
+6. Verify `python -m alembic current`, `python -m alembic check`, the exact fourteen `sc_*` tables, expected same-revision foreign keys, and unchanged legacy table/extension inventories and row counts. Then perform health and read-only retrieval checks.
 
-Rollback is not automatic: the migration's `downgrade base` drops the nine application tables and all application data in them. If rollback is approved before the application has accepted data, run `python -m alembic downgrade base`; otherwise restore the verified pre-migration backup under the incident/change procedure. Never use downgrade as a way to repair or modify legacy regulatory data.
+Rollback is not automatic: `downgrade base` drops the fourteen application tables and all application data in them. If rollback is approved before the application has accepted data, run `python -m alembic downgrade base`; otherwise restore the verified pre-migration backup under the incident/change procedure. Never use downgrade as a way to repair or modify legacy regulatory data.
 
 ## Current scope and limitations
 
 - Design CRUD, provenance, source-aware context and same-revision relationships are implemented. CAD/drawing/document import is an interface only; parsing and automatic extraction are not implemented.
 - Retrieval uses the canonical legacy tables and does not copy provisions or regenerate embeddings. Query embedding is local BGE-M3. Full-text is English; it is not equivalent to multilingual semantic search.
-- Assessment runs persist immutable requirement snapshots and design/component traceability. Automated input-presence checks and basic deterministic geometry/document tools are available. Fluid mechanics, structural calculations, AI interpretation and automatic regulatory applicability determinations are not implemented.
+- Assessment runs persist immutable requirement snapshots and design/component traceability. Automated input-presence checks and basic deterministic geometry/document tools are available. Text-to-component extraction is available through the replaceable AI layer; fluid mechanics, structural calculations, AI regulatory interpretation and automatic applicability determinations are not implemented.
 - Engineering review is required. This API is not a classification-society approval or certification service.
+
+## Replaceable AI providers and text extraction
+
+The AI gateway is provider-neutral at the service boundary. Ollama uses its HTTP API; OpenAI and generic OpenAI-compatible endpoints use the chat-completions API; Anthropic uses its Messages API; Gemini uses Google's Generative Language API. Provider-specific HTTP mapping stays in `app/ai/providers.py`. No browser-side provider calls or automatic cloud fallback are used.
+
+The **Settings → AI Providers** page shows exactly two environment-managed built-ins: Ollama and Gemini. It reads their configured endpoint/model IDs and provides a connection test. It does not create, edit or delete providers, models, API keys or secrets. Configure them in `backend/.env` (or the deployment's secret/environment manager) and restart the backend to load changes. `GET /api/v1/ai/built-in-providers` masks credentials; `POST /api/v1/ai/built-in-providers/{ollama|gemini}/test` checks reachability/model availability. Test status is held in backend process memory.
+
+Configure these backend environment values before using AI routes:
+
+- `AI_ENCRYPTION_KEY`: a Fernet key used to encrypt API keys at rest. Generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and keep it in the backend secret store. Losing/changing the key makes saved credentials unreadable; users must enter them again.
+- `AI_ALLOWED_HOSTS`: comma-separated exact hostnames/IPs or `host:port` entries permitted for outbound AI requests. Add the remote Ollama destination (for example `192.168.1.50:11434`) and any deliberately enabled cloud API host. A hostname without a port permits only the scheme's default port. Loopback hosts are allowed only outside production. Link-local, multicast, unspecified and cloud metadata hostnames are rejected. Configure network egress controls as an additional boundary.
+- `AI_REQUEST_TIMEOUT_SECONDS`: provider request timeout (default `60`).
+- `AI_MAX_SOURCE_CHARACTERS`: maximum extraction text length (default `100000`, hard limit `1000000`).
+- `VITE_API_BASE_URL`: optional frontend API origin; defaults to `http://localhost:8000`.
+- `OLLAMA_BASE_URL`: optional Ollama base URL, for example `http://localhost:11434` or a privately networked GPU server.
+- `OLLAMA_API_KEY`: optional bearer token for an Ollama gateway; never returned to the frontend.
+- `OLLAMA_MODELS` / `OLLAMA_MODEL`: optional comma-separated model IDs and a single model ID configured for the built-in provider.
+- `GEMINI_API_KEY`: optional Google AI Studio/Gemini key, managed only by the backend environment.
+- `GEMINI_BASE_URL`: Gemini API base URL; must remain on `https://generativelanguage.googleapis.com`.
+- `GEMINI_MODEL`: optional configured Gemini model ID (for example `gemini-2.5-flash`).
+
+Ollama is deployed independently from FastAPI. For a remote GPU service, use the exact installed identifier returned by `/api/tags`; do not assume a model alias. Protect remote Ollama with private networking or an authenticated gateway and firewall rules.
+
+After applying migrations in a disposable/development database, start FastAPI and create/configure a provider from **Settings → AI Providers**. The app encrypts API keys using `AI_ENCRYPTION_KEY`; responses expose only `has_api_key`. Use **Test connection** and **Refresh models**, then assign a model to `text_component_extraction`. The test panel supports raw generation and validation against the text extraction Pydantic schema.
+
+Discovered models start with chat capability only. The model list exposes an opt-in JSON mode: select JSON Schema for Ollama models or JSON object mode for compatible APIs only when that model/server supports it. Anthropic and models without that capability receive the schema instructions in the prompt and are still Pydantic-validated.
+
+The implemented first workflow accepts pasted text, generates structured component candidates, persists the validated result and provider/model/task metadata without storing the submitted prompt, supports review of each candidate and its facts, and imports only approved candidates/facts into the selected revision. Successful and failed provider executions record status, duration, token usage, validation outcome, task, provider/model and prompt/schema versions without storing prompts. Existing component type/name pairs are reused rather than duplicated. Evidence, source name/file ID, extraction ID, provider/model, confidence and uncertainty are retained as source references. The extraction prompt and schema versions are recorded.
+
+Example request sequence (replace IDs and keep API keys out of shell history):
+
+```http
+POST /api/v1/ai/providers
+{"name":"Remote Ollama","provider_type":"ollama","base_url":"http://192.168.1.50:11434"}
+
+POST /api/v1/ai/providers/{provider_id}/test
+POST /api/v1/ai/providers/{provider_id}/refresh-models
+
+PUT /api/v1/ai/task-configurations/text_component_extraction
+{"provider_id":"<provider-uuid>","model_id":"<model-uuid>","generation_settings":{"temperature":0}}
+
+POST /api/v1/ai/extractions
+{"revision_id":"<revision-uuid>","source_name":"fuel-system.txt","source_text":"Fuel Tank TK-001 has a nominal capacity of 12 m3."}
+
+PATCH /api/v1/ai/extractions/{extraction_id}/components/0
+{"review_status":"approved","properties":{"capacity":{"value":12,"unit":"m3","review_status":"approved"}}}
+
+POST /api/v1/ai/extractions/{extraction_id}/import
+{"candidate_indexes":[0]}
+```
+
+Representative provider response (the credential itself is never returned):
+
+```json
+{
+  "id": "<provider-uuid>",
+  "name": "Remote Ollama",
+  "provider_type": "ollama",
+  "base_url": "http://192.168.1.50:11434",
+  "enabled": true,
+  "is_local": false,
+  "has_api_key": false,
+  "last_tested_at": null,
+  "last_successful_test_at": null,
+  "last_test_success": null
+}
+```
+
+Representative extraction response includes a `result.components` array; each candidate carries properties with independently reviewable facts, evidence, confidence/uncertainty and a `pending` review status. The API returns execution duration, token usage, provider/model IDs, prompt/schema versions, validation outcome and source reference. An import response returns the existing or newly created component UUIDs. Exact model output is provider-dependent and is validated before it is persisted.
+
+Manual Ollama integration check:
+
+1. Start Ollama independently on the GPU host and run `ollama list`; copy the exact installed model name. Keep the listener private, and allow inbound access only from the FastAPI host.
+2. Set `AI_ALLOWED_HOSTS` to the exact remote endpoint (for example `192.168.1.50:11434`), set a persistent `AI_ENCRYPTION_KEY`, and start FastAPI from `backend` with `python -m uvicorn app.main:app --reload`.
+3. Open `http://localhost:5173/#ai-settings`, add the Ollama URL, test it, refresh models, and assign the discovered exact model to text component extraction.
+4. Select a project/revision, submit a technical text sample, edit candidate fields and fact statuses, approve the intended candidate/facts, and import. Verify via `GET /api/v1/design-revisions/{revision_id}/components` and `/facts`.
+5. To test switching, select another explicitly configured provider/model in the extraction panel. There is no automatic cloud fallback.
+
+AI management endpoints currently follow the backend's existing API convention and **do not have authentication/authorization middleware**. Do not expose this backend or the provider-management UI to untrusted networks. Add the deployment's authentication and user authorization before production exposure. Remote-provider access is restricted by the explicit outbound host allowlist, but that is not a substitute for network isolation.
+
+Current limitations: PDF/DOCX upload and parsing, background extraction jobs, per-user authorization, and live Ollama/PostgreSQL demonstration are not implemented. Execution metadata is available at `GET /api/v1/ai/executions`; submitted prompts and provider error bodies are intentionally not retained. Extraction accepts pasted text only. Automated tests mock all provider HTTP calls and do not need a live Ollama server. Do not run Alembic migrations against production from development.

@@ -5,10 +5,12 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 
-from app.api.routes import assessments, calculations, design, regulations
+from app.api.routes import ai, assessments, calculations, design, regulations
 from app.core.config import settings
 from app.db.database import engine
 from app.services.common import ConflictError, EntityNotFound, InvalidReference
+from app.ai.providers import AIProviderError, AIProviderResponseError, AIProviderUnavailable
+from app.services.ai import AIConfigurationError
 
 
 app = FastAPI(
@@ -33,6 +35,7 @@ app.include_router(design.router, prefix="/api/v1")
 app.include_router(assessments.router, prefix="/api/v1")
 app.include_router(regulations.router, prefix="/api/v1")
 app.include_router(calculations.router, prefix="/api/v1")
+app.include_router(ai.router, prefix="/api/v1")
 
 
 def _error(code: str, message: str, status_code: int) -> JSONResponse:
@@ -77,6 +80,26 @@ async def http_exception_handler(_request: Request, exc: HTTPException):
 @app.exception_handler(404)
 async def http_not_found_handler(_request: Request, exc):
     return _error("not_found", "The requested endpoint or resource was not found.", 404)
+
+
+@app.exception_handler(AIConfigurationError)
+async def ai_configuration_error_handler(_request: Request, exc: AIConfigurationError):
+    return _error("ai_configuration_error", str(exc), 503)
+
+
+@app.exception_handler(AIProviderUnavailable)
+async def ai_provider_unavailable_handler(_request: Request, exc: AIProviderUnavailable):
+    return _error("ai_provider_unavailable", str(exc), 502)
+
+
+@app.exception_handler(AIProviderResponseError)
+async def ai_provider_response_error_handler(_request: Request, exc: AIProviderResponseError):
+    return _error("ai_provider_response_error", str(exc), 502)
+
+
+@app.exception_handler(AIProviderError)
+async def ai_provider_error_handler(_request: Request, exc: AIProviderError):
+    return _error("ai_provider_error", str(exc), 502)
 
 
 @app.get("/health", tags=["health"])

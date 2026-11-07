@@ -1,4 +1,5 @@
 from app.db.models.assessment import Assessment, Finding, FindingComponent
+from app.db.models.ai import AIExecution, AIExtraction, AIModelConfig, AIProvider, AITaskConfiguration
 from app.db.models.design import (
     ComponentRelationship,
     DesignComponent,
@@ -10,6 +11,11 @@ from app.db.models.design import (
 from app.db.models.legacy import LegacyBase
 
 __all__ = [
+    "AIExecution",
+    "AIExtraction",
+    "AIModelConfig",
+    "AIProvider",
+    "AITaskConfiguration",
     "Assessment",
     "ComponentRelationship",
     "DesignComponent",
