@@ -58,7 +58,7 @@ export async function reviewDocumentEvidence({ filename, dataBase64, provider })
     filename: path.basename(String(filename || 'document.docx')),
     extracted_characters: text.length,
     status: findings.length ? 'source_candidates_found' : 'text_extracted_no_topic_matches',
-    message: 'Potential source passages only. ShipCheck has not decided whether any requirement applies or whether the design is compliant.',
+    message: 'Potential source passages only. Complee has not decided whether any requirement applies or whether the design is compliant.',
     findings,
   };
 }

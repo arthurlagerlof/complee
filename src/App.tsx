@@ -21,6 +21,8 @@ import EvidenceIntake from './EvidenceIntake'
 
 gsap.registerPlugin(ScrollTrigger)
 
+const SHIPCHECK_REVIEW_URL = import.meta.env.VITE_SHIPCHECK_REVIEW_URL || 'http://127.0.0.1:8080/index.html?scenario=rcrv-3d'
+
 function ProductName() {
   return (
     <a className="brand" href="#top" aria-label="Complee home">
@@ -36,16 +38,11 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [showConcept, setShowConcept] = useState(() => window.location.hash !== '#evidence')
   const [evidenceCount, setEvidenceCount] = useState(0)
-  const scrollToInspection = useRef(false)
   const selectedPoint = inspectionPoints.find((point) => point.id === selectedId) ?? inspectionPoints[0]
 
   useEffect(() => {
     if (!showConcept) return
     try { setEvidenceCount(JSON.parse(sessionStorage.getItem('compleeEvidenceFiles') || '[]').length) } catch { setEvidenceCount(0) }
-    if (scrollToInspection.current) {
-      scrollToInspection.current = false
-      requestAnimationFrame(() => document.querySelector('#inspection')?.scrollIntoView({ behavior: 'smooth' }))
-    }
     const context = gsap.context(() => {
       const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
@@ -90,12 +87,9 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
   const continueToInspection = () => {
-    scrollToInspection.current = true
-    window.history.pushState(null, '', '#inspection')
-    setShowConcept(true)
+    window.location.assign(SHIPCHECK_REVIEW_URL)
   }
   const backToMain = () => {
-    scrollToInspection.current = false
     window.history.pushState(null, '', '#top')
     setShowConcept(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
