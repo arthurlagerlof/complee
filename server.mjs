@@ -6,9 +6,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCheck, loadRules, loadScenarios } from './src/load.mjs';
+import { createEvidenceProvider } from './src/evidence-provider.mjs';
+import { reviewDocumentEvidence } from './src/document-review.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8080);
+const evidenceProvider = await createEvidenceProvider({ kind: process.env.EVIDENCE_PROVIDER || 'sinceai' });
 
 // Autodesk APS keys for the 3D viewer: read from 3D_Since_AI/.env into a private object (not process.env),
 // never logged, never served. The browser only gets a short-lived read-only token (scope viewables:read).
@@ -52,6 +55,8 @@ const STATIC = [
   ['/src/', 'src'],
   ['/ships/', 'ships'],
   ['/tests/expected/', 'tests/expected'],
+  ['/demo/', 'demo'],
+  ['/integrations/sinceai/data/', 'integrations/sinceai/data'],
   ['/node_modules/three/', 'node_modules/three'],
   ['/', 'public'],
 ];
@@ -94,6 +99,16 @@ const routes = {
   'GET /api/scenarios': () => loadScenarios(),
   'GET /api/rules': () => ({ rules: loadRules() }),
   'GET /api/check': (q) => runCheck(q.get('scenario') || 'rcrv-3d'),
+  'GET /api/evidence/provider': () => ({ id: evidenceProvider.id, metadata: evidenceProvider.metadata || null }),
+  'GET /api/evidence/search': (q) => evidenceProvider.search(q.get('q') || '', {
+    limit: q.get('limit') || 8,
+    sourceKind: q.get('sourceKind') || undefined,
+    regulation: q.get('regulation') || undefined,
+  }),
+  'POST /api/evidence/review': async (q, body, req) => {
+    localOnly(req);
+    return reviewDocumentEvidence({ ...body, provider: evidenceProvider });
+  },
   // APS 3D viewer (real RCRV model).
   'GET /api/aps/status': () => {
     const configured = !!(aps.APS_CLIENT_ID && aps.APS_CLIENT_SECRET);
@@ -126,7 +141,7 @@ export const server = http.createServer(async (req, res) => {
   const handler = routes[`${req.method} ${p}`];
   if (handler) {
     try {
-      const limit = p === '/api/aps/fallback' ? 8_000_000 : 200_000;
+      const limit = p === '/api/aps/fallback' || p === '/api/evidence/review' ? 12_000_000 : 200_000;
       const body = req.method === 'POST' ? await readBody(req, limit) : undefined;
       return sendJSON(res, 200, await handler(url.searchParams, body, req));
     } catch (e) {

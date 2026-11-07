@@ -20,6 +20,7 @@ reports/
 
 # Source documents (rule PDFs, GA drawings): licensed, keep local
 source/
+integrations/sinceai/data/*.jsonl
 
 # Editor, OS and tool files
 .claude/
