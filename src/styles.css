@@ -302,6 +302,8 @@ button:focus-visible, a:focus-visible { outline: 2px solid #5eb4aa; outline-offs
 .evidence-steps i { width: 34px; height: 1px; background: #d6dfda; }
 .evidence-local { display: inline-flex; align-items: center; gap: 7px; color: #748781; font: 8px var(--mono); letter-spacing: .08em; }
 .evidence-local i { width: 6px; height: 6px; border-radius: 50%; background: #6ca994; }
+.evidence-return-link { display: inline-flex; align-items: center; gap: 5px; color: #647873; font-size: 9px; white-space: nowrap; }
+.evidence-return-link:hover { color: #287c76; }
 .evidence-workspace { width: min(1160px, calc(100% - 56px)); margin: 0 auto; padding: 42px 0 28px; }
 .evidence-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 25px; }
 .evidence-kicker { color: #718d86; font: 8px var(--mono); letter-spacing: .1em; }

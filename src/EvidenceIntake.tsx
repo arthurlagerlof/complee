@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowRight, Check, FileText, FolderUp, Search, Ship, Trash2, X } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Check, FileText, FolderUp, Search, Ship, Trash2, X } from 'lucide-react'
 
 type Review = { filename: string; extracted_characters: number; message: string; findings: { topic: string; evidence: string[]; candidates: { provision_reference: string; title: string; text: string; source?: { kind?: string; pages?: number[] } }[] }[] }
 
@@ -13,7 +13,7 @@ const fileKind = (name: string) => {
   return { label: suffix ? suffix.slice(1).toUpperCase() : 'FILE', kind: 'document', support: 'Evidence file · review support planned' }
 }
 
-export default function EvidenceIntake({ onContinue }: { onContinue: () => void }) {
+export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () => void; onBack: () => void }) {
   const input = useRef<HTMLInputElement>(null)
   const [files, setFiles] = useState<File[]>([])
   const [dragging, setDragging] = useState(false)
@@ -74,9 +74,14 @@ export default function EvidenceIntake({ onContinue }: { onContinue: () => void 
     sessionStorage.setItem('compleeEvidenceFiles', JSON.stringify(files.map((file) => ({ name: file.name, size: file.size, type: file.type }))))
     onContinue()
   }
+  const returnToMain = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault()
+    sessionStorage.setItem('compleeEvidenceFiles', JSON.stringify(files.map((file) => ({ name: file.name, size: file.size, type: file.type }))))
+    onBack()
+  }
 
   return <div className="evidence-app">
-    <header className="evidence-header"><a className="brand" href="#top"><span className="brand-mark"><Ship size={17} strokeWidth={1.8} /></span>Complee</a><nav className="evidence-steps" aria-label="Review workflow"><b><span>01</span>Add evidence</b><i /><span><span>02</span>Review design</span><i /><span><span>03</span>Manage findings</span></nav><span className="evidence-local"><i />LOCAL WORKSPACE</span></header>
+    <header className="evidence-header"><a className="brand" href="#top"><span className="brand-mark"><Ship size={17} strokeWidth={1.8} /></span>Complee</a><a className="evidence-return-link" href="#top" onClick={returnToMain}><ArrowLeft size={14} />Back to main page</a><nav className="evidence-steps" aria-label="Review workflow"><b><span>01</span>Add evidence</b><i /><span><span>02</span>Review design</span><i /><span><span>03</span>Manage findings</span></nav><span className="evidence-local"><i />LOCAL WORKSPACE</span></header>
     <main className="evidence-workspace" id="top">
       <div className="evidence-title"><div><span className="evidence-kicker">VESSEL DESIGN REVIEW / STEP 01</span><h1>Add design evidence</h1><p>Start with the files behind your vessel design. Continue to the R/V Taani model review when ready.</p></div><div className="evidence-vessel-tag"><Ship size={15} /><span><small>VESSEL PROFILE</small>R/V Taani · Demo vessel</span><Check size={15} /></div></div>
       <div className="evidence-layout">

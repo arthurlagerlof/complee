@@ -94,7 +94,13 @@ function App() {
     window.history.pushState(null, '', '#inspection')
     setShowConcept(true)
   }
-  if (!showConcept) return <EvidenceIntake onContinue={continueToInspection} />
+  const backToMain = () => {
+    scrollToInspection.current = false
+    window.history.pushState(null, '', '#top')
+    setShowConcept(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  if (!showConcept) return <EvidenceIntake onContinue={continueToInspection} onBack={backToMain} />
 
   return (
     <div ref={root} id="top">
