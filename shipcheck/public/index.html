@@ -25,6 +25,7 @@
   <span id="accBadge" class="accbadge" hidden title="Ground truth of the unedited design: the same files and scoring as npm test"></span>
   <span class="grow"></span>
   <button id="demoBtn" class="primary" title="Scripted run-through (Esc to stop)">&#9654; Demo run-through</button>
+  <button id="traceBtn" title="Parts × rules table; click a cell to jump to the part">Traceability</button>
   <button id="reportBtn" title="Printable findings report">Report</button>
   <button id="csvBtn" title="Download findings as CSV">CSV</button>
 </header>
@@ -51,6 +52,7 @@
     <div id="threeView" class="viewpane"></div>
     <div id="apsView" class="viewpane" hidden></div>
     <div id="fallbackView" class="viewpane" hidden></div>
+    <div id="tracePanel" class="viewpane" hidden></div>
     <div id="caption" hidden></div>
   </section>
   <aside id="detail"><p class="muted">Click an element in the model or in the list to see every rule that applies, why it passes or fails, and where each value comes from.</p></aside>

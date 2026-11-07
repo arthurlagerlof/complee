@@ -4,6 +4,7 @@ import { checkModel, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_R
 import { scoreResults, scoreLine, badgeText } from '/src/score.mjs';
 import { partsToModel } from '/src/parts-model.mjs';
 import { reportRows, toCSV, toHTML } from '/src/report.mjs';
+import { traceMatrix, traceCSV, cellLabel } from '/src/trace.mjs';
 import { createViewer } from './viewer3d.js';
 import { createApsViewer, createFallbackViewer } from './viewer-aps.js';
 
@@ -167,6 +168,8 @@ async function loadScenario(id) {
   S.edits.clear();
   S.selected = null;
   S.ruleView = null;
+  traceState = { findingsOnly: null, limit: TRACE_PAGE };
+  closeTrace();
   listLimit = LIST_PAGE;
   // Large real models start with the findings only (thousands of compliant parts otherwise).
   S.filter.status = new Set(S.norm.elements.length > 2000 ? ['non_compliant', 'not_enough_info'] : ['non_compliant', 'not_enough_info', 'compliant', 'null']);
@@ -648,6 +651,44 @@ function download(name, text, type) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+// ---------- traceability: parts x rules (same data as the report) ----------
+
+const TRACE_PAGE = 300;
+let traceState = { findingsOnly: null, limit: TRACE_PAGE };
+
+function openTrace() {
+  const panel = $('#tracePanel');
+  if (traceState.findingsOnly == null) traceState.findingsOnly = S.norm.elements.length > 2000;
+  const m = traceMatrix(S.results, allRules(), { findingsOnly: traceState.findingsOnly });
+  const rows = m.rows.slice(0, traceState.limit);
+  panel.innerHTML = `<div class="trace-head">
+      <b>Traceability: parts × rules</b>
+      <span class="muted">${m.rows.length.toLocaleString('en')} of ${m.total.toLocaleString('en')} parts with rule results${S.edits.size ? ' · includes what-if values' : ''}</span>
+      <label><input type="checkbox" id="traceFindings" ${traceState.findingsOnly ? 'checked' : ''}> findings only</label>
+      <span class="grow"></span>
+      <button id="traceCsv">Download CSV</button><button id="traceClose">Close</button>
+    </div>
+    <div class="trace-wrap"><table class="trace"><thead><tr><th>Part</th>${m.rules.map((r) => `<th title="${esc(r.source)}">${esc(r.id)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map((r) => `<tr><td class="part" data-id="${esc(r.id)}"><b>${esc(r.id)}</b> ${esc(r.name)}</td>${m.rules.map((c) => {
+      const st = r.cells[c.id];
+      return st ? `<td class="cell st-${st}" data-id="${esc(r.id)}" data-rule="${esc(c.id)}" title="${esc(r.id)} · ${esc(c.id)}: ${esc(cellLabel(st))}">${esc(cellLabel(st))}</td>` : '<td class="cell none"></td>';
+    }).join('')}</tr>`).join('')}</tbody></table>
+    ${m.rows.length > rows.length ? `<button class="more" id="traceMore">Show ${Math.min(TRACE_PAGE, m.rows.length - rows.length)} more (${(m.rows.length - rows.length).toLocaleString('en')} hidden)</button>` : ''}</div>`;
+  panel.hidden = false;
+  $('#traceBtn').classList.add('on');
+  $('#traceClose').onclick = closeTrace;
+  $('#traceCsv').onclick = () => download(`traceability-${S.sc.id}.csv`, traceCSV(traceMatrix(S.results, allRules(), { findingsOnly: traceState.findingsOnly })), 'text/csv');
+  $('#traceFindings').onchange = (e) => { traceState.findingsOnly = e.target.checked; traceState.limit = TRACE_PAGE; openTrace(); };
+  if ($('#traceMore')) $('#traceMore').onclick = () => { traceState.limit += TRACE_PAGE; openTrace(); };
+  panel.querySelectorAll('[data-id]').forEach((n) => (n.onclick = () => {
+    closeTrace();
+    select(n.dataset.id);
+    const card = n.dataset.rule && document.querySelector(`#dResults .res[data-rule="${CSS.escape(n.dataset.rule)}"]`);
+    if (card) { card.scrollIntoView({ block: 'center', behavior: 'smooth' }); pulse(card); }
+  }));
+}
+function closeTrace() { $('#tracePanel').hidden = true; $('#traceBtn').classList.remove('on'); }
+
 // ---------- report export (shared with the CLI: src/report.mjs) ----------
 
 function exportCSV() {
@@ -805,6 +846,7 @@ $('#deck').onchange = (e) => {
 };
 $('#demoBtn').onclick = runDemo;
 $('#reportBtn').onclick = exportReport;
+$('#traceBtn').onclick = () => ($('#tracePanel').hidden ? openTrace() : closeTrace());
 $('#csvBtn').onclick = exportCSV;
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.demo) S.demo.stop = true; });
 // Simple view (real model): context (shell + decks) and checked parts only; deck cut from the deck plating.

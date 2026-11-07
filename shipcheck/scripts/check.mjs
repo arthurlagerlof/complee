@@ -2,13 +2,14 @@
 // Usage: node scripts/check.mjs                  all scenarios, summary + findings
 //        node scripts/check.mjs <id|model.json>   one scenario; also writes results.json
 //        node scripts/check.mjs --precompute     writes the offline results (ships/rcrv/results-3d.json)
-//        node scripts/check.mjs --report [id]    writes reports/<id>.html and .csv (same as the UI export)
+//        node scripts/check.mjs --report [id]    writes reports/<id>.html, .csv and -traceability.csv (same as the UI export)
 import fs from 'node:fs';
 import path from 'node:path';
 import { findingsOf } from '../src/checker.mjs';
 import { scoreLine } from '../src/score.mjs';
 import { ROOT, loadScenarios, runCheck, precompute, loadModel, loadRules } from '../src/load.mjs';
 import { reportRows, toCSV, toHTML } from '../src/report.mjs';
+import { traceMatrix, traceCSV } from '../src/trace.mjs';
 
 if (process.argv[2] === '--report') {
   const ids = process.argv[3] ? [process.argv[3]] : loadScenarios().map((s) => s.id);
@@ -20,6 +21,7 @@ if (process.argv[2] === '--report') {
     const model = loadModel(sc), rules = loadRules();
     fs.writeFileSync(path.join(ROOT, 'reports', `${id}.html`), toHTML({ title: model.name, scenario: id, results: out, model, rules, score: out.score }));
     fs.writeFileSync(path.join(ROOT, 'reports', `${id}.csv`), toCSV(reportRows(out, model, rules)));
+    fs.writeFileSync(path.join(ROOT, 'reports', `${id}-traceability.csv`), traceCSV(traceMatrix(out, rules)));
     console.log(`Wrote reports/${id}.html and .csv (${findingsOf(out).length} findings)${out.score ? ` - ${scoreLine(out.score)}` : ''}`);
   }
   process.exit(0);

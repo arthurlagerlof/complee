@@ -36,3 +36,18 @@ test('HTML report: badge, findings, edits and rule texts are included and escape
   assert.match(html, /ADA-403\.5\.1/);
   assert.doesNotMatch(html, /<5>/);
 });
+
+test('traceability matrix: parts x rules, same data in the report and the CSV', async () => {
+  const { traceMatrix, traceCSV } = await import('../src/trace.mjs');
+  const out = checkModel(CRUISE, RULES);
+  const m = traceMatrix(out, RULES);
+  const c2 = m.rows.find((r) => r.id === 'C2');
+  assert.equal(c2.cells['FSS-13-CORRIDOR'], 'non_compliant');
+  assert.equal(c2.cells['ADA-403.5.1'], 'non_compliant');
+  assert.equal(c2.cells['SOLAS-II-2-13-DEADEND-PAX'], 'compliant');
+  assert.equal(m.rows[0].worst, 'non_compliant', 'worst first');
+  assert.ok(traceMatrix(out, RULES, { findingsOnly: true }).rows.every((r) => r.worst !== 'compliant'));
+  assert.match(traceCSV(m), /"C2","Cross corridor to stair","D5","fail"/);
+  const html = toHTML({ title: 't', scenario: 'cruise', results: out, model: CRUISE, rules: RULES });
+  assert.match(html, /Traceability: parts × rules/);
+});

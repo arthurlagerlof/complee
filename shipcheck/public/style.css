@@ -223,3 +223,17 @@ blockquote { margin: 6px 0 0; padding: 2px 0 2px 8px; border-left: 3px solid var
 .na.whatif { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 button.tiny { padding: 0 6px; font-size: 11px; }
 .kv.comp td:first-child { width: 32%; }
+
+/* traceability panel */
+#tracePanel { z-index: 15; background: #fff; display: flex; flex-direction: column; }
+#tracePanel[hidden] { display: none; }
+.trace-head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.trace-head .grow { flex: 1; }
+.trace-wrap { overflow: auto; flex: 1; padding: 0 12px 12px; }
+table.trace { border-collapse: collapse; font-size: 11.5px; }
+table.trace th { position: sticky; top: 0; background: var(--soft); padding: 4px 6px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
+table.trace td { padding: 2px 6px; border-bottom: 1px solid var(--soft); white-space: nowrap; }
+table.trace td.part { cursor: pointer; max-width: 360px; overflow: hidden; text-overflow: ellipsis; }
+table.trace td.cell { cursor: pointer; color: #fff; text-align: center; font-weight: 600; }
+table.trace td.cell.none { background: #fafbfc; cursor: default; }
+table.trace td.cell:hover { outline: 2px solid var(--accent); }

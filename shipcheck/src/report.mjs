@@ -2,6 +2,7 @@
 // buttons) and by the CLI (node check.mjs --report <scenario>), so both give the same output.
 import { findingsOf, normalizeModel } from './checker.mjs';
 import { scoreLine } from './score.mjs';
+import { traceMatrix, cellLabel } from './trace.mjs';
 
 const LABEL = { compliant: 'Compliant', non_compliant: 'Non-compliant', not_enough_info: 'Not enough info' };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -35,6 +36,17 @@ export function reportRows(results, model, rules = []) {
   });
 }
 
+// Traceability (parts x rules) from the same function as the UI panel. Large models: parts with findings only.
+export function traceSection(results, rules) {
+  const all = traceMatrix(results, rules);
+  const m = all.rows.length > 500 ? traceMatrix(results, rules, { findingsOnly: true }) : all;
+  const cls = { compliant: 'ok', non_compliant: 'nc', not_enough_info: 'ni' };
+  return `<h2>Traceability: parts × rules (${m.rows.length.toLocaleString('en')} of ${all.total.toLocaleString('en')} parts${m === all ? '' : ', parts with findings'})</h2>
+<table><tr><th>Part</th>${m.rules.map((r) => `<th>${esc(r.id)}</th>`).join('')}</tr>
+${m.rows.map((r) => `<tr><td><b>${esc(r.id)}</b> ${esc(r.name)}</td>${m.rules.map((c) => `<td class="${cls[r.cells[c.id]] ?? ''}">${esc(cellLabel(r.cells[c.id]))}</td>`).join('')}</tr>`).join(String.fromCharCode(10))}
+</table>`;
+}
+
 export function toCSV(rows) {
   const cols = Object.keys(rows[0] || { status: '' });
   const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
@@ -54,7 +66,7 @@ export function toHTML({ title, scenario, results, model, rules = [], score = nu
   return `<!doctype html><html><head><meta charset="utf-8"><title>Compliance findings - ${esc(title)}</title>
 <style>body{font:12px/1.4 system-ui,sans-serif;margin:24px;color:#1d2430}h1{font-size:18px;margin:0}h2{font-size:14px;margin:18px 0 6px}
 table{border-collapse:collapse;width:100%;margin-top:8px}th,td{border:1px solid #d5dae0;padding:4px 6px;text-align:left;vertical-align:top}
-th{background:#f3f5f8}.nc{color:#b42318;font-weight:600}.ni{color:#9a6700;font-weight:600}.muted{color:#5b6573}
+th{background:#f3f5f8}.nc{color:#b42318;font-weight:600}.ok{color:#1d6b3d}.ni{color:#9a6700;font-weight:600}.muted{color:#5b6573}
 .badge{display:inline-block;padding:3px 10px;border-radius:12px;font-weight:600;margin:8px 0}.ok{background:#e3f4ea;color:#1d6b3d}.bad{background:#fde8e8;color:#9b2c2c}
 @media print{button{display:none}}</style></head><body>
 <button onclick="print()">Print / save as PDF</button>
@@ -71,6 +83,7 @@ ${rows.map((r) => `<tr><td class="${r.status === 'Non-compliant' ? 'nc' : 'ni'}"
 <td>${esc(r.group)}</td><td>${esc(r.rule)}</td><td>${esc(r.source)}<br><span class="muted">${esc(r.clause)}</span></td><td>${esc(r.measured)}</td><td>${esc(r.required)}</td>
 <td>${esc(r.explanation)}</td><td class="muted">${esc(r.provenance)}</td><td>${esc(r.basis)}</td><td>${r.verified}</td><td>${esc(r.review)}</td></tr>`).join('\n')}
 </table>
+${traceSection(results, rules)}
 <h2>Rules applied</h2>
 <table><tr><th>Rule</th><th>Source</th><th>Clause</th><th>Text (${'verbatim or paraphrase'})</th><th>Basis</th><th>Verified</th><th>Review</th></tr>
 ${usedRules.map((r) => `<tr><td>${esc(r.id)}</td><td>${esc(r.source)}</td><td>${esc(r.clause)}</td><td>“${esc(r.text)}” <span class="muted">(${esc(r.text_status || 'paraphrase')})</span></td><td>${esc(r.basis || 'explicit')}${r.basis_note ? `<br><span class="muted">${esc(r.basis_note)}</span>` : ''}</td><td>${r.verified ? 'yes' : 'no'}</td><td>${esc(r.review_status || '')}</td></tr>`).join('\n')}
