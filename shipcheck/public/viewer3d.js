@@ -47,7 +47,7 @@ export function createViewer(container, { onPick } = {}) {
   container.appendChild(tip);
 
   function resize() {
-    const w = container.clientWidth, h = container.clientHeight;
+    const w = container.clientWidth || 1, h = container.clientHeight || 1;
     renderer.setSize(w, h);
     persp.aspect = w / h;
     persp.updateProjectionMatrix();
@@ -192,7 +192,15 @@ export function createViewer(container, { onPick } = {}) {
       ortho.lookAt(c);
       fitOrtho(Math.max(s.z * 1.3, (s.x * 1.1) / (container.clientWidth / container.clientHeight || 1)));
     } else {
-      flyTo(c, new THREE.Vector3(c.x - span * 0.3, c.y + span * 0.6, c.z + span * 1.0), ms);
+      // Fit the whole restored example using both viewport dimensions, including narrow panes.
+      persp.aspect = (container.clientWidth || 1) / (container.clientHeight || 1);
+      persp.updateProjectionMatrix();
+      const vertical = THREE.MathUtils.degToRad(persp.fov / 2);
+      const horizontal = Math.atan(Math.tan(vertical) * persp.aspect);
+      const radius = Math.max(box.getBoundingSphere(new THREE.Sphere()).radius, 4);
+      const distance = radius * 1.08 / Math.sin(Math.min(vertical, horizontal));
+      const direction = new THREE.Vector3(-0.3, 0.6, 1).normalize();
+      flyTo(c, c.clone().addScaledVector(direction, distance), ms);
     }
   }
 

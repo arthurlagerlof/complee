@@ -19,6 +19,13 @@
       "name": "Cruise passenger deck (fictional)",
       "model": "ships/cruise/deck.json",
       "expected": "tests/expected/cruise.json"
+    },
+    {
+      "id": "rcrv-layout",
+      "name": "Simplified research vessel (example)",
+      "model": "ships/rcrv/layout.json",
+      "expected": "tests/expected/rcrv-layout.json",
+      "viewer": "three"
     }
   ]
 }
