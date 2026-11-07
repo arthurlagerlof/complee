@@ -30,6 +30,7 @@ export function reportRows(results, model, rules = []) {
       basis: f.basis ?? ruleById.get(f.rule_id)?.basis ?? 'explicit',
       text: f.text_status ?? ruleById.get(f.rule_id)?.text_status ?? 'paraphrase',
       verified: f.verified ? 'yes' : 'no',
+      review: f.review_status ?? ruleById.get(f.rule_id)?.review_status ?? '',
     };
   });
 }
@@ -65,14 +66,14 @@ ${usedRules.length} rules applied, ${verified}/${rules.length} rule values verif
 ${edits.length ? `<p><b>${edits.length} value(s) edited in this session:</b> ${edits.map((x) => `${esc(x.id)}.${esc(x.key)} ${esc(x.before)} → ${esc(x.after)}`).join('; ')}</p>` : ''}
 ${drafts.length ? `<p><b>Draft rules, not run (no official value):</b> ${drafts.map((d) => `${esc(d.id)}: ${esc(d.reason)}`).join(' ')}</p>` : ''}
 <h2>Findings (${rows.length})</h2>
-<table><tr><th>Status</th><th>Element</th><th>Group / deck</th><th>Rule</th><th>Source / clause</th><th>Measured</th><th>Required</th><th>Explanation</th><th>Input provenance (model text = mm)</th><th>Basis</th><th>Verified</th></tr>
+<table><tr><th>Status</th><th>Element</th><th>Group / deck</th><th>Rule</th><th>Source / clause</th><th>Measured</th><th>Required</th><th>Explanation</th><th>Input provenance (model text = mm)</th><th>Basis</th><th>Verified</th><th>Review</th></tr>
 ${rows.map((r) => `<tr><td class="${r.status === 'Non-compliant' ? 'nc' : 'ni'}">${esc(r.status)}</td><td><b>${esc(r.element)}</b>${r.objectid !== '' ? `<br><span class="muted">dbId ${esc(r.objectid)}</span>` : ''}<br>${esc(r.name)}</td>
 <td>${esc(r.group)}</td><td>${esc(r.rule)}</td><td>${esc(r.source)}<br><span class="muted">${esc(r.clause)}</span></td><td>${esc(r.measured)}</td><td>${esc(r.required)}</td>
-<td>${esc(r.explanation)}</td><td class="muted">${esc(r.provenance)}</td><td>${esc(r.basis)}</td><td>${r.verified}</td></tr>`).join('\n')}
+<td>${esc(r.explanation)}</td><td class="muted">${esc(r.provenance)}</td><td>${esc(r.basis)}</td><td>${r.verified}</td><td>${esc(r.review)}</td></tr>`).join('\n')}
 </table>
 <h2>Rules applied</h2>
-<table><tr><th>Rule</th><th>Source</th><th>Clause</th><th>Text (${'verbatim or paraphrase'})</th><th>Basis</th><th>Verified</th></tr>
-${usedRules.map((r) => `<tr><td>${esc(r.id)}</td><td>${esc(r.source)}</td><td>${esc(r.clause)}</td><td>“${esc(r.text)}” <span class="muted">(${esc(r.text_status || 'paraphrase')})</span></td><td>${esc(r.basis || 'explicit')}${r.basis_note ? `<br><span class="muted">${esc(r.basis_note)}</span>` : ''}</td><td>${r.verified ? 'yes' : 'no'}</td></tr>`).join('\n')}
+<table><tr><th>Rule</th><th>Source</th><th>Clause</th><th>Text (${'verbatim or paraphrase'})</th><th>Basis</th><th>Verified</th><th>Review</th></tr>
+${usedRules.map((r) => `<tr><td>${esc(r.id)}</td><td>${esc(r.source)}</td><td>${esc(r.clause)}</td><td>“${esc(r.text)}” <span class="muted">(${esc(r.text_status || 'paraphrase')})</span></td><td>${esc(r.basis || 'explicit')}${r.basis_note ? `<br><span class="muted">${esc(r.basis_note)}</span>` : ''}</td><td>${r.verified ? 'yes' : 'no'}</td><td>${esc(r.review_status || '')}</td></tr>`).join('\n')}
 </table>
 <p class="muted">Values with source "estimated", "planted test case" or "derived by ShipCheck" are not design data. Inch values are shown as written in the model with their mm conversion (1 in = 25.4 mm).</p>
 </body></html>`;

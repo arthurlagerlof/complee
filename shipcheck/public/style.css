@@ -204,3 +204,5 @@ blockquote { margin: 6px 0 0; padding: 2px 0 2px 8px; border-left: 3px solid var
 #caption small { display: block; font-size: 12px; opacity: .75; margin-top: 2px; }
 .pulse { animation: pulse 1.4s ease-in-out 2; border-radius: 8px; }
 @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(31,111,235,0); } 50% { box-shadow: 0 0 0 4px rgba(31,111,235,.45); } }
+.tag.review { background: #e8f5ec; color: #23673f; }
+.note.scope { background: #eef4ff; border-color: #c9dbfb; }

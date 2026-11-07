@@ -47,7 +47,7 @@
   "class_society": {
    "value": "DNV",
    "unit": "mm",
-   "source": "assumed for the demo (the real class society of the RCRV is not confirmed here)"
+   "source": "confirmed by Meyer mentors (Q&A, 7 Nov)"
   },
   "fuel": "MGO",
   "source": "public particulars"

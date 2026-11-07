@@ -32,8 +32,9 @@
       "source": "estimated"
     },
     "class_society": {
-      "value": "ABS",
-      "source": "inferred from material names \"CS ABS A/B/D/EH36\" in the model; to confirm (VERIFY.md: ABS or DNV?)"
+      "value": "DNV",
+      "source": "confirmed by Meyer mentors (Q&A, 7 Nov)",
+      "note": "The model names materials with ABS grade designations (\"CS ABS A\"); the hull steel grades (IACS UR W11) are the same under DNV."
     },
     "propulsion": {
       "value": "diesel-electric",

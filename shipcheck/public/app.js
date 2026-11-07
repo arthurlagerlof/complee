@@ -226,7 +226,8 @@ function renderShip() {
       ${row('Class society', 'class_society', (v) => v.value)}
       ${sh.propulsion ? row('Propulsion', 'propulsion', (v) => v.value) : ''}
     </table>
-    ${S.model.provenance_note ? `<div class="note">${esc(S.model.provenance_note)}</div>` : ''}`;
+    ${S.model.provenance_note ? `<div class="note">${esc(S.model.provenance_note)}</div>` : ''}
+    ${S.model.scope_note ? `<div class="note scope">${esc(S.model.scope_note)}</div>` : ''}`;
 }
 
 // Draft rules are only mentioned where the model has elements they would apply to.
@@ -370,6 +371,7 @@ function renderResults(id) {
       <blockquote>“${esc(r.rule_text)}”</blockquote>
       <div class="tags">
         ${r.verified ? '<span class="tag blue">Value verified</span>' : '<span class="tag">Rule value not yet verified against official text</span>'}
+        ${r.review_status ? `<span class="tag review" title="How the value is shown was reviewed; this is not a verification against the official text">${esc(r.review_status)}</span>` : ''}
         <span class="tag grey">${r.text_status === 'verbatim' ? 'verbatim text' : 'paraphrased text'}</span>
         ${r.basis !== 'explicit' ? `<span class="tag grey" title="${esc(ruleById(r.rule_id)?.basis_note || '')}">basis: ${esc(r.basis)}</span>` : ''}
         ${r.reference_url ? `<a class="tag grey" href="${esc(r.reference_url)}" target="_blank" rel="noopener">official source ↗</a>` : ''}

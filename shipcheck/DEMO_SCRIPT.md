@@ -43,7 +43,7 @@ was measured, what is required, the rule text, and where each value came from (5
 - Show the oil fuel system: 5083 aluminium pipes and hoses are amber. SOLAS allows "other approved material", and the
   approval is not in the model.
 - Show **MIN-THK-SWBS**: a draft rule that is listed but never run, because no official value is in the project yet.
-- Show VERIFY.md: the mentor questions (ABS or DNV? What do BHP, BHK, TTP, FLT, MDK and SSH mean?).
+- Show VERIFY.md: what the Meyer mentors confirmed (DNV, reviewed rule values) and the open questions (steel-grade table under 90 m, LCG origin).
 
 **4. Trust (30 s).**
 - Pass/fail comes only from the deterministic checker: same input, same result. No LLM is involved in it.
@@ -54,8 +54,7 @@ was measured, what is required, the rule text, and where each value came from (5
   and the RCRV is about 60 m), and unknown values stay empty.
 - Works offline: the check runs locally; precomputed results and screenshots cover a missing 3D viewer.
 
-**5. Roadmap (20 s).** Verify the rule set with Meyer's rule experts and the class society; map drawing codes to member categories
-(UR S6 Table 1); add spaces and escape routes from the GA/OCX data; integrate into the design tool so issues are flagged as the
+**5. Roadmap (20 s).** Verify the rule values against the official DNV/IMO texts with Meyer's rule experts; add the member category (UR S6 Table 1); add spaces and escape routes from the GA/OCX data; integrate into the design tool so issues are flagged as the
 design changes, before the class review.
 
 **6. Ask (10 s).** A verified rule set for one area (hull materials or means of escape) and an anonymised cruise model, to run a

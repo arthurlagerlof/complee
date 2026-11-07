@@ -11,7 +11,7 @@
       "check": "min", "parameter": "clear_width", "value": 900, "unit": "mm",
       "applies_to": { "types": ["corridor"] },
       "related": ["ADA-403.5.1", "SOLAS-II-2-13-DEADEND-PAX", "SOLAS-II-2-13-DEADEND-CARGO", "SOLAS-II-2-13-ESCAPE-ACCOM"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.imo.org/en/About/Conventions/Pages/International-Convention-for-the-Safety-of-Life-at-Sea-(SOLAS),-1974.aspx"
     },
     {
@@ -24,7 +24,7 @@
       "check": "min", "parameter": "clear_width", "value": 900, "unit": "mm",
       "applies_to": { "types": ["stair"] },
       "related": ["SOLAS-II-2-13-ESCAPE-ACCOM", "FSS-13-CORRIDOR"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.imo.org/en/About/Conventions/Pages/International-Convention-for-the-Safety-of-Life-at-Sea-(SOLAS),-1974.aspx"
     },
     {
@@ -39,7 +39,7 @@
       "count_label": "independent means of escape",
       "applies_to": { "types": ["escape_zone"] },
       "related": ["FSS-13-STAIR", "FSS-13-CORRIDOR", "SOLAS-II-2-13-DEADEND-CARGO", "SOLAS-II-2-13-DEADEND-PAX"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.imo.org/en/About/Conventions/Pages/International-Convention-for-the-Safety-of-Life-at-Sea-(SOLAS),-1974.aspx"
     },
     {
@@ -54,7 +54,7 @@
       "count_label": "means of escape",
       "applies_to": { "types": ["machinery_space"], "where": { "category_A": true } },
       "related": ["MARPOL-I-12-SLUDGE"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.imo.org/en/About/Conventions/Pages/International-Convention-for-the-Safety-of-Life-at-Sea-(SOLAS),-1974.aspx"
     },
     {
@@ -67,7 +67,7 @@
       "check": "max", "parameter": "dead_end_length", "value": 13000, "unit": "mm",
       "applies_to": { "types": ["corridor"], "ship": { "type_in": ["passenger"] } },
       "related": ["FSS-13-CORRIDOR", "SOLAS-II-2-13-DEADEND-CARGO"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.imo.org/en/About/Conventions/Pages/International-Convention-for-the-Safety-of-Life-at-Sea-(SOLAS),-1974.aspx"
     },
     {
@@ -80,7 +80,7 @@
       "check": "max", "parameter": "dead_end_length", "value": 7000, "unit": "mm",
       "applies_to": { "types": ["corridor"], "ship": { "type_in": ["cargo", "research", "special_purpose"] } },
       "related": ["FSS-13-CORRIDOR", "SOLAS-II-2-13-DEADEND-PAX", "SOLAS-II-2-13-ESCAPE-ACCOM"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.imo.org/en/About/Conventions/Pages/International-Convention-for-the-Safety-of-Life-at-Sea-(SOLAS),-1974.aspx"
     },
     {
@@ -93,7 +93,7 @@
       "check": "min", "parameter": "clear_width", "value": 915, "unit": "mm",
       "applies_to": { "types": ["corridor", "ramp"], "where": { "accessible_route": true }, "ship": { "type_in": ["passenger"], "operating_area_any": ["US"] } },
       "related": ["FSS-13-CORRIDOR", "ADA-404.2.3", "ADA-405.2"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.access-board.gov/ada/"
     },
     {
@@ -106,7 +106,7 @@
       "check": "min", "parameter": "clear_width", "value": 815, "unit": "mm",
       "applies_to": { "types": ["door"], "where": { "accessible_route": true }, "ship": { "type_in": ["passenger"], "operating_area_any": ["US"] } },
       "related": ["ADA-403.5.1"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.access-board.gov/ada/"
     },
     {
@@ -119,7 +119,7 @@
       "check": "max", "parameter": "slope", "value": 0.0833, "unit": "ratio",
       "applies_to": { "types": ["ramp"], "where": { "accessible_route": true }, "ship": { "type_in": ["passenger"], "operating_area_any": ["US"] } },
       "related": ["ADA-403.5.1"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.access-board.gov/ada/"
     },
     {
@@ -133,7 +133,7 @@
       "check": "not_adjacent_zone", "zones": ["passenger"],
       "applies_to": { "types": ["fuel_tank"], "where": { "fuel": "LNG" } },
       "related": ["IGF-5.3.3-SIDE"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.imo.org/en/OurWork/Safety/Pages/IGF-Code.aspx"
     },
     {
@@ -146,7 +146,7 @@
       "check": "distance_min_hull", "value": 11500, "unit": "mm", "beam_divisor": 5,
       "applies_to": { "types": ["fuel_tank"], "where": { "fuel": "LNG" } },
       "related": ["IGF-LNG-LOCATION"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.imo.org/en/OurWork/Safety/Pages/IGF-Code.aspx"
     },
     {
@@ -159,7 +159,7 @@
       "check": "min", "parameter": "sill_height", "value": 380, "unit": "mm",
       "applies_to": { "types": ["door"], "where": { "weathertight": true }, "ship": { "min": { "length_overall": { "value": 24, "unit": "m" } } } },
       "related": ["LL-REG25-GUARDRAIL"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.imo.org/en/About/Conventions/Pages/International-Convention-on-Load-Lines.aspx"
     },
     {
@@ -172,7 +172,7 @@
       "check": "min", "parameter": "height", "value": 1000, "unit": "mm",
       "applies_to": { "types": ["guard_rail"], "ship": { "min": { "length_overall": { "value": 24, "unit": "m" } } } },
       "related": ["DNV-GUARDRAIL", "LL-REG12-SILL"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.imo.org/en/About/Conventions/Pages/International-Convention-on-Load-Lines.aspx"
     },
     {
@@ -185,7 +185,7 @@
       "check": "min", "parameter": "height", "value": 1000, "unit": "mm",
       "applies_to": { "types": ["guard_rail"], "ship": { "equals": { "class_society": "DNV" } } },
       "related": ["LL-REG25-GUARDRAIL"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.dnv.com/rules-standards/"
     },
     {
@@ -198,7 +198,7 @@
       "check": "requires", "requires": { "type": "sludge_tank", "label": "sludge tank (oil residues)" },
       "applies_to": { "types": ["machinery_space"], "where": { "category_A": true }, "ship": { "min": { "gross_tonnage": 400 } } },
       "related": ["SOLAS-II-2-13-ESCAPE-MACH"],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.imo.org/en/About/Conventions/Pages/International-Convention-for-the-Prevention-of-Pollution-from-Ships-(MARPOL).aspx"
     },
     {
@@ -286,7 +286,7 @@
         "IACS-S6-T7-GRADE-THICKNESS",
         "DQ-DESIGN-STATUS"
       ],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://iacs.org.uk/resolutions/unified-requirements"
     },
     {
@@ -297,7 +297,7 @@
       "text_status": "verbatim",
       "text_note": "Extracted from the IACS PDF (mirror copy); compare with the copy on iacs.org.uk before setting verified.",
       "basis": "interpretation",
-      "basis_note": "UR S6 is written for ships of 90 m and above; the RCRV is about 60 m. Applied as the closest published IACS table until the class rule for vessels under 90 m is confirmed (VERIFY.md). Only shell (SWBS 110), bulkheads (120) and decks (130) are checked: the members Table 1 names.",
+      "basis_note": "UR S6 is written for ships of 90 m and above; the RCRV is about 60 m. Applied as the closest published IACS table until the DNV requirement for vessels under 90 m is identified (VERIFY.md). Only shell (SWBS 110), bulkheads (120) and decks (130) are checked: the members Table 1 names.",
       "check": "table_lookup",
       "parameter": "thickness",
       "unit": "mm",
@@ -454,12 +454,12 @@
         "IACS-W11-HULL-GRADE",
         "MIN-THK-SWBS"
       ],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://iacs.org.uk/resolutions/unified-requirements/ur-s/ur-s6-rev9-corr2-cln"
     },
     {
       "id": "MIN-THK-SWBS",
-      "source": "Class rules: minimum plate thickness (ABS or DNV, to be confirmed)",
+      "source": "DNV rules: minimum plate thickness (value not yet in the project)",
       "clause": "Not yet identified (minimum thickness per structural member)",
       "text": "Minimum plate thickness per structural member group. No official value is in the project yet.",
       "text_status": "paraphrase",
@@ -483,7 +483,7 @@
       "related": [
         "IACS-S6-T7-GRADE-THICKNESS"
       ],
-      "verified": false
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)"
     },
     {
       "id": "IGC-3.5.3.1.2-HATCH-OPENING",
@@ -505,7 +505,7 @@
       "related": [
         "DQ-DESIGN-STATUS"
       ],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.law.cornell.edu/cfr/text/46/154.340"
     },
     {
@@ -545,7 +545,7 @@
       "related": [
         "DQ-DESIGN-STATUS"
       ],
-      "verified": false,
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",
       "reference_url": "https://www.imo.org/en/About/Conventions/Pages/International-Convention-for-the-Safety-of-Life-at-Sea-(SOLAS),-1974.aspx"
     },
     {
@@ -576,7 +576,7 @@
         }
       },
       "related": [],
-      "verified": false
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)"
     },
     {
       "id": "DQ-ERROR-VALUES",
@@ -605,7 +605,7 @@
         }
       },
       "related": [],
-      "verified": false
+      "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)"
     }
   ]
 }

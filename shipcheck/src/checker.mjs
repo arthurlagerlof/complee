@@ -269,6 +269,7 @@ function result(rule, status, { measured = null, required = '-', explanation, in
     text_status: rule.text_status || 'paraphrase',
     basis: rule.basis || 'explicit',
     verified: rule.verified === true,
+    review_status: rule.review_status || null,
     reference_url: rule.reference_url || null,
     related: rule.related || [],
     check: rule.check,

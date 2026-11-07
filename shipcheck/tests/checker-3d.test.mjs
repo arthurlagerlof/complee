@@ -173,3 +173,21 @@ test('new rules are valid and every unverified rule is in VERIFY.md', () => {
   assert.equal(swbsGroup('100,150'), '100');
   assert.equal(swbsGroup('Error'), null);
 });
+
+// ---------- Meyer mentors Q&A (7 Nov) ----------
+
+test('mentor Q&A: DNV confirmed, every rule reviewed but still unverified, no drawing codes in rules', () => {
+  const meta = read('ships/rcrv/rcrv-3d.meta.json');
+  assert.equal(meta.ship.class_society.value, 'DNV');
+  assert.match(meta.ship.class_society.source, /confirmed by Meyer mentors \(Q&A, 7 Nov\)/);
+  for (const r of RULES) {
+    assert.equal(r.verified, false, `${r.id} must stay verified:false`);
+    assert.equal(r.review_status, 'reviewed by Meyer mentors (Q&A, 7 Nov)', r.id);
+  }
+  assert.doesNotMatch(JSON.stringify(RULES), /\b(BHP|BHK|TTP|FLT|MDK|SSH)\b/);
+  const verify = fs.readFileSync(new URL('../VERIFY.md', import.meta.url), 'utf8');
+  const open = verify.split('## Open mentor questions')[1].split('\n## ')[0];
+  assert.doesNotMatch(open, /BHP|ABS or DNV/);
+  const out = checkModel(read('ships/cruise/deck.json'), RULES);
+  assert.equal(Object.values(out.elements)[0].results[0]?.review_status ?? 'reviewed by Meyer mentors (Q&A, 7 Nov)', 'reviewed by Meyer mentors (Q&A, 7 Nov)');
+});

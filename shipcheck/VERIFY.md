@@ -5,6 +5,10 @@ Until then the rule keeps `"verified": false` in `rules.json`, and the UI shows 
 *"Rule value not yet verified against official text"* on every result that uses it.
 `npm test` fails if a rule with `verified: false` is missing from this file.
 
+**Review status (Meyer mentors, Q&A 7 Nov):** the mentors reviewed how every rule value is shown and found it fine. Each rule therefore carries
+`"review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)"` next to `"verified": false`, and the UI and report show it. This is a review of the
+presentation, **not** a verification against the official text: `verified` stays `false` until a team member has checked the value as described below.
+
 How to verify a rule:
 1. Open the official source below (or the copy provided by Meyer Turku / the class society).
 2. Check the **value**, the **unit**, the **clause number** and the **applicability** (ship type, size, area).
@@ -53,20 +57,25 @@ Reference URLs in `rules.json` point to the convention overview pages (IMO, US A
 
 ### Data that does not support a requested check
 
-- **Escape routes, corridors, rooms:** the production model has no spaces, so `SOLAS-II-2-13-*`, `FSS-13-*` and ADA rules cannot run on `rcrv-3d`. Closest supported check: hatch clear openings from item names. The layout rules still run on the reconstructed `rcrv` scenario.
+- **Escape routes, corridors, rooms:** the production model has no spaces, so `SOLAS-II-2-13-*`, `FSS-13-*` and ADA rules cannot run on `rcrv-3d`. Closest supported check: hatch clear openings from item names. The layout rules run on the cruise example deck and on the layout test fixture.
 - **Minimum thickness per structural group:** data supports it (thickness + SWBS on 10,008 plates), but the rule value is missing (see `MIN-THK-SWBS`).
 - **Piping material per system:** only oil fuel has an official text in the project (SOLAS II-2/4.2.2.5.1). Other systems (sea water, bilge, potable water) are not checked until a rule text is supplied.
 
-## Mentor questions
+## Answered by the Meyer mentors (Q&A, 7 Nov)
 
-1. **Which class society applies to the RCRV, ABS or DNV?** The model's materials say "CS ABS A", so `rcrv-3d` assumes ABS; the layout test fixture assumes DNV.
-2. **Drawing codes:** what do **BHP, BHK, TTP, FLT, MDK, SSH** mean in drawing names such as `021-D05-00_BHP` or `091-SSH`? We have not guessed them; they could give the member category needed for UR S6 Table 1.
-3. Which steel-grade table applies to a vessel under 90 m (ABS or DNV)? Is UR S6 Table 7 an acceptable reference?
-4. Origin and direction of LCG / TCG / VCG (frame 0, AP, midship?), so that "within 0.4L amidships" can be computed.
-5. Were the 12" pipe stiffeners (ASTM A106 Gr B, API 5L X-52, drawings 022-D10-00_TTP SUPERPANEL and 091-SSH) specially approved as hull material?
-6. What is the minimum clear opening for escape hatches on the RCRV (46 CFR Subchapter U, ABS)?
-7. Does SOLAS II-2 apply to the RCRV, and are the 5083 aluminium oil fuel pipes approved?
-8. Is "AIR AIR" the placeholder material of superpanel plates, or a modelling error?
+- **Class society: DNV** (confirmed by Meyer mentors (Q&A, 7 Nov)). The model still names materials with ABS grade designations ("CS ABS A"); the hull steel grades of IACS UR W11 are the same under DNV.
+- **Rule values:** how they are shown was reviewed and found fine (see *Review status* above). They stay `verified: false`.
+- **Example decks:** approved. Passenger-ship rules (accessibility, LNG) are shown on an example deck because the RCRV research vessel has no passenger areas or LNG.
+- **Drawing codes** in the drawing names: not needed; not used by any rule.
+
+## Open mentor questions
+
+1. Which DNV steel-grade table applies to a vessel under 90 m? Is UR S6 Table 7 an acceptable reference?
+2. Origin and direction of LCG / TCG / VCG (frame 0, AP, midship?), so that "within 0.4L amidships" can be computed.
+3. Were the 12" pipe stiffeners (ASTM A106 Gr B, API 5L X-52, drawings 022-D10-00_TTP SUPERPANEL and 091-SSH) specially approved as hull material?
+4. What is the minimum clear opening for escape hatches on the RCRV (46 CFR Subchapter U, DNV)?
+5. Does SOLAS II-2 apply to the RCRV, and are the 5083 aluminium oil fuel pipes approved?
+6. Is "AIR AIR" the placeholder material of superpanel plates, or a modelling error?
 
 ## Ship particulars (RCRV: `ships/rcrv/rcrv-3d.meta.json`, and the layout test fixture `tests/fixtures/rcrv-layout.json`)
 
@@ -78,7 +87,7 @@ Reference URLs in `rules.json` point to the convention overview pages (IMO, US A
 | Berths 31 (16 science, 2 technicians, 13 crew) | display only | OSU / UNOLS |
 | Diesel-electric propulsion | display only | OSU |
 | Gross tonnage 1200 | MARPOL Annex I applicability (≥ 400 GT) | **Estimated.** Find the official GT; any value above 400 gives the same result. |
-| Class society: ABS (real model) / DNV (layout fixture) | class rule applicability | ABS is inferred from material names; DNV in the fixture is an assumption. Check the real class society of the RCRV. |
+| Class society DNV | class rule applicability | Confirmed by Meyer mentors (Q&A, 7 Nov). |
 
 ## Layout test fixture (RCRV, `tests/fixtures/rcrv-layout.json`)
 

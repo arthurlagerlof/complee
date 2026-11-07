@@ -7,6 +7,8 @@ for every part, which rules apply, whether it passes, **why**, and where every v
 - **Real 3D model.** The OSU RCRV ShipConstructor production model (330,760 objects, inches) converted with Autodesk APS and shown in the APS viewer:
   parts are coloured red (non-compliant), amber (not enough info) or green (compliant). Clicking a finding isolates the part and flies to it.
 - **Cruise passenger deck (fictional)** with planted findings, shown in a Three.js deck view, with live editing.
+  Passenger-ship rules (accessibility, LNG) are shown on an example deck because the RCRV research vessel has no passenger areas or LNG, as agreed with the Meyer mentors.
+- **Class society DNV**, confirmed by Meyer mentors (Q&A, 7 Nov). Rule values are `verified: false` with review status *reviewed by Meyer mentors*.
 - **No guessing.** Missing or unparseable data gives *not enough info*. Every rule value is `verified: false` until checked against the official text
   ([VERIFY.md](VERIFY.md)); interpretations are labelled.
 - **Ground truth.** `npm test` checks every planted and hand-checked finding; the top bar shows the score, e.g. *✓ 7/7 expected findings, 0 false alarms*.

@@ -1,6 +1,7 @@
 {
   "name": "Cruise passenger deck 5 (fictional, realistic parameters)",
   "units": "mm",
+  "scope_note": "Passenger-ship rules (accessibility, LNG) are shown on an example deck because the RCRV research vessel has no passenger areas or LNG, as agreed with the Meyer mentors.",
   "source": "fictional test data",
   "ship": {
     "name": "Fictional cruise ship",
