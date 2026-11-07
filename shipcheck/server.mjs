@@ -10,6 +10,7 @@ import { parseAllowedOrigins, corsHeaders } from './src/cors.mjs';
 import { createEvidenceProvider } from './src/evidence-provider.mjs';
 import { reviewDocumentEvidence } from './src/document-review.mjs';
 import { s3ConfigFrom, createS3ModelSource } from './src/model-source-s3.mjs';
+import { createRegulationText } from './src/regulation-text.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8080);
@@ -34,6 +35,13 @@ export function streamManifest(modelDir = MODEL_DIR) {
 // developer convenience and is not read under the test runner (NODE_TEST_CONTEXT), so tests stay offline.
 const s3Config = s3ConfigFrom(process.env, process.env.NODE_TEST_CONTEXT ? null : path.join(ROOT, '.env'));
 const s3Model = s3Config ? createS3ModelSource(s3Config, { cacheDir: path.resolve(ROOT, process.env.MODEL_CACHE_DIR || '.cache/model-s3') }) : null;
+
+// Official regulation text per rule from the regulation database, via the backend API (REGULATION_API_URL).
+const regulationText = createRegulationText({
+  linksFile: path.join(ROOT, 'regulation-links.json'),
+  ruleIds: () => loadRules().map((r) => r.id),
+  apiBase: process.env.REGULATION_API_URL || 'http://127.0.0.1:8000',
+});
 
 function health() {
   if (s3Model) return { status: 'ok', version: VERSION, model_source: 'vultr', viewer: 'local', model_requests: s3Model.stats };
@@ -160,6 +168,7 @@ const routes = {
     : { base_url: process.env.MODEL_BASE_URL || 'model/', manifest: streamManifest(), legacy_manifest: 'manifest.json' }),
   'GET /api/scenarios': () => loadScenarios(),
   'GET /api/rules': () => ({ rules: loadRules() }),
+  'GET /api/regulations/text': (q) => regulationText.forRule(q.get('rule')),
   'GET /api/check': (q) => runCheck(q.get('scenario') || 'rcrv-3d'),
   'GET /api/evidence/provider': () => ({ id: evidenceProvider.id, metadata: evidenceProvider.metadata || null }),
   'GET /api/evidence/search': (q) => evidenceProvider.search(q.get('q') || '', { limit: q.get('limit') || 8, sourceKind: q.get('sourceKind') || undefined, regulation: q.get('regulation') || undefined }),

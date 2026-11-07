@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "database": "Tiger Cloud (TimescaleDB) regulation database, read through the backend API (GET /api/v1/regulations/{provision_id})",
+  "linked": "2026-11-08",
+  "method": "Each provision was found by its clause key or text and read in the database before linking. 'exact' = the clause the rule checks; 'related' = guidance or a neighbouring clause, shown because the rule's own source is not loaded. Links are evidence for engineer review: they never change a rule value or a pass/fail result, which come only from the deterministic checker.",
+  "loaded_instruments": "SOLAS Chapter II-2 (MCA publication of the chapter in force 1 July 2002, with MCA guidance; 'summary' availability), 2010 ADA Standards (full text), 71 DNV class guidelines (DNV-CG-*, not the DNV ship rules RU-SHIP). FSS Code, IGF Code, IGC Code, Load Lines, MARPOL and IACS URs are not loaded.",
+  "rules": {
+    "FSS-13-CORRIDOR": {
+      "note": "FSS Code Chapter 13 is not in the database, so the 900 mm value cannot be confirmed there. Related MCA guidance on corridor width:",
+      "links": [
+        { "provision_id": "720ac9c3-b9a8-4b67-bba8-011060027c82", "clause": "II-2/13/G5.1", "match": "related" },
+        { "provision_id": "c6ad7a30-29ed-4b82-9a2b-428b97dd0714", "clause": "II-2/13/G5.3", "match": "related", "note": "How corridor width is measured (between handrails, or handrail and opposite bulkhead)." }
+      ]
+    },
+    "FSS-13-STAIR": {
+      "note": "FSS Code Chapter 13 is not in the database, so the 900 mm value cannot be confirmed there. Related clauses:",
+      "links": [
+        { "provision_id": "419894d7-b2c9-4571-a87f-5b21c9674108", "clause": "II-2/13/3.2.1.2", "match": "related", "note": "800 mm minimum clear width, only for a sole means of escape under a dispensation." },
+        { "provision_id": "e0e84962-b639-480c-b240-3e5b7b5bc4e5", "clause": "II-2/13/G15.1.1", "match": "related", "note": "Refers stairway widths on passenger ships to FSS Code Chapter 13." }
+      ]
+    },
+    "SOLAS-II-2-13-ESCAPE-ACCOM": {
+      "note": "In the loaded text, passenger ships are 13.3.2 and cargo ships 13.3.3 (the rule's clause field says 13.3 / 13.4; 13.4 is machinery spaces).",
+      "links": [
+        { "provision_id": "f8949dbf-2f7f-43c4-8491-9ea581c17bdd", "clause": "II-2/13/3.2.1.1", "match": "exact", "note": "Passenger ships, below the bulkhead deck." },
+        { "provision_id": "c794b197-02f0-415c-8037-39de837a264e", "clause": "II-2/13/3.2.2", "match": "exact", "note": "Passenger ships, above the bulkhead deck." },
+        { "provision_id": "1894c3ed-4637-4d1d-b1b3-d8672d4d3ec5", "clause": "II-2/13/3.3.1", "match": "exact", "note": "Cargo ships." }
+      ]
+    },
+    "SOLAS-II-2-13-ESCAPE-MACH": {
+      "links": [
+        { "provision_id": "43930919-4cf3-4c75-bb5e-2bdecd83701e", "clause": "II-2/13/4.1", "match": "exact", "note": "Passenger ships." },
+        { "provision_id": "d6eaf494-35d5-446e-99c8-202681b145c1", "clause": "II-2/13/4.2.1", "match": "exact", "note": "Cargo ships, machinery spaces of category A." }
+      ]
+    },
+    "SOLAS-II-2-13-DEADEND-PAX": {
+      "note": "Difference for review: the loaded text contains no 13 m figure. II-2/13/3.1.2 prohibits dead-end corridors, except in service areas separated from crew accommodation and inaccessible from passenger accommodation. The rule's 13 m value is unchanged (it stays unverified).",
+      "links": [
+        { "provision_id": "f21510b9-680b-4412-bcf9-6194f3c14513", "clause": "II-2/13/3.1.2", "match": "exact" }
+      ]
+    },
+    "SOLAS-II-2-13-DEADEND-CARGO": {
+      "note": "Same figure as the rule: more than 7 m not accepted.",
+      "links": [
+        { "provision_id": "99934073-3b7f-49ec-a025-90cad48d8562", "clause": "II-2/13/3.3.4", "match": "exact" }
+      ]
+    },
+    "ADA-403.5.1": {
+      "note": "Same figure as the rule: 36 inches (915 mm) minimum, with the exceptions in the text.",
+      "links": [
+        { "provision_id": "32047311-9335-41dd-910c-5652c778655e", "clause": "403.5.1", "match": "exact" }
+      ]
+    },
+    "ADA-404.2.3": {
+      "note": "Same figure as the rule: 32 inches (815 mm) minimum.",
+      "links": [
+        { "provision_id": "020bb0c6-3747-4534-93a7-a0238773f2a3", "clause": "404.2.3", "match": "exact" }
+      ]
+    },
+    "ADA-405.2": {
+      "note": "Same figure as the rule: running slope not steeper than 1:12 (0.0833).",
+      "links": [
+        { "provision_id": "7bcd8670-1cbe-47b7-a671-f7f18c29c046", "clause": "405.2", "match": "exact" }
+      ]
+    },
+    "SOLAS-II-2-4.2.2.5.1-FO-PIPE": {
+      "links": [
+        { "provision_id": "57fa28dc-08ea-49ca-b0b6-912f49e15736", "clause": "II-2/4/2.2.5.1", "match": "exact" }
+      ]
+    }
+  }
+}
