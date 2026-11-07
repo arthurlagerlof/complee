@@ -385,3 +385,33 @@ button:focus-visible, a:focus-visible { outline: 2px solid #5eb4aa; outline-offs
 .evidence-candidate p { max-height: 100px; overflow: auto; margin: 5px 0 0; color: #697a75; font-size: 8px; line-height: 1.6; white-space: pre-wrap; }
 @media (max-width: 780px) { .evidence-header { padding: 0 20px; gap: 12px; } .evidence-steps { gap: 8px; } .evidence-steps i { width: 15px; } .evidence-steps > span, .evidence-steps b { gap: 5px; font-size: 7px; } .evidence-workspace { width: calc(100% - 36px); padding-top: 30px; } .evidence-layout { grid-template-columns: 1fr; } .evidence-aside { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 540px) { .evidence-header { height: auto; min-height: 64px; flex-wrap: wrap; padding: 10px 17px; } .evidence-steps { order: 3; width: 100%; justify-content: center; margin: 3px 0 0; } .evidence-local { margin-left: auto; } .evidence-workspace { width: calc(100% - 28px); padding-top: 24px; } .evidence-title { align-items: flex-start; flex-direction: column; } .evidence-aside { grid-template-columns: 1fr; } .evidence-dropzone { min-height: 190px; padding: 18px; text-align: center; } .evidence-dropzone > small b { display: block; margin: 5px 0 0; } .evidence-next { align-items: stretch; flex-direction: column; } .evidence-next button { justify-content: center; min-height: 40px; } }
+
+/* Carry the main page's navy grid hero and interactive vessel panel into evidence intake. */
+.evidence-title { position: relative; isolation: isolate; align-items: center; min-height: 242px; width: 100vw; margin: 0 calc((min(1160px, 100vw - 56px) - 100vw)/2) 23px; padding: 35px max(28px, calc((100vw - 1160px)/2)); color: #f2f5f1; background: var(--navy); overflow: hidden; }
+.evidence-title::before { position: absolute; z-index: -1; inset: 0; content: ''; opacity: .2; background-image: linear-gradient(rgba(141,174,178,.12) 1px, transparent 1px), linear-gradient(90deg, rgba(141,174,178,.12) 1px, transparent 1px); background-size: 54px 54px; mask-image: linear-gradient(90deg, transparent, #000 42%, #000); }
+.evidence-title::after { position: absolute; z-index: -1; inset: 0; content: ''; background: radial-gradient(ellipse at 78% 50%, transparent 0, var(--navy) 75%); }
+.evidence-title > div:first-child { max-width: 700px; }
+.evidence-title h1 { color: #f0f4f1; font-size: clamp(34px, 4vw, 48px); letter-spacing: -.05em; }
+.evidence-title p { max-width: 570px; color: #a9b9b8; font-size: 12px; }
+.evidence-title .evidence-kicker { color: #8db4ae; }
+.evidence-vessel-tag { min-width: 245px; padding: 12px 15px; border-color: #45616a; color: #a4d6ca; background: #173750aa; box-shadow: 0 16px 34px #06152130; }
+.evidence-vessel-tag span { color: #ecf2ed; }
+.evidence-vessel-tag small { color: #8da9a5; }
+.evidence-vessel-tag > svg:last-child { color: #94d9d0; }
+.evidence-vessel-card { padding: 13px; color: #e8f0ed; border-color: #39545d; background: #102638; }
+.evidence-vessel-card .workspace-bar { padding-bottom: 9px; color: #8ca5a5; }
+.evidence-vessel-preview .vessel-stage { height: 195px; background: radial-gradient(ellipse at center, #2b5062 0, #17364b 51%, #102b40 100%); }
+.evidence-vessel-preview .model-loading, .evidence-vessel-preview .model-fallback { background: radial-gradient(ellipse at center, #27485a 0, #102b40 100%); }
+.evidence-vessel-preview .model-loading { font-size: 9px; }
+.evidence-vessel-preview .loading-spinner { width: 19px; height: 19px; }
+.evidence-vessel-preview .viewer-controls { right: 8px; bottom: 8px; left: 8px; gap: 5px; }
+.evidence-vessel-preview .viewer-controls button { min-height: 27px; padding: 0 7px; border-color: #67828a; color: #d8e4de; background: #0c2439cf; font-size: 8px; }
+.evidence-vessel-summary { padding: 13px 2px 1px; }
+.evidence-vessel-summary h2 { color: #f1f5f1; font-size: 16px; }
+.evidence-vessel-summary > p { color: #a9b9b8; }
+.evidence-vessel-summary dl div { border-color: #354f59; }
+.evidence-vessel-summary dt { color: #91a8a4; }
+.evidence-vessel-summary dd { color: #d1ded7; }
+.evidence-vessel-summary .evidence-side-note { color: #9db3ad !important; background: #1a3444; }
+@media (max-width: 780px) { .evidence-title { width: calc(100% + 36px); margin: 0 -18px 20px; padding: 30px 18px; } }
+@media (max-width: 540px) { .evidence-title { width: calc(100% + 28px); margin: 0 -14px 17px; padding: 27px 14px; } .evidence-vessel-tag { min-width: 0; } .evidence-vessel-preview .vessel-stage { height: 220px; } }
