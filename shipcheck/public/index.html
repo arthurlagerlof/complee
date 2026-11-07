@@ -9,7 +9,8 @@
 <script type="importmap">
   { "imports": {
       "three": "./node_modules/three/build/three.module.js",
-      "three/addons/": "./node_modules/three/examples/jsm/"
+      "three/addons/": "./node_modules/three/examples/jsm/",
+      "three-mesh-bvh": "./node_modules/three-mesh-bvh/src/index.js"
   } }
 </script>
 </head>
@@ -51,6 +52,7 @@
   <section id="view">
     <div id="threeView" class="viewpane"></div>
     <div id="apsView" class="viewpane" hidden></div>
+    <div id="localView" class="viewpane" hidden></div>
     <div id="fallbackView" class="viewpane" hidden></div>
     <div id="tracePanel" class="viewpane" hidden></div>
     <div id="caption" hidden></div>

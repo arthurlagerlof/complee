@@ -7,6 +7,7 @@ import { reportRows, toCSV, toHTML } from './src/report.mjs';
 import { traceMatrix, traceCSV, cellLabel } from './src/trace.mjs';
 import { createViewer } from './viewer3d.js';
 import { createApsViewer, createFallbackViewer } from './viewer-aps.js';
+import { createLocalViewer } from './viewer-local.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -66,7 +67,8 @@ const NOOP_VIEWER = { build() {}, update() {}, paintNeutral() {}, select() {}, f
 function useViewer(sc) {
   const want = sc.viewer === 'aps' ? 'aps' : 'three';
   $('#threeView').hidden = want !== 'three';
-  $('#apsView').hidden = want !== 'aps';
+  $('#apsView').hidden = true;
+  $('#localView').hidden = true;
   $('#fallbackView').hidden = true;
   $('#planBtn').hidden = want !== 'three';
   $('#simpleBtn').hidden = $('#cutSel').hidden = true;
@@ -75,10 +77,39 @@ function useViewer(sc) {
   views.fallback ??= createFallbackViewer($('#fallbackView'));
   views.fallback.setImages(sc.fallback_images || []);
   viewer = NOOP_VIEWER;
+  // Real model: our own local viewer (glTF chunks from our server) by default; ?viewer=aps uses the Autodesk viewer.
+  // Order when something is missing: local -> APS -> screenshots. ?noaps skips straight to the screenshots.
+  const params = new URLSearchParams(location.search);
+  const showControls = () => {
+    $('#simpleBtn').classList.toggle('on', !!viewer.simple); // Simple view is the default: light and readable
+    $('#simpleBtn').hidden = $('#cutSel').hidden = false;
+    $('#cutSel').innerHTML = '<option value="">No deck cut</option>';
+  };
   S.viewerReady = (async () => {
+    const notes = [];
+    if (!params.has('noaps') && (params.get('viewer') || 'local') === 'local') {
+      try {
+        $('#localView').hidden = false;
+        views.local ??= await createLocalViewer($('#localView'), { onPick });
+        views.local.build(S.norm, S.results); // colours apply chunk by chunk while loading
+        await views.local.load();
+        if (S.sc !== sc) return 'stale';
+        viewer = views.local;
+        viewer.build(S.norm, S.results);
+        showControls();
+        renderList();
+        if (S.selected) select(S.selected);
+        return 'local';
+      } catch (e) {
+        console.warn('Local viewer unavailable, trying the Autodesk viewer:', e.message);
+        notes.push(`local viewer: ${e.message}`);
+        $('#localView').hidden = true;
+      }
+    }
     try {
       // ?noaps forces the offline fallback (test without internet).
-      if (new URLSearchParams(location.search).has('noaps')) throw new Error('disabled with ?noaps');
+      if (params.has('noaps')) throw new Error('disabled with ?noaps');
+      $('#apsView').hidden = false;
       // ?clearcache removes the Autodesk viewer's local model cache first (a corrupt cache can stall loading).
       if (new URLSearchParams(location.search).has('clearcache')) {
         const root = await navigator.storage?.getDirectory?.().catch(() => null);
@@ -89,16 +120,14 @@ function useViewer(sc) {
       if (S.sc !== sc) return 'stale';
       viewer = views.aps;
       viewer.build(S.norm, S.results);
-      $('#simpleBtn').classList.toggle('on', !!viewer.simple); // Simple view is the default: light and readable
-      $('#simpleBtn').hidden = $('#cutSel').hidden = false;
-      $('#cutSel').innerHTML = '<option value="">No deck cut</option>';
+      showControls();
       renderList();
       if (S.selected) select(S.selected);
       return 'aps';
     } catch (e) {
       console.warn('APS viewer unavailable, using fallback:', e.message);
       if (S.sc !== sc) return 'stale';
-      views.fallback.setReason(e.message);
+      views.fallback.setReason([...notes, e.message].join('; '));
       $('#apsView').hidden = true;
       $('#fallbackView').hidden = false;
       viewer = views.fallback;

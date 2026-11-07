@@ -16,6 +16,7 @@
     "report": "node scripts/check.mjs --report"
   },
   "dependencies": {
-    "three": "0.160.0"
+    "three": "0.160.0",
+    "three-mesh-bvh": "^0.7.6"
   }
 }
