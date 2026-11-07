@@ -99,11 +99,13 @@ const NOOP_VIEWER = { build() {}, update() {}, paintNeutral() {}, select() {}, f
 function useViewer(sc) {
   const generation = ++viewerGeneration;
   const current = () => generation === viewerGeneration && !scenarioPending;
-  views.local?.setActive?.(false);
   const want = sc.viewer === 'aps' ? 'aps' : 'three';
+  // Staying in the real-model viewer (real ship <-> corridor scene): keep its geometry and keep it on screen.
+  const stayLocal = want === 'aps' && !$('#localView').hidden;
+  views.local?.setActive?.(false, { keepTiles: stayLocal });
   $('#threeView').hidden = want !== 'three';
   $('#apsView').hidden = true;
-  $('#localView').hidden = true;
+  if (!stayLocal) $('#localView').hidden = true;
   $('#fallbackView').hidden = true;
   $('#planBtn').hidden = want !== 'three';
   // The real model uses its deck cut. SWBS groups are not decks, and it has no exploded-deck mode.
@@ -906,10 +908,54 @@ async function paintProgressively(step, chunks = 8) {
   viewer.update(S.results);
 }
 
+// Demo pointer: a visible mouse pointer moves to the real control and clicks it, so the audience sees how the app is
+// used (the click itself is the control's own handler).
+let demoPointer = null;
+function pointerEl() {
+  if (!demoPointer) {
+    demoPointer = document.createElement('div');
+    demoPointer.id = 'demoPointer';
+    demoPointer.innerHTML = '<svg width="26" height="28" viewBox="0 0 26 28" aria-hidden="true"><path d="M3 2 L3 22 L8.6 16.8 L12.6 25.5 L16.3 23.9 L12.3 15.4 L19.8 15.4 Z" fill="#1d2430" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"/></svg><span class="ring"></span>';
+    document.body.appendChild(demoPointer);
+    const r = $('#view').getBoundingClientRect();
+    demoPointer.style.transform = `translate(${r.left + r.width / 2}px, ${r.top + r.height / 2}px)`;
+    void demoPointer.offsetWidth;
+    demoPointer.classList.add('ready');
+  }
+  demoPointer.hidden = false;
+  return demoPointer;
+}
+async function pointAt(target, step, { click = true, x = null } = {}) {
+  const el = typeof target === 'string' ? document.querySelector(target) : target;
+  if (!el) return null;
+  el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  await step(320);
+  const r = el.getBoundingClientRect(), p = pointerEl();
+  p.style.transform = `translate(${r.left + (x ?? Math.min(r.width / 2, 46))}px, ${r.top + r.height / 2}px)`;
+  await step(760);
+  if (click) { p.classList.remove('click'); void p.offsetWidth; p.classList.add('click'); await step(230); }
+  return el;
+}
+function hidePointer() { if (demoPointer) demoPointer.hidden = true; }
+// The report as the Report button produces it, shown inside the page (the button opens it in a new tab).
+function showReportPreview() {
+  const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(),
+    score: S.baseline, edits: [...S.edits.values()] });
+  let d = $('#reportPreview');
+  if (!d) { d = document.createElement('div'); d.id = 'reportPreview'; $('#view').appendChild(d); }
+  d.innerHTML = '<div class="rp-head"><b>Report</b><span class="muted">the HTML file the Report button opens · for the class review</span></div><iframe title="Report preview"></iframe>';
+  d.querySelector('iframe').srcdoc = html;
+  d.hidden = false;
+  return d.querySelector('iframe');
+}
+function hideReportPreview() { const d = $('#reportPreview'); if (d) d.hidden = true; }
+
 async function demoTypeFix(step, focus, fix) {
   const inp = fix.prop && $('#dEditor').querySelector(`[data-key="${CSS.escape(fix.prop)}"]`);
   if (!inp) return false;
   inp.closest('tr').scrollIntoView({ block: 'center', behavior: 'smooth' });
+  await step(400);
+  await pointAt(inp, step);
   const unitSel = $('#dEditor').querySelector(`[data-unit-for="${CSS.escape(fix.prop)}"]`);
   if (unitSel && fix.unit) unitSel.value = fix.unit;
   inp.focus();
@@ -963,7 +1009,8 @@ async function runDemo() {
       const d = S.model.demo || {};
       const first = findingsOf(S.results).find((f) => f.status === 'non_compliant' && (!d.focus_rule || f.rule_id === d.focus_rule)) ?? findingsOf(S.results)[0];
       if (first) {
-        select(first.element);
+        const item = await pointAt(`#list .item[data-id="${CSS.escape(first.element)}"]`, step);
+        if (item) item.click(); else select(first.element);
         const r = S.results.elements[first.element].results.find((x) => x.rule_id === first.rule_id);
         caption(`${first.element}: ${r.measured} in hull structure (SWBS ${elById(first.element)?.props?.swbs_group?.value ?? '1xx'})`,
           `“${ruleQuote(r, d.quote_match)}” (${r.source.split(':')[0]})`);
@@ -974,7 +1021,8 @@ async function runDemo() {
       // 3b. Rule view on the real model: every hatch the opening rule applies to, coloured by that rule.
       const h = d.hatch;
       if (h && ruleById(h.rule)) {
-        showRule(h.rule);
+        const row = await pointAt(`#rulesBox .ruleRow[data-rule="${CSS.escape(h.rule)}"]`, step);
+        if (row) row.click(); else showRule(h.rule);
         caption(`Rule view: ${countLine(ruleHits(h.rule))}`, 'Every part the rule applies to, coloured by that rule, in the real ship');
         pulse('#ruleCount');
         await beat(4200);
@@ -983,7 +1031,12 @@ async function runDemo() {
 
     // 4. Into the ship: one corridor with a few components, placed in the real deckhouse (simplified example).
     if (inside) {
+      // Back to the whole ship first (as a user would), then into it.
+      const back = document.querySelector('#ruleBack');
+      if (back) { await pointAt(back, step); back.click(); await step(1300); }
       caption('Inside the ship: one corridor on deck level 4', 'Simplified example placed in the real deckhouse · the ship is cut open just above the deck');
+      await pointAt('#scenario', step);
+      $('#scenario').value = inside.id;
       await loadScenario(inside.id);
       await S.viewerReady;
       await step(3300); // the ship is cut open above the deck, then the camera flies in
@@ -997,7 +1050,8 @@ async function runDemo() {
       // 5. The corridor is too narrow: component view, rule quote, rule card.
       const focus = d.focus;
       if (focus && S.results.elements[focus]) {
-        select(focus);
+        const item = await pointAt(`#list .item[data-id="${CSS.escape(focus)}"]`, step);
+        if (item) item.click(); else select(focus);
         const fe = S.results.elements[focus];
         const bad = fe.results.find((r) => r.status === 'non_compliant');
         if (bad) {
@@ -1008,7 +1062,7 @@ async function runDemo() {
           caption('The card shows the rule, its source and review status', `${bad.source.split(';')[0]} · ${bad.review_status ?? ''}`);
           const card = document.querySelector(`#dResults .res[data-rule="${CSS.escape(bad.rule_id)}"]`);
           card?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-          if (card) pulse(card);
+          if (card) { pulse(card); await pointAt(card.querySelector('.st-badge, .badge, h3, b') || card, step, { click: false }); }
           await beat(3600);
         }
         // 6. What-if: the engineer widens the corridor; re-checked and recoloured instantly.
@@ -1029,7 +1083,8 @@ async function runDemo() {
 
       // 7. A second finding: the guard rail, drawn in inches, fails two overlapping rules.
       if (d.second && S.results.elements[d.second]) {
-        select(d.second);
+        const item = await pointAt(`#list .item[data-id="${CSS.escape(d.second)}"]`, step);
+        if (item) item.click(); else select(d.second);
         const fe = S.results.elements[d.second];
         const bad = fe.results.filter((r) => r.status === 'non_compliant');
         if (bad.length) {
@@ -1040,13 +1095,40 @@ async function runDemo() {
         }
       }
     }
-    showOverview(); // end on the whole scene with every result coloured
+    // 8. Traceability: every part against every rule; a cell opens that part and its rule card.
+    caption('Traceability: every part against every rule', 'One click on a cell opens the part and the rule card behind the result');
+    const tb = await pointAt('#traceBtn', step);
+    if (tb) {
+      openTrace();
+      await beat(3800);
+      const focus = S.model.demo?.focus;
+      const cell = focus && await pointAt(`#tracePanel td.cell[data-id="${CSS.escape(focus)}"]`, step);
+      if (cell) {
+        cell.click();
+        caption(`${focus}: compliant with the what-if value`, 'From the table straight to the part, its rule card and the value that decided it');
+        await beat(3000);
+      } else closeTrace();
+    }
+
+    // 9. Report: the HTML report for the class review (shown in the page; the button opens it in a new tab).
     caption('Export the findings: HTML report and CSV', 'Rule references, measured vs required, value provenance, inch → mm conversions');
-    pulse('#reportBtn'); pulse('#csvBtn');
-    await beat(2600);
+    await pointAt('#reportBtn', step);
+    const frame = showReportPreview();
+    await step(1200);
+    for (let i = 1; i <= 6; i++) { frame.contentWindow?.scrollTo({ top: i * 260, behavior: 'smooth' }); await step(650); }
+    await beat(1800);
+    hideReportPreview();
+
+    // 10. Closing frame: the whole scene with every result coloured.
+    hidePointer();
+    showOverview();
+    caption('ShipCheck: deterministic rule checks on the real design model', 'Every result traceable to its rule, its source and the design value · what-ifs never change the model');
+    await beat(4200);
   } catch (e) {
     if (e.message !== 'stopped') console.error(e);
   } finally {
+    hidePointer();
+    hideReportPreview();
     document.body.classList.remove('demo-running');
     S.demo = null;
     caption('');

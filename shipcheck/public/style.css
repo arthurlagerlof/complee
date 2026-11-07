@@ -241,3 +241,15 @@ table.trace td.cell:hover { outline: 2px solid var(--accent); }
 /* Demo: no technical loading badge while the story runs; presenter keys under the caption */
 .demo-running #localView .aps-status { display: none; }
 #caption small.keys { margin-top: 6px; font-size: 11px; opacity: .55; letter-spacing: .02em; }
+
+/* Demo pointer and report preview (only during the demo run-through) */
+#demoPointer { position: fixed; left: 0; top: 0; z-index: 1000; pointer-events: none; filter: drop-shadow(0 2px 3px rgba(0,0,0,.35)); }
+#demoPointer.ready { transition: transform .72s cubic-bezier(.45,0,.2,1); }
+#demoPointer svg { display: block; transform: translate(-3px, -2px); }
+#demoPointer .ring { position: absolute; left: -15px; top: -15px; width: 30px; height: 30px; border-radius: 50%; border: 3px solid #2563eb; opacity: 0; }
+#demoPointer.click .ring { animation: demoClick .5s ease-out; }
+@keyframes demoClick { from { transform: scale(.3); opacity: .9; } to { transform: scale(1.7); opacity: 0; } }
+#reportPreview { position: absolute; inset: 24px 36px 112px; z-index: 15; display: flex; flex-direction: column; background: #fff; border-radius: 10px; box-shadow: 0 12px 40px rgba(16,24,40,.28); overflow: hidden; }
+#reportPreview[hidden] { display: none; }
+#reportPreview .rp-head { display: flex; gap: 10px; align-items: baseline; padding: 10px 16px; border-bottom: 1px solid #e3e7ee; }
+#reportPreview iframe { flex: 1; border: 0; width: 100%; }
