@@ -10,7 +10,7 @@ ENV NODE_ENV=production PORT=8080 MODEL_DIR=/app/model
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-COPY server.mjs rules.json scenarios.json ./
+COPY server.mjs model-server.mjs rules.json scenarios.json ./
 COPY src ./src
 COPY public ./public
 COPY ships ./ships

@@ -8,6 +8,7 @@ services:
     environment:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       EVIDENCE_PROVIDER: ${EVIDENCE_PROVIDER:-sinceai}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-model/}
     volumes:
       - ../model:/app/model:ro
     expose:

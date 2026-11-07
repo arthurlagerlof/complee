@@ -136,6 +136,7 @@ function serveStatic(p, res, req) {
 
 const routes = {
   'GET /api/health': () => health(),
+  'GET /api/model/config': () => ({ base_url: process.env.MODEL_BASE_URL || 'model/', manifest: 'stream/manifest.json', legacy_manifest: 'manifest.json' }),
   'GET /api/scenarios': () => loadScenarios(),
   'GET /api/rules': () => ({ rules: loadRules() }),
   'GET /api/check': (q) => runCheck(q.get('scenario') || 'rcrv-3d'),
