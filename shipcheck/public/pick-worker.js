@@ -139,7 +139,9 @@ function raycast(c, o, d, max = Infinity) {
 
 onmessage = (e) => {
   const m = e.data;
-  if (m.type === 'chunk') {
+  if (m.type === 'drop') {
+    chunks.delete(m.id);
+  } else if (m.type === 'chunk') {
     const c = { pos: view(m.pos), stride: m.pos.stride, offset: m.pos.offset, scale: m.pos.scale, index: view(m.index), ids: view(m.ids) };
     const ms = build(c);
     chunks.set(m.id, c);

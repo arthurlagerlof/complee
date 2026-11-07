@@ -87,10 +87,7 @@ the original model keeps its SVF2 for the APS viewer). `map-ids.mjs` matches the
 (context, openings, structure with findings, piping, stairs/ladders, other structure) into one mesh with the part's dbId on
 every vertex, compresses it with gltfpack (meshopt, no simplification) and writes `model/manifest.json`.
 
-**Full model:** `export-rest.mjs` exports everything else (parts no rule looks at) as `rest-01.glb` … (about 29-31 MB each,
-slices along the ship) plus their names and properties (`model/props/`). The viewer loads them in the background after
-the 6 main chunks and shows them in grey in the overview (**Full model** button; hidden while a findings filter, the rule
-view or a component is shown). Clicking a grey part shows its dbId, name and properties: not checked by any rule.
+The retained `viewer-local.js` uses the six main GLBs and rest chunks for the previous full-load approach. The default `viewer-stream.js` now requests spatial tiles on demand; the original GLBs are retained as lossless inputs for `tile-model.mjs`. See **Viewport streaming and simplified example** below.
 
 The full geometry is rendered without simplification; decoding and picking-index construction run in workers. See [export coverage and measured performance](tools/export/README.md) for sizes, timings, dbId mapping limits and the correction to the original six chunks.
 
@@ -202,3 +199,13 @@ VERIFY.md                  unverified values, interpretations, mentor questions
 - **Every model value says where it comes from**: the ShipConstructor model (with the source drawing), derived by ShipCheck (with the field it was derived from),
   public particulars, estimated, fictional, or edited in session. The UI shows this next to every value, and inch values next to their mm conversion.
 - **Missing data gives *not enough info***, never a guess.
+
+### Viewport streaming and simplified example
+
+The scenario selector includes **Simplified research vessel (example)** again, with the original eight expected findings and estimated geometry. The real model now loads small spatial tiles for the current camera view: hull/decks for the overview, nearby detail on zoom, and requested component tiles on selection; leaving a region cancels requests and releases its geometry and picking data. The **Full model** button permits nearby untested detail; it no longer downloads the whole ship.
+
+Run `node --max-old-space-size=4096 tools/export/tile-model.mjs` inside `shipcheck/` after the original GLBs are available. This preserves every packed triangle and attribute byte, leaves the original files untouched, and writes `model/stream/manifest.json` plus content-addressed tiles. The tiler stops below 3 GB free. The default client budget estimates at most 512 MB resident geometry/picking data and 1.5 million nearby detail triangles (hull context is counted against the memory budget). This is view selection, not mesh simplification; if the budget is reached, the badge asks you to zoom in.
+
+Model files can live on a different host: see [separate model server](docs/model-serving.md) for `MODEL_BASE_URL`, CORS and read-only server commands. The original merged viewer code and APS/screenshot fallbacks remain in the repository.
+
+[Viewport architecture, measured request sizes and screenshots](docs/viewport/README.md).

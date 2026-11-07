@@ -7,7 +7,7 @@ import { reportRows, toCSV, toHTML } from './src/report.mjs';
 import { traceMatrix, traceCSV, cellLabel } from './src/trace.mjs';
 import { createViewer } from './viewer3d.js';
 import { createApsViewer, createFallbackViewer } from './viewer-aps.js';
-import { createLocalViewer } from './viewer-local.js';
+import { createLocalViewer } from './viewer-stream.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -55,7 +55,7 @@ const deckName = (id) => S.norm.decks.find((d) => d.id === id)?.name ?? id;
 
 // Two viewers share the centre pane: Three.js for deck models, the Autodesk APS viewer for the real
 // production model (with a screenshot + findings fallback when APS cannot be reached).
-const onPick = (id) => { if (S.results?.elements[id]) select(id, { fly: false }); };
+const onPick = (id) => { if (S.results?.elements[id]) select(id, { fly: viewer?.kind === 'local' }); };
 const views = { three: createViewer($('#threeView'), { onPick }), aps: null, fallback: null };
 let viewer = views.three;
 const LIST_PAGE = 400;
@@ -66,6 +66,7 @@ let restRequest = 0;
 // S.viewerReady resolves when the scenario's viewer is usable.
 const NOOP_VIEWER = { build() {}, update() {}, paintNeutral() {}, select() {}, flyToElement() {}, setFilter() {}, overview() {}, setMode() {}, setPlan() {}, mode: 'all', plan: false };
 function useViewer(sc) {
+  views.local?.setActive?.(false);
   const want = sc.viewer === 'aps' ? 'aps' : 'three';
   $('#threeView').hidden = want !== 'three';
   $('#apsView').hidden = true;
@@ -94,9 +95,10 @@ function useViewer(sc) {
       try {
         $('#localView').hidden = false;
         views.local ??= await createLocalViewer($('#localView'), { onPick, onPickRest });
+        if (S.sc !== sc) { views.local.setActive?.(false); return 'stale'; }
         views.local.build(S.norm, S.results); // colours apply chunk by chunk while loading
         await views.local.load();
-        if (S.sc !== sc) return 'stale';
+        if (S.sc !== sc) { views.local.setActive?.(false); return 'stale'; }
         viewer = views.local;
         viewer.build(S.norm, S.results);
         showControls();
@@ -104,6 +106,7 @@ function useViewer(sc) {
         if (S.selected) select(S.selected);
         return 'local';
       } catch (e) {
+        views.local?.setActive?.(false);
         console.warn('Local viewer unavailable, trying the Autodesk viewer:', e.message);
         notes.push(`local viewer: ${e.message}`);
         $('#localView').hidden = true;
@@ -431,9 +434,9 @@ async function onPickRest(db) {
   if (S.ruleView) { S.ruleView = null; viewer.clearHighlight?.(); }
   document.querySelectorAll('#list .item.sel').forEach((n) => n.classList.remove('sel'));
   const shard = Math.floor(db / 1000);
-  if (!restProps.has(shard)) restProps.set(shard, fetchJSON(`model/props/${shard}.json`).catch(() => ({})));
+  if (!viewer.getProperties && !restProps.has(shard)) restProps.set(shard, fetchJSON(`model/props/${shard}.json`).catch(() => ({})));
   $('#detail').innerHTML = `<h1>dbId ${db}</h1><div class="muted">Not checked by any rule · loading the part data…</div>`;
-  const rec = (await restProps.get(shard))[db];
+  const rec = viewer.getProperties ? await viewer.getProperties(db) : (await restProps.get(shard))[db];
   if (request !== restRequest || S.sc !== scenario) return;
   const name = rec?.name || 'Model object';
   const table = (props) => Object.entries(props || {}).map(([group, kv]) => `<h2>${esc(group)}</h2><table class="kv">${

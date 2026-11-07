@@ -5,6 +5,7 @@
   "description": "One-time export of the RCRV model from Autodesk (SVF/SVF2) to glTF chunks for the local viewer",
   "dependencies": {
     "gltfpack": "^1.3.0",
+    "meshoptimizer": "0.22.0",
     "svf-utils": "^8.0.0"
   }
 }

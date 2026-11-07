@@ -18,4 +18,7 @@ test('background picker preserves dbIds and returns both surfaces and a part box
   assert.deepEqual(Array.from(out.at(-1).hits[0].p),[0.1,0.1,1]);
   ctx.onmessage({data:{type:'box',qid:2,id:'r0',db:3491284}});
   assert.deepEqual(Array.from(out.at(-1).min),[0,0,1]);assert.deepEqual(Array.from(out.at(-1).max),[1,1,1]);
+  ctx.onmessage({data:{type:'drop',id:'r0'}});
+  ctx.onmessage({data:{type:'ray',qid:3,rays:[{id:'r0',o:[0.1,0.1,2],d:[0,0,-1]}]}});
+  assert.equal(out.at(-1).hits.length,0,'eviction removes the picking data');
 });
