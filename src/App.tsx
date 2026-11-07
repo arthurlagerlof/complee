@@ -81,6 +81,7 @@ function App() {
           <nav className="desktop-nav" aria-label="Main navigation">
             <a href="#challenge">The challenge</a>
             <a href="#inspection">Vessel inspection</a>
+            <a href="http://localhost:8094/evidence.html" target="_blank" rel="noreferrer">Local evidence intake demo</a>
             <a href="#workflow">How it works</a>
             <a href="#architecture">Deployment</a>
           </nav>
@@ -99,6 +100,7 @@ function App() {
         <nav id="mobile-navigation" className={`mobile-nav${menuOpen ? ' menu-open' : ''}`} aria-label="Mobile navigation" aria-hidden={!menuOpen}>
           <a href="#challenge" onClick={closeMenu}>The challenge <ArrowRight size={16} /></a>
           <a href="#inspection" onClick={closeMenu}>Vessel inspection <ArrowRight size={16} /></a>
+          <a href="http://localhost:8094/evidence.html" target="_blank" rel="noreferrer" onClick={closeMenu}>Local evidence intake demo <ArrowRight size={16} /></a>
           <a href="#workflow" onClick={closeMenu}>How it works <ArrowRight size={16} /></a>
           <a href="#architecture" onClick={closeMenu}>Deployment <ArrowRight size={16} /></a>
         </nav>
