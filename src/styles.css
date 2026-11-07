@@ -293,7 +293,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid #5eb4aa; outline-offs
 
 /* Evidence-first review entry, using Complee's vessel palette and restrained engineering UI. */
 .evidence-app { min-height: 100vh; color: #233238; background: #f5f7f4; }
-.evidence-header { position: sticky; z-index: 10; top: 0; height: 72px; display: flex; align-items: center; gap: 28px; padding: 0 max(32px, calc((100% - 1240px)/2)); border-bottom: 1px solid #dce4df; background: rgba(247,249,246,.97); backdrop-filter: blur(12px); }
+.evidence-header { position: absolute; z-index: 10; top: 0; right: 0; left: 0; height: 72px; display: flex; align-items: center; gap: 28px; padding: 0 max(36px, calc((100% - 1280px)/2)); border-bottom: 1px solid #dce4df; background: rgba(247,249,246,.97); backdrop-filter: blur(12px); }
 .evidence-steps { display: flex; align-items: center; gap: 14px; margin: 0 auto; color: #84918c; font: 9px var(--mono); letter-spacing: .04em; }
 .evidence-steps > span, .evidence-steps b { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
 .evidence-steps > span > span, .evidence-steps b > span { display: grid; width: 23px; height: 23px; place-items: center; border: 1px solid #cdd9d2; border-radius: 50%; color: #71827d; font-size: 8px; }
@@ -304,7 +304,14 @@ button:focus-visible, a:focus-visible { outline: 2px solid #5eb4aa; outline-offs
 .evidence-local i { width: 6px; height: 6px; border-radius: 50%; background: #6ca994; }
 .evidence-return-link { display: inline-flex; align-items: center; gap: 5px; color: #647873; font-size: 9px; white-space: nowrap; }
 .evidence-return-link:hover { color: #287c76; }
-.evidence-workspace { width: min(1160px, calc(100% - 56px)); margin: 0 auto; padding: 42px 0 28px; }
+.evidence-header .brand { color: #1a2e36; }
+.evidence-header .brand-mark { color: #427b78; border-color: #cbd9d3; }
+.evidence-header .evidence-steps { color: #84918c; }
+.evidence-header .evidence-steps b { color: #1d3c42; }
+.evidence-header .evidence-steps > span > span { border-color: #cdd9d2; color: #71827d; }
+.evidence-header .evidence-steps i { background: #d6dfda; }
+.evidence-header .evidence-local { color: #748781; }
+.evidence-workspace { width: min(1160px, calc(100% - 56px)); margin: 0 auto; padding: 72px 0 28px; }
 .evidence-title { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; margin-bottom: 25px; }
 .evidence-kicker { color: #718d86; font: 8px var(--mono); letter-spacing: .1em; }
 .evidence-title h1 { margin: 10px 0 7px; color: #20373b; font: 600 clamp(29px, 3vw, 37px)/1.15 var(--display); letter-spacing: -.045em; }
@@ -383,8 +390,8 @@ button:focus-visible, a:focus-visible { outline: 2px solid #5eb4aa; outline-offs
 .evidence-candidate b { color: #3c7b74; font-size: 8px; }
 .evidence-candidate small { display: block; margin-top: 3px; color: #89958f; font-size: 7px; }
 .evidence-candidate p { max-height: 100px; overflow: auto; margin: 5px 0 0; color: #697a75; font-size: 8px; line-height: 1.6; white-space: pre-wrap; }
-@media (max-width: 780px) { .evidence-header { padding: 0 20px; gap: 12px; } .evidence-steps { gap: 8px; } .evidence-steps i { width: 15px; } .evidence-steps > span, .evidence-steps b { gap: 5px; font-size: 7px; } .evidence-workspace { width: calc(100% - 36px); padding-top: 30px; } .evidence-layout { grid-template-columns: 1fr; } .evidence-aside { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 540px) { .evidence-header { height: auto; min-height: 64px; flex-wrap: wrap; padding: 10px 17px; } .evidence-steps { order: 3; width: 100%; justify-content: center; margin: 3px 0 0; } .evidence-local { margin-left: auto; } .evidence-workspace { width: calc(100% - 28px); padding-top: 24px; } .evidence-title { align-items: flex-start; flex-direction: column; } .evidence-aside { grid-template-columns: 1fr; } .evidence-dropzone { min-height: 190px; padding: 18px; text-align: center; } .evidence-dropzone > small b { display: block; margin: 5px 0 0; } .evidence-next { align-items: stretch; flex-direction: column; } .evidence-next button { justify-content: center; min-height: 40px; } }
+@media (max-width: 800px) { .evidence-header { height: 64px; padding: 0 20px; gap: 12px; } .evidence-steps { gap: 8px; } .evidence-steps i { width: 15px; } .evidence-steps > span, .evidence-steps b { gap: 5px; font-size: 7px; } .evidence-workspace { width: calc(100% - 36px); padding-top: 64px; } .evidence-layout { grid-template-columns: 1fr; } .evidence-aside { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 540px) { .evidence-header { height: auto; min-height: 64px; flex-wrap: wrap; padding: 10px 20px; } .evidence-steps { order: 3; width: 100%; justify-content: center; margin: 3px 0 0; } .evidence-local { margin-left: auto; } .evidence-workspace { width: calc(100% - 28px); padding-top: 82px; } .evidence-title { align-items: flex-start; flex-direction: column; } .evidence-aside { grid-template-columns: 1fr; } .evidence-dropzone { min-height: 190px; padding: 18px; text-align: center; } .evidence-dropzone > small b { display: block; margin: 5px 0 0; } .evidence-next { align-items: stretch; flex-direction: column; } .evidence-next button { justify-content: center; min-height: 40px; } }
 
 /* Carry the main page's navy grid hero and interactive vessel panel into evidence intake. */
 .evidence-title { position: relative; isolation: isolate; align-items: center; min-height: 242px; width: 100vw; margin: 0 calc((min(1160px, 100vw - 56px) - 100vw)/2) 23px; padding: 35px max(28px, calc((100vw - 1160px)/2)); color: #f2f5f1; background: var(--navy); overflow: hidden; }

@@ -82,7 +82,7 @@ export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () 
   }
 
   return <div className="evidence-app">
-    <header className="evidence-header"><a className="brand" href="#top"><span className="brand-mark"><Ship size={17} strokeWidth={1.8} /></span>Complee</a><a className="evidence-return-link" href="#top" onClick={returnToMain}><ArrowLeft size={14} />Back to main page</a><nav className="evidence-steps" aria-label="Review workflow"><b><span>01</span>Add evidence</b><i /><span><span>02</span>Review design</span><i /><span><span>03</span>Manage findings</span></nav><span className="evidence-local"><i />LOCAL WORKSPACE</span></header>
+    <header className="evidence-header"><a className="brand" href="#top" onClick={returnToMain} aria-label="Complee home"><span className="brand-mark"><Ship size={17} strokeWidth={1.8} /></span>Complee</a><a className="evidence-return-link" href="#top" onClick={returnToMain}><ArrowLeft size={14} />Back to main page</a><nav className="evidence-steps" aria-label="Review workflow"><b><span>01</span>Add evidence</b><i /><span><span>02</span>Review design</span><i /><span><span>03</span>Manage findings</span></nav><span className="evidence-local"><i />LOCAL WORKSPACE</span></header>
     <main className="evidence-workspace" id="top">
       <div className="evidence-title"><div><span className="evidence-kicker">VESSEL DESIGN REVIEW / STEP 01</span><h1>Add design evidence</h1><p>Start with your evidence. The R/V Taani model is a visual preview; design review continues with the OSU RCRV.</p></div><div className="evidence-vessel-tag"><Ship size={15} /><span><small>REVIEW VESSEL</small>OSU RCRV · Demo model</span><Check size={15} /></div></div>
       <div className="evidence-layout">
