@@ -46,14 +46,24 @@ export function selectViewportTiles(manifest, options) {
           "The complete component exceeds the geometry memory budget",
         requiredBytes: bytes,
       };
+    // Context: the part is shown in its place in the ship, so the tiles the current view would request anyway are
+    // added within the memory that remains (the component itself always comes first and complete).
+    const context = selectViewportTiles(manifest, {
+      ...options,
+      selectedDb: null,
+      budget: { ...options.budget, max_resident_bytes: Math.max(0, cfg.max_resident_bytes - bytes) },
+    });
+    const names = new Set(tiles.map((c) => c.name));
+    const extra = context.tiles.filter((c) => !names.has(c.name));
     return {
-      tiles,
-      bytes,
-      candidates: tiles.length,
-      deferred: 0,
-      overviewDeferred: 0,
+      tiles: [...tiles, ...extra],
+      bytes: bytes + extra.reduce((s, c) => s + cost(c), 0),
+      candidates: tiles.length + context.candidates,
+      deferred: context.deferred,
+      overviewDeferred: context.overviewDeferred || 0,
       detail: true,
-      detailTriangles: tiles.reduce((s, c) => s + c.triangles, 0),
+      detailTriangles: tiles.reduce((s, c) => s + c.triangles, 0) + (context.detailTriangles || 0),
+      componentTiles: tiles.length,
     };
   }
   const visible = (c) =>

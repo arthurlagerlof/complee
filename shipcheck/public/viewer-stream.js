@@ -114,6 +114,23 @@ export async function createLocalViewer(
     );
   };
   glassMaterial.customProgramCacheKey = () => "viewport-glass";
+  // X-ray: the selected part is drawn once more on top of everything (semi-transparent), so structure in front of it
+  // never hides it. The state alpha 254 marks the selected part (still opaque in the normal pass).
+  const xrayMaterial = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.6,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  xrayMaterial.onBeforeCompile = (s) => {
+    s.fragmentShader = s.fragmentShader.replace(
+      "#include <color_fragment>",
+      "#include <color_fragment>\nif (vColor.a < 0.99 || vColor.a > 0.999) discard; diffuseColor.a = 0.6;",
+    );
+  };
+  xrayMaterial.customProgramCacheKey = () => "viewport-xray";
   const PICK_MIN_ALPHA = 26; // parts below 10 % opacity are practically invisible in the original: not clickable
   // Scenario scene inside the real ship (elements with geom3d, e.g. ships/rcrv/inside.json): the real ship is neutral
   // context, cut just above the scene's deck, and the scene's few components carry the status colours.
@@ -124,6 +141,16 @@ export async function createLocalViewer(
   const SCENE_VIEW = new THREE.Vector3(0.5, 1.05, -0.8); // from above, aft and to the side of the corridor
   // Camera flights (scene entry, component view): eased over ms, run by the render loop; instant when not visible.
   let flight = null;
+  // Prefetch: the detail tiles around where the camera is going (scene, component) are requested before it flies,
+  // so the view never arrives at half-loaded surroundings.
+  let focusBox = null;
+  async function waitForTiles(ms) {
+    const t0 = performance.now();
+    while (performance.now() - t0 < ms) {
+      if (![...desired].some((n) => !cache.has(n) && !failed.has(n))) return;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
   function flyTo(target, position, ms = 1200, onStep = null) {
     const from = { t: controls.target.clone(), p: camera.position.clone() };
     const done = (k) => {
@@ -179,8 +206,13 @@ export async function createLocalViewer(
     rejectFirst = null;
   // Screen margins (1 = edge to edge): the whole ship in the overview, a part with room around it in the component
   // view (outline and label inside the view, the part still large), all parts of a rule in the rule view.
-  const MARGIN = { overview: 1.12, component: 1.8, rule: 1.15 };
+  const MARGIN = { overview: 1.12, component: 3.2, rule: 1.15 };
   const cornersOf = (b) => { const out = []; for (const x of [b.min[0], b.max[0]]) for (const y of [b.min[1], b.max[1]]) for (const z of [b.min[2], b.max[2]]) out.push([x, y, z]); return out; };
+  // Component view frame: at least ~4.5 m around the part, so it is seen in its place in the ship.
+  const contextBox = (b) => {
+    const size = b.getSize(new THREE.Vector3());
+    return b.clone().expandByScalar(Math.max(0, (4500 - Math.max(size.x, size.y, size.z)) / 2));
+  };
   let framedPoints = null;
   let framedBox = null,
     frameMargin = 1.1,
@@ -344,12 +376,13 @@ export async function createLocalViewer(
     labelEl.style.top = `${((1 - p.y) / 2) * container.clientHeight}px`;
   }
   // points: corners of the real geometry (tile boxes), so the ship itself is centred, not its overall bounding box.
-  function fitBox(box, k = 1.1, points = null) {
+  // ms > 0: fly there smoothly (overview, rule view); 0: jump (first frame, resize).
+  function fitBox(box, k = 1.1, points = null, ms = 0, dir = null) {
     if (!box || box.isEmpty()) return;
     framedBox = box.clone();
     frameMargin = k;
     framedPoints = points;
-    const direction = camera.position.clone().sub(controls.target);
+    const direction = dir ?? camera.position.clone().sub(controls.target);
     const frame = fitPerspectiveBox(box, {
       fov: camera.getEffectiveFOV(),
       aspect: viewportAspect(
@@ -362,6 +395,11 @@ export async function createLocalViewer(
       margin: k,
       points,
     });
+    if (ms && container.offsetParent) {
+      camera.up.fromArray(frame.up);
+      flyTo(new THREE.Vector3(...frame.target), new THREE.Vector3(...frame.position), ms);
+      return;
+    }
     const damping = controls.enableDamping,
       auto = controls.autoRotate;
     controls.enableDamping = false;
@@ -398,13 +436,16 @@ export async function createLocalViewer(
     }
     viewRevision++;
   }
-  function frameOverview() {
+  function frameOverview(ms = 0) {
     resetCut();
     geometryNotice = "";
-    const center = overviewBounds().getCenter(new THREE.Vector3());
-    controls.target.copy(center);
-    camera.position.copy(center).add(new THREE.Vector3(-0.75, 0.45, 0.85));
-    fitBox(overviewBounds(), MARGIN.overview, overviewItems().flatMap((c) => cornersOf(c.bounds_mm)));
+    const view = new THREE.Vector3(-0.75, 0.45, 0.85);
+    if (!ms) {
+      const center = overviewBounds().getCenter(new THREE.Vector3());
+      controls.target.copy(center);
+      camera.position.copy(center).add(view);
+    }
+    fitBox(overviewBounds(), MARGIN.overview, overviewItems().flatMap((c) => cornersOf(c.bounds_mm)), ms, view);
   }
 
   function summary() {
@@ -444,11 +485,15 @@ export async function createLocalViewer(
       // Rule view: only the rule's parts carry a status colour; the hull around them is neutral context, so the
       // result of that rule is what stands out (the parts' own results of other rules are not mixed in).
       const ruleContext = override && !override.has(id) && !sceneMode;
+      // Component view: the selected part in its colour, the real ship around it solid and neutral (cut open above
+      // the part), never a part alone.
+      const selGhost = !sceneMode && selectedDb !== null && db !== selectedDb;
       const col = linear(
         COLORS[
           c.info.group === "rest"
             ? "none"
             : sceneMode ||
+                selGhost ||
                 ruleContext ||
                 (simple && context.has(db) && (!st || st === "compliant"))
               ? "context"
@@ -463,14 +508,30 @@ export async function createLocalViewer(
         ? c.info.group === "rest" && !fullModel
           ? 0
           : 255
-        : colorState(db, c.info.group === "rest");
+        : selGhost
+          ? 255
+          : colorState(db, c.info.group === "rest");
       let alpha =
         shown && c.opacity && c.opacity[v] < 255 ? c.opacity[v] : shown;
       // Rule view: the hull around the rule's parts is a light see-through ghost, so parts inside the ship show.
       if (ruleContext && alpha) alpha = Math.min(alpha, 40);
+      if (!sceneMode && selectedDb !== null && db === selectedDb && alpha === 255) alpha = 254;
       c.state[o + 3] = alpha;
       if (alpha > 0 && alpha < 255) seeThrough = true;
     }
+    // X-ray pass for the tile holding the selected part (shares the geometry).
+    const holdsSelected = !sceneMode && selectedDb !== null && c.info.dbIds?.includes(selectedDb);
+    if (holdsSelected && !c.xray) {
+      const xray = new THREE.Mesh(c.geom, xrayMaterial);
+      xray.raycast = () => {};
+      xray.renderOrder = 5;
+      xray.matrixAutoUpdate = false;
+      c.mesh.updateMatrix();
+      xray.matrix.copy(c.mesh.matrix);
+      c.mesh.parent.add(xray);
+      c.xray = xray;
+    }
+    if (c.xray) c.xray.visible = holdsSelected;
     // See-through pass for this tile, created the first time it has see-through vertices (shares the geometry).
     if (seeThrough && !c.glass) {
       const glass = new THREE.Mesh(c.geom, glassMaterial);
@@ -531,6 +592,7 @@ export async function createLocalViewer(
     const top = allBounds.max.y + 500,
       cut = sceneDeckY + 1500;
     // Entering: first the ship is cut open from the top down to the deck (camera still), then the camera dives in.
+    focusBox = box.clone().expandByScalar(5000);
     if (!clipping.length) setCut(top);
     const startCut = clipping[0].constant;
     if (ms && startCut > cut + 1) {
@@ -539,6 +601,10 @@ export async function createLocalViewer(
       });
     }
     setCut(cut);
+    if (ms) {
+      schedule();
+      await waitForTiles(4000);
+    }
     await flyTo(new THREE.Vector3(...f.target), new THREE.Vector3(...f.position), ms * 0.55);
     schedule();
   }
@@ -733,6 +799,15 @@ export async function createLocalViewer(
     stats.coverageComplete = plan.deferred === 0;
     desired.clear();
     for (const c of plan.tiles) desired.add(c.name);
+    if (focusBox) {
+      const cut = clipping[0]?.constant ?? Infinity;
+      for (const c of manifest.chunks) {
+        const b = c.bounds_mm;
+        if (b.min[1] > cut || (!fullModel && c.group === "rest")) continue;
+        if (b.max[0] < focusBox.min.x || b.min[0] > focusBox.max.x || b.max[1] < focusBox.min.y || b.min[1] > focusBox.max.y || b.max[2] < focusBox.min.z || b.min[2] > focusBox.max.z) continue;
+        desired.add(c.name);
+      }
+    }
     for (const [name, r] of requests)
       if (!desired.has(name)) r.controller.abort();
     for (const name of cache.keys()) if (!desired.has(name)) evict(name);
@@ -900,6 +975,7 @@ export async function createLocalViewer(
     const hadScene = sceneSelected !== null;
     sceneSelected = null;
     sceneOverlay.focus(null);
+    if (!sceneMode) focusBox = null;
     selectionVersion++;
     viewRevision++;
     geometryNotice = "";
@@ -967,14 +1043,18 @@ export async function createLocalViewer(
       }
       return loaded;
     },
-    setActive(on) {
+    // keepTiles: the next scenario uses this viewer too (e.g. real ship -> corridor scene): keep the loaded geometry,
+    // so the ship does not rebuild; requests in flight are still cancelled.
+    setActive(on, { keepTiles = false } = {}) {
       active = !!on;
       if (!active) {
         resolveFirst?.();
         scheduler.cancel();
         for (const r of requests.values()) r.controller.abort();
-        for (const n of [...cache.keys()]) evict(n);
-        desired.clear();
+        if (!keepTiles) {
+          for (const n of [...cache.keys()]) evict(n);
+          desired.clear();
+        }
       } else schedule();
     },
     build(norm, r) {
@@ -1007,6 +1087,7 @@ export async function createLocalViewer(
         else if (!flight) frameScene(0);
         return;
       }
+      focusBox = null;
       resetCut();
       recompute();
       frameOverview();
@@ -1069,7 +1150,20 @@ export async function createLocalViewer(
         summary();
         return;
       }
-      if (fly && b) fitBox(b, MARGIN.component);
+      if (fly && b) {
+        // Cut the ship open 1 m above the part and look down at it from an angle, in its real surroundings.
+        setCut(b.max.y + 1000);
+        const f = sceneFrame(contextBox(b), 1.15);
+        framedBox = contextBox(b);
+        frameMargin = 1.15;
+        framedPoints = null;
+        focusBox = contextBox(b).expandByScalar(2000);
+        schedule();
+        await waitForTiles(3000);
+        if (version !== selectionVersion) return;
+        flyTo(new THREE.Vector3(...f.target), new THREE.Vector3(...f.position), 1100);
+        schedule();
+      }
       showBox(b, label, status);
     },
     setLabel(id, html, status) {
@@ -1130,6 +1224,7 @@ export async function createLocalViewer(
     highlight(status) {
       override = new Map(Object.entries(status));
       clearSelection();
+      if (!sceneMode) resetCut(); // a component view's cut must not hide parts of the rule
       const b = new THREE.Box3(), points = [];
       for (const id of override.keys())
         for (const c of byDb.get(idToDb.get(id)) || []) {
@@ -1137,7 +1232,7 @@ export async function createLocalViewer(
           points.push(...cornersOf(c.bounds_mm));
         }
       recompute();
-      fitBox(b, MARGIN.rule, points);
+      fitBox(b, MARGIN.rule, points, 1000);
     },
     clearHighlight() {
       override = null;
@@ -1183,7 +1278,7 @@ export async function createLocalViewer(
         frameScene(1100);
         return;
       }
-      frameOverview();
+      frameOverview(1000);
     },
     setMode(m) {
       mode = m;
