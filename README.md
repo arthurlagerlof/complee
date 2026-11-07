@@ -11,6 +11,8 @@ npm install
 npm run dev
 ```
 
+The local dev site opens on the evidence intake workflow. It accepts document, drawing and 3D model files in the browser; the demo's document text reviewer currently supports DOCX and retrieves candidate passages from the optional SinceAI SOLAS II-2 adapter. The next step opens the illustrative R/V Taani model review already included in the app. Original files are processed in the browser and are not persisted; only selected file names and sizes carry into the design demo. The extracted source corpus is ignored by Git and can be placed at `integrations/sinceai/data/solas_ii2_revised_mca.jsonl`; set `EVIDENCE_PROVIDER=none` to disable the source adapter. This is local-demo middleware in Vite, not a production upload service.
+
 Create a production build with `npm run build`.
 
 ## Stack
