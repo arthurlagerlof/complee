@@ -7,9 +7,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runCheck, loadRules, loadScenarios } from './check.mjs';
 import { providerConfig, draftRule, explainResult, approveRule, loadApproved } from './rule-assistant.mjs';
+import { createEvidenceProvider } from './src/evidence-provider.mjs';
+import { reviewDocumentEvidence } from './src/document-review.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8080);
+const evidenceProvider = await createEvidenceProvider({ kind: process.env.EVIDENCE_PROVIDER || 'sinceai' });
 
 // Minimal .env loader (no dependency). Values are never logged.
 const envFile = path.join(ROOT, '.env');
@@ -62,6 +65,7 @@ const STATIC = [
   ['/src/', 'src'],
   ['/ships/', 'ships'],
   ['/tests/expected/', 'tests/expected'],
+  ['/demo/', 'demo'],
   ['/node_modules/three/', 'node_modules/three'],
   ['/', 'public'],
 ];
@@ -103,6 +107,12 @@ function serveStatic(p, res) {
 const routes = {
   'GET /api/scenarios': () => loadScenarios(),
   'GET /api/rules': () => ({ rules: loadRules() }),
+  'GET /api/evidence/provider': () => ({ id: evidenceProvider.id, metadata: evidenceProvider.metadata || null }),
+  'GET /api/evidence/search': (q) => evidenceProvider.search(q.get('q') || '', { limit: q.get('limit') || 8, sourceKind: q.get('sourceKind') || undefined, regulation: q.get('regulation') || undefined }),
+  'POST /api/evidence/review': (q, body, req) => {
+    localOnly(req);
+    return reviewDocumentEvidence({ ...body, provider: evidenceProvider });
+  },
   'GET /rules-approved.json': () => (fs.existsSync(path.join(ROOT, 'rules-approved.json'))
     ? JSON.parse(fs.readFileSync(path.join(ROOT, 'rules-approved.json'), 'utf8')) : { rules: [] }),
   'GET /api/check':(q) => runCheck(q.get('scenario') || 'rcrv', 'rules.json', null),
@@ -149,7 +159,7 @@ export const server = http.createServer(async (req, res) => {
   const handler = routes[`${req.method} ${p}`];
   if (handler) {
     try {
-      const limit = p === '/api/aps/fallback' ? 8_000_000 : 200_000;
+      const limit = p === '/api/aps/fallback' ? 8_000_000 : p === '/api/evidence/review' ? 12_000_000 : 200_000;
       const body = req.method === 'POST' ? await readBody(req, limit) : undefined;
       return sendJSON(res, 200, await handler(url.searchParams, body, req));
     } catch (e) {
@@ -157,7 +167,7 @@ export const server = http.createServer(async (req, res) => {
     }
   }
   if (req.method !== 'GET') return sendJSON(res, 405, { error: 'Method not allowed' });
-  serveStatic(p === '/' ? '/index.html' : p, res);
+  serveStatic(p === '/' ? '/evidence.html' : p, res);
 });
 
 server.listen(PORT, () => {

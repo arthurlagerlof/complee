@@ -8,6 +8,7 @@ results.json
 rules-approved.json
 ships/rcrv-aps/
 source/*.pdf
+integrations/sinceai/data/*.jsonl
 # APS model folder: secrets and very large files stay local
 3D_Since_AI/.env
 3D_Since_AI/*.nwd

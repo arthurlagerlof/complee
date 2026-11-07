@@ -29,6 +29,8 @@ Open http://localhost:8080. Then run the tests:
 npm test
 ```
 
+Use **Add evidence** in the top bar to attach files to the selected scenario. The intake accepts documents, drawings, and model files for session-level review organization; DOCX is the document format with text extraction enabled in this demo. The review retrieves candidate SOLAS II-2 passages through a replaceable provider adapter. It does not decide applicability or compliance. The SinceAI JSONL corpus is local and ignored by Git; provide it at `integrations/sinceai/data/solas_ii2_revised_mca.jsonl`, or set `EVIDENCE_PROVIDER=none` to disable source retrieval. The `src/evidence-provider.mjs` interface can be replaced without changing the checker.
+
 You can also check from the terminal only: `npm run check` covers all scenarios, and `node check.mjs rcrv-3d` writes `results.json`.
 
 | Command | What it does |
