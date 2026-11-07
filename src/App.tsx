@@ -19,6 +19,7 @@ import { inspectionPoints } from './inspectionData'
 import VesselViewer from './VesselViewer'
 import EvidenceIntake from './EvidenceIntake'
 import AiWorkspace from './AiWorkspace'
+import FindingsWorkspace from './FindingsWorkspace'
 
 gsap.registerPlugin(ScrollTrigger)
 
@@ -39,6 +40,18 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [showConcept, setShowConcept] = useState(() => window.location.hash !== '#evidence')
   const [showAi, setShowAi] = useState(() => window.location.hash === '#ai-settings')
+  const [showFindings, setShowFindings] = useState(() => window.location.hash === '#findings')
+  // Workflow step links (#evidence, #findings, #ai-settings, #top) switch views without a reload.
+  useEffect(() => {
+    const sync = () => {
+      const hash = window.location.hash
+      setShowFindings(hash === '#findings')
+      setShowAi(hash === '#ai-settings')
+      setShowConcept(hash !== '#evidence')
+    }
+    window.addEventListener('hashchange', sync)
+    return () => window.removeEventListener('hashchange', sync)
+  }, [])
   const [evidenceCount, setEvidenceCount] = useState(0)
   const selectedPoint = inspectionPoints.find((point) => point.id === selectedId) ?? inspectionPoints[0]
 
@@ -106,6 +119,7 @@ function App() {
     setShowAi(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
+  if (showFindings) return <FindingsWorkspace onBack={() => { setShowFindings(false); backToMain() }} />
   if (showAi) return <AiWorkspace onBack={backToMain} />
   if (!showConcept) return <EvidenceIntake onContinue={continueToInspection} onBack={backToMain} />
 
@@ -118,6 +132,7 @@ function App() {
             <a href="#challenge">The challenge</a>
             <a href="#inspection">Vessel inspection</a>
             <a href="#evidence" onClick={openEvidence}>Add evidence</a>
+            <a href="#findings">Findings</a>
             <a href="#ai-settings" onClick={openAiSettings}>AI Providers</a>
             <a href="#workflow">How it works</a>
             <a href="#architecture">Deployment</a>
@@ -138,6 +153,7 @@ function App() {
           <a href="#challenge" onClick={closeMenu}>The challenge <ArrowRight size={16} /></a>
           <a href="#inspection" onClick={closeMenu}>Vessel inspection <ArrowRight size={16} /></a>
           <a href="#evidence" onClick={openEvidence}>Add evidence <ArrowRight size={16} /></a>
+          <a href="#findings" onClick={closeMenu}>Findings <ArrowRight size={16} /></a>
           <a href="#ai-settings" onClick={openAiSettings}>AI Providers <ArrowRight size={16} /></a>
           <a href="#workflow" onClick={closeMenu}>How it works <ArrowRight size={16} /></a>
           <a href="#architecture" onClick={closeMenu}>Deployment <ArrowRight size={16} /></a>

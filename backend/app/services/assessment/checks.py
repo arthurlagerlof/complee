@@ -175,12 +175,14 @@ def _selected(check: StructuredRequirement, component: DesignComponent, facts: l
     return True
 
 
-def _confidence(values: list[dict[str, Any]], applicability_confirmed: bool) -> tuple[float, str]:
-    known = [v["confidence"] for v in values if v.get("confidence") is not None]
+def _confidence(values: list[dict[str, Any]], applicability_confirmed: bool, component: DesignComponent) -> tuple[float, str]:
+    # With no value at all, the finding rests on the component record itself (that the property is missing).
+    inputs = values or [{"confidence": component.confidence, "review_status": component.review_status}]
+    known = [v["confidence"] for v in inputs if v.get("confidence") is not None]
     base = min(known) if known else 0.5
-    reviewed = all(v.get("review_status") == "approved" for v in values) if values else False
+    reviewed = all(v.get("review_status") == "approved" for v in inputs)
     score = base * (1.0 if reviewed else 0.5) * (1.0 if applicability_confirmed else 0.7)
-    return round(score, 2), ("min(source confidences, default 0.5) × 0.5 if any input is not engineer-approved "
+    return round(score, 2), ("min(source confidences, or the component's when no value exists; default 0.5) × 0.5 if any input is not engineer-approved "
                              "× 0.7 if applicability to the vessel type is not confirmed")
 
 
@@ -197,7 +199,7 @@ def _evaluate(check: StructuredRequirement, component: DesignComponent, facts: l
                 "source_quote": check.source_quote}
     evidence = {"check_id": check.id, "component": {"id": str(component.id), "name": component.name, "type": component.component_type,
                 "source": _source(component.source_reference)}, "property": check.property, "values": values}
-    confidence, method = _confidence(values, applicability_confirmed)
+    confidence, method = _confidence(values, applicability_confirmed, component)
     assumptions["confidence"], assumptions["confidence_method"] = confidence, method
     label = f"{check.title} of {component.name!r} ({check.clause})"
     if not values:

@@ -186,3 +186,12 @@ def test_ai_review_calculates_only_verbatim_quoted_conditions_with_design_values
     assert "not verbatim" in finding["calculation_results"]["conditions_not_calculated"][0]["skipped"]
     assert finding["assumptions"]["applicability_questions"] == ["Is D-7 on an accessible route?"]
     assert finding["assumptions"]["compliance_decision_made"] is False
+
+
+def test_missing_information_confidence_rests_on_the_component_record(api_client):
+    _seed_check_provisions(api_client)
+    revision = _revision(api_client)
+    door = _component(api_client, revision, "door", "D-9", {}, confidence=0.9, review="approved")
+    finding = api_client.post("/api/v1/engineering-checks/run", json={"revision_id": revision, "check_ids": ["ADA-404.2.3-DOOR-CLEAR-WIDTH"]}).json()["findings"][0]
+    assert finding["component_ids"] == [door] and finding["finding_type"] == "missing_information"
+    assert finding["assumptions"]["confidence"] == 0.9

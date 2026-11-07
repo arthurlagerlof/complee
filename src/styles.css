@@ -581,3 +581,49 @@ button:focus-visible, a:focus-visible { outline: 2px solid #5eb4aa; outline-offs
   .ai-builtin-details > div { grid-template-columns: 1fr; gap: 3px; }
   .ai-extraction-summary { align-items: flex-start; flex-direction: column; }
 }
+
+/* Step 03 "Manage findings" (FindingsWorkspace.tsx): same look as the evidence intake */
+.evidence-steps a { display: inline-flex; align-items: center; gap: 8px; color: inherit; white-space: nowrap; }
+.evidence-steps a > span { display: grid; width: 23px; height: 23px; place-items: center; border: 1px solid #cdd9d2; border-radius: 50%; color: #71827d; font-size: 8px; }
+.evidence-steps a:hover { color: #287c76; }
+.findings-model-link { display: inline-flex; align-items: center; gap: 7px; padding: 9px 12px; border: 1px solid rgba(230,239,234,.5); color: #e6efea; font-size: 10px; font-weight: 600; white-space: nowrap; }
+.findings-model-link:hover { border-color: #276a66; color: #f1f6f2; background: #276a66; }
+.findings-new-revision input, .findings-workspace .evidence-extraction-controls input { min-width: 0; height: 32px; padding: 0 8px; border: 1px solid #d9e2dc; color: #34494a; background: #fff; font: 9px 'DM Sans', sans-serif; }
+.findings-new-revision { padding-top: 4px; }
+.findings-summary { color: #71817c; font: 8px var(--mono); letter-spacing: .04em; }
+.findings-action { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 11px; border: 1px solid #276a66; color: #f1f6f2; background: #276a66; cursor: pointer; font-size: 9px; font-weight: 600; }
+.findings-action:disabled { opacity: .5; cursor: default; }
+.findings-table { width: calc(100% - 28px); margin: 10px 14px 14px; border-collapse: collapse; font-size: 9px; color: #34494a; }
+.findings-table th { padding: 6px 8px; border-bottom: 1px solid #dce4df; color: #788682; font: 8px var(--mono); letter-spacing: .06em; text-align: left; text-transform: uppercase; }
+.findings-table td { padding: 7px 8px; border-bottom: 1px solid #edf1ee; vertical-align: top; }
+.findings-table tr.is-incomplete td:nth-child(4) { color: #9a5b14; }
+.findings-provision-option { display: grid; grid-template-columns: auto auto 1fr; gap: 8px; align-items: start; margin: 0 15px 8px; padding: 8px; border: 1px solid #e0e7e2; background: #fff; color: #4a5c5c; font-size: 9px; line-height: 1.5; cursor: pointer; }
+.findings-provision-option b { color: #2a4143; white-space: nowrap; }
+.findings-list { display: grid; gap: 10px; padding: 12px 14px 14px; }
+.findings-card { padding: 11px 12px; border: 1px solid #e0e7e2; border-left: 3px solid #9aa9a4; background: #fff; }
+.findings-card.findings-potential_issue { border-left-color: #c0453a; }
+.findings-card.findings-missing_information { border-left-color: #d29b28; }
+.findings-card.findings-needs_engineering_review, .findings-card.findings-needs_review { border-left-color: #3f6fb0; }
+.findings-card.findings-evidence_found, .findings-card.findings-verified_by_engineer { border-left-color: #3f8f62; }
+.findings-card-head { display: flex; align-items: center; gap: 10px; }
+.findings-type { color: #2a4143; font-size: 10px; font-weight: 600; }
+.findings-clause { color: #427b78; font: 8px var(--mono); }
+.findings-status { margin-left: auto; padding: 2px 7px; border: 1px solid #dce4df; color: #71817c; font: 8px var(--mono); text-transform: uppercase; }
+.findings-description { margin: 7px 0; color: #34494a; font-size: 10px; line-height: 1.55; }
+.findings-details { display: grid; gap: 3px; margin: 0; font-size: 9px; line-height: 1.5; }
+.findings-details > div { display: grid; grid-template-columns: 110px 1fr; gap: 8px; }
+.findings-details dt { color: #87948f; }
+.findings-details dd { margin: 0; color: #3d5050; overflow-wrap: anywhere; }
+.findings-provision { margin-top: 7px; color: #5d6f6e; font-size: 9px; }
+.findings-provision summary { cursor: pointer; color: #427b78; }
+.findings-provision p { margin: 5px 0 0; padding-left: 8px; border-left: 2px solid #dce4df; font-style: italic; line-height: 1.55; }
+.findings-review { display: flex; gap: 6px; margin-top: 9px; }
+.findings-review select, .findings-review input { height: 28px; padding: 0 6px; border: 1px solid #d9e2dc; color: #34494a; background: #fff; font: 9px 'DM Sans', sans-serif; }
+.findings-review input { flex: 1; min-width: 0; }
+.findings-review button { padding: 0 10px; border: 1px solid #276a66; color: #f1f6f2; background: #276a66; cursor: pointer; font-size: 8px; font-weight: 600; }
+.findings-reviewed { display: flex; align-items: center; gap: 5px; margin: 6px 0 0; color: #3f8f62; font-size: 9px; }
+@media (max-width: 760px) {
+  .findings-review, .evidence-extraction-controls { flex-wrap: wrap; }
+  .findings-details > div { grid-template-columns: 1fr; }
+  .findings-table { display: block; overflow-x: auto; }
+}
