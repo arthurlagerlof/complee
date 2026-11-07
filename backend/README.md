@@ -4,7 +4,7 @@ FastAPI modular monolith for versioned ship-design data, regulatory candidate re
 
 ## Architecture
 
-- **Design understanding** (`app/services/design`): projects, vessels, revisions, components, relationships, source references and design facts. Importer protocol defines a common output for CAD, drawings, documents, calculations and spreadsheets; no source parser or AI extraction is claimed.
+- **Design understanding** (`app/services/design`): projects, vessels, revisions, components, relationships, source references and design facts. `app/services/extractions` provides deterministic DOCX/TXT, DXF and glTF 2.0 adapters; AI results stay in reviewable extraction records until explicitly imported.
 - **Regulatory retrieval** (`app/services/retrieval`): read-only queries against the existing regulatory tables, local BGE-M3 query embedding, vector search, full-text search, metadata/applicability filters and hybrid ranking.
 - **Assessment** (`app/services/assessment`): candidate-to-design orchestration, reusable calculation/evidence tools, immutable source snapshots and engineer review. An assessment never declares compliance automatically.
 
@@ -275,7 +275,34 @@ After applying migrations in a disposable/development database, start FastAPI an
 
 Discovered models start with chat capability only. The model list exposes an opt-in JSON mode: select JSON Schema for Ollama models or JSON object mode for compatible APIs only when that model/server supports it. Anthropic and models without that capability receive the schema instructions in the prompt and are still Pydantic-validated.
 
-The implemented first workflow accepts pasted text, generates structured component candidates, persists the validated result and provider/model/task metadata without storing the submitted prompt, supports review of each candidate and its facts, and imports only approved candidates/facts into the selected revision. Successful and failed provider executions record status, duration, token usage, validation outcome, task, provider/model and prompt/schema versions without storing prompts. Existing component type/name pairs are reused rather than duplicated. Evidence, source name/file ID, extraction ID, provider/model, confidence and uncertainty are retained as source references. The extraction prompt and schema versions are recorded.
+The same evidence-intake uploader submits files to `POST /api/v1/ai/extractions/upload` with a `revision_id` and repeated `files` fields. The endpoint stores the source bytes, SHA-256 reference, deterministic parser output, processing status, error and timestamps in `sc_source_documents`; successful AI output and review states stay in `sc_ai_extractions`. The existing `text_component_extraction` task configuration is used when configured; otherwise backend-managed Gemini uses `GEMINI_API_KEY` and `GEMINI_MODEL`. No browser-side provider calls or automatic import occur.
+
+Implemented parsers:
+
+- **DOCX/TXT:** extracts paragraphs and DOCX table cells or UTF-8 lines with stable paragraph/table-cell/line source IDs.
+- **DXF:** uses ezdxf to capture model-space entities, layers, blocks, dimensions, labels, and available coordinates/geometry. Binary DWG is not supported.
+- **GLB/GLTF:** supports glTF 2.0 scenes, hierarchy, node metadata, extensions, local/world transforms, mesh/accessor references, material metadata, vertex/index counts and connectivity samples, and local/world bounding boxes. `.gltf` external buffers must be included in the same upload; remote URIs are never fetched. Full parsed node/entity data is retained; AI interpretation input is capped by `AI_MAX_SOURCE_CHARACTERS` and reports truncation.
+
+Other formats advertised by the evidence picker (including PDF, XLSX, DWG, STEP and IFC) are not parsed by this pipeline. Uploads are limited to 25 MB per file, 100 MB total and 20 files per request.
+
+The AI receives parser output as untrusted input. Model-supplied approval statuses are reset to `pending`, and uploaded-source evidence is retained only when it maps to parser evidence; component geometry references are attached deterministically from the cited CAD entity/node IDs. Facts, property facts, components and relationships are independently reviewable. Import accepts only approved candidates/facts, preserves the source/evidence/model references, reuses an unambiguous existing component without overwriting it, and returns ambiguous matches for engineer review. Original source documents remain downloadable via `GET /api/v1/ai/source-documents/{id}/file`; parser output is available via `/parsed-data`. This is candidate data, not verified engineering data or a compliance decision.
+
+Source-review and import routes:
+
+```text
+POST  /api/v1/ai/extractions/upload
+GET   /api/v1/ai/design-revisions/{revision_id}/source-documents
+GET   /api/v1/ai/source-documents/{source_document_id}/file
+GET   /api/v1/ai/source-documents/{source_document_id}/parsed-data
+GET   /api/v1/ai/extractions/{extraction_id}
+PATCH /api/v1/ai/extractions/{extraction_id}/components/{candidate_index}
+PATCH /api/v1/ai/extractions/{extraction_id}/components/{candidate_index}/properties/{property_name}
+PATCH /api/v1/ai/extractions/{extraction_id}/relationships/{relationship_index}
+PATCH /api/v1/ai/extractions/{extraction_id}/facts/{fact_index}
+POST  /api/v1/ai/extractions/{extraction_id}/import
+```
+
+The import body may contain `candidate_indexes` and/or `fact_indexes`. Component property facts are imported only when individually approved. Source document status includes `processing`, `completed`, `failed`, or `referenced_asset` for GLTF binary sidecars. Parser and AI errors are exposed in the source record. The separate `GET /api/v1/ai/executions` route retains provider execution status, duration, token usage and validation outcome without storing prompts.
 
 Example request sequence (replace IDs and keep API keys out of shell history):
 
@@ -316,16 +343,16 @@ Representative provider response (the credential itself is never returned):
 }
 ```
 
-Representative extraction response includes a `result.components` array; each candidate carries properties with independently reviewable facts, evidence, confidence/uncertainty and a `pending` review status. The API returns execution duration, token usage, provider/model IDs, prompt/schema versions, validation outcome and source reference. An import response returns the existing or newly created component UUIDs. Exact model output is provider-dependent and is validated before it is persisted.
+Representative extraction response includes `result.components`, `result.relationships` and `result.facts`; AI candidates are persisted with `pending` review status, source-grounded evidence, confidence and uncertainty. The API returns execution duration, token usage, provider/model IDs, prompt/schema versions, validation outcome and source reference. An import response returns existing/new component IDs, imported facts, and any ambiguous matches.
 
-Manual Ollama integration check:
+Manual integration check:
 
 1. Start Ollama independently on the GPU host and run `ollama list`; copy the exact installed model name. Keep the listener private, and allow inbound access only from the FastAPI host.
 2. Set `AI_ALLOWED_HOSTS` to the exact remote endpoint (for example `192.168.1.50:11434`), set a persistent `AI_ENCRYPTION_KEY`, and start FastAPI from `backend` with `python -m uvicorn app.main:app --reload`.
-3. Open `http://localhost:5173/#ai-settings`, add the Ollama URL, test it, refresh models, and assign the discovered exact model to text component extraction.
-4. Select a project/revision, submit a technical text sample, edit candidate fields and fact statuses, approve the intended candidate/facts, and import. Verify via `GET /api/v1/design-revisions/{revision_id}/components` and `/facts`.
-5. To test switching, select another explicitly configured provider/model in the extraction panel. There is no automatic cloud fallback.
+3. Configure the `text_component_extraction` task in the existing AI configuration, or configure `GEMINI_API_KEY` and `GEMINI_MODEL` in the backend environment.
+4. Open the existing evidence intake, select files and a design revision, extract candidates, inspect/edit their evidence and fields, approve individual facts and candidates, and import. Verify via `GET /api/v1/design-revisions/{revision_id}/components` and `/facts`.
+5. To change the AI target, update the existing `text_component_extraction` task configuration; if that task is absent, the upload workflow uses the backend-managed Gemini model. There is no automatic fallback after a configured provider fails.
 
 AI management endpoints currently follow the backend's existing API convention and **do not have authentication/authorization middleware**. Do not expose this backend or the provider-management UI to untrusted networks. Add the deployment's authentication and user authorization before production exposure. Remote-provider access is restricted by the explicit outbound host allowlist, but that is not a substitute for network isolation.
 
-Current limitations: PDF/DOCX upload and parsing, background extraction jobs, per-user authorization, and live Ollama/PostgreSQL demonstration are not implemented. Execution metadata is available at `GET /api/v1/ai/executions`; submitted prompts and provider error bodies are intentionally not retained. Extraction accepts pasted text only. Automated tests mock all provider HTTP calls and do not need a live Ollama server. Do not run Alembic migrations against production from development.
+Current limitations: PDF, spreadsheet, DWG, STEP, IFC and other unlisted parsers; background jobs; per-user authorization; and live Ollama/PostgreSQL demonstration are not implemented. Upload processing is synchronous. Source bytes and deterministic parser output are retained in the app database; AI prompts and provider error bodies are not. Automated tests mock provider HTTP calls and do not need a live Ollama server. Do not run Alembic migrations against production from development.

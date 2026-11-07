@@ -63,7 +63,9 @@ def _validate_destination(endpoint: str, *, is_gemini: bool) -> None:
         validate_provider_transport("ollama", normalized, settings.ollama_api_key)
     except ValueError as exc:
         raise AIConfigurationError(str(exc)) from exc
-    placeholder = type("ProviderEndpoint", (), {"base_url": endpoint})()
+    placeholder = type(
+        "ProviderEndpoint", (), {"base_url": endpoint, "provider_type": "ollama"}
+    )()
     _validate_provider_destination(placeholder)
 
 

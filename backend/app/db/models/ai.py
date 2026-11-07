@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -23,7 +24,7 @@ class AIProvider(Base):
     __tablename__ = "sc_ai_providers"
     __table_args__ = (
         CheckConstraint(
-            "provider_type IN ('ollama', 'openai_compatible', 'openai', 'anthropic')",
+            "provider_type IN ('ollama', 'openai_compatible', 'openai', 'anthropic', 'gemini')",
             name="provider_type_supported",
         ),
     )
@@ -147,6 +148,11 @@ class AIExtraction(Base):
         nullable=False,
     )
     model_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    source_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("sc_source_documents.id", name="fk_sc_ai_extractions_source_document", ondelete="SET NULL"),
+        nullable=True,
+    )
     execution_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("sc_ai_executions.id", name="fk_sc_ai_extractions_execution", ondelete="RESTRICT"),
@@ -161,4 +167,38 @@ class AIExtraction(Base):
     execution_duration_ms: Mapped[int] = mapped_column(nullable=False)
     token_usage: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)
     validation_outcome: Mapped[str] = mapped_column(String(40), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SourceDocument(Base):
+    __tablename__ = "sc_source_documents"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    revision_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("sc_design_revisions.id", name="fk_sc_source_documents_revision", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    media_type: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    file_extension: Mapped[str] = mapped_column(String(20), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    source_reference: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)
+    parsed_data: Mapped[dict[str, Any] | None] = mapped_column(JSON_DOCUMENT, nullable=True)
+    extraction_method: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("sc_ai_providers.id", ondelete="SET NULL"), nullable=True
+    )
+    model_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("sc_ai_model_configs.id", ondelete="SET NULL"), nullable=True
+    )
+    extraction_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("sc_ai_extractions.id", ondelete="SET NULL"), nullable=True
+    )
+    processing_status: Mapped[str] = mapped_column(String(40), nullable=False, default="processing")
+    error_message: Mapped[str | None] = mapped_column(String, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

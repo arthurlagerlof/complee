@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
-ProviderType = Literal["ollama", "openai_compatible", "openai", "anthropic"]
+ProviderType = Literal["ollama", "openai_compatible", "openai", "anthropic", "gemini"]
 TASK_NAMES = {
     "text_component_extraction",
     "component_classification",
@@ -64,6 +64,12 @@ def normalize_provider_url(value: str | HttpUrl) -> str:
 def validate_provider_transport(provider_type: ProviderType, base_url: str, api_key: str | None) -> None:
     parsed = urlsplit(base_url)
     is_loopback = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+    if provider_type == "gemini" and (
+        parsed.scheme != "https"
+        or parsed.hostname != "generativelanguage.googleapis.com"
+        or parsed.port not in {None, 443}
+    ):
+        raise ValueError("Gemini providers must use the official Google Generative Language API host.")
     if provider_type in {"openai", "anthropic"} and parsed.scheme != "https":
         raise ValueError("OpenAI and Anthropic API endpoints must use HTTPS.")
     if api_key and parsed.scheme != "https" and not is_loopback:
@@ -276,6 +282,7 @@ class Evidence(BaseModel):
     text: str = Field(min_length=1, max_length=5_000)
     section: str | None = Field(default=None, max_length=500)
     page: int | None = Field(default=None, ge=1)
+    source_id: str | None = Field(default=None, max_length=500)
 
 
 class EngineeringValue(BaseModel):
@@ -286,11 +293,28 @@ class EngineeringValue(BaseModel):
     review_status: Literal["pending", "approved", "rejected"] = "pending"
 
 
+class EngineeringValueReview(BaseModel):
+    value: Any | None = None
+    unit: str | None = None
+    evidence: list[Evidence] | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    review_status: Literal["pending", "approved", "rejected"] | None = None
+
+    @model_validator(mode="after")
+    def reject_null_values(self) -> "EngineeringValueReview":
+        if "evidence" in self.model_fields_set and self.evidence is None:
+            raise ValueError("evidence cannot be null.")
+        if "review_status" in self.model_fields_set and self.review_status is None:
+            raise ValueError("review_status cannot be null.")
+        return self
+
+
 class ComponentCandidate(BaseModel):
     component_type: str = Field(min_length=1, max_length=100)
     name: str = Field(min_length=1, max_length=200)
     tag: str | None = Field(default=None, max_length=200)
     properties: dict[str, EngineeringValue] = Field(default_factory=dict, max_length=200)
+    geometry_reference: dict[str, Any] | None = None
     evidence: list[Evidence] = Field(default_factory=list, max_length=100)
     confidence: float | None = Field(default=None, ge=0, le=1)
     uncertainty: list[str] = Field(default_factory=list, max_length=100)
@@ -303,16 +327,39 @@ class ExtractedRelationship(BaseModel):
     target_component_name: str = Field(min_length=1, max_length=200)
     relationship_type: str = Field(min_length=1, max_length=100)
     evidence: list[Evidence] = Field(default_factory=list, max_length=100)
+    confidence: float | None = Field(default=None, ge=0, le=1)
     review_status: Literal["pending", "approved", "rejected"] = "pending"
 
 
 class RelationshipReview(BaseModel):
+    source_component_name: str | None = Field(default=None, min_length=1, max_length=200)
+    target_component_name: str | None = Field(default=None, min_length=1, max_length=200)
+    relationship_type: str | None = Field(default=None, min_length=1, max_length=100)
+    evidence: list[Evidence] | None = None
     review_status: Literal["pending", "approved", "rejected"]
+
+    @model_validator(mode="after")
+    def reject_null_values(self) -> "RelationshipReview":
+        for field in ("source_component_name", "target_component_name", "relationship_type", "evidence"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null.")
+        return self
+
+
+class FactCandidate(BaseModel):
+    component_name: str | None = Field(default=None, max_length=200)
+    fact_type: str = Field(min_length=1, max_length=100)
+    statement: str = Field(min_length=1, max_length=5_000)
+    value: Any | None = None
+    evidence: list[Evidence] = Field(default_factory=list, max_length=100)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    review_status: Literal["pending", "approved", "rejected"] = "pending"
 
 
 class ExtractionResult(BaseModel):
     components: list[ComponentCandidate] = Field(default_factory=list, max_length=500)
     relationships: list[ExtractedRelationship] = Field(default_factory=list, max_length=500)
+    facts: list[FactCandidate] = Field(default_factory=list, max_length=500)
     warnings: list[str] = Field(default_factory=list, max_length=100)
 
 
@@ -352,6 +399,23 @@ class CandidateReview(BaseModel):
         return self
 
 
+class FactReview(BaseModel):
+    fact_type: str | None = Field(default=None, min_length=1, max_length=100)
+    statement: str | None = Field(default=None, min_length=1, max_length=5_000)
+    value: Any | None = None
+    component_name: str | None = Field(default=None, max_length=200)
+    evidence: list[Evidence] | None = None
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    review_status: Literal["pending", "approved", "rejected"] | None = None
+
+    @model_validator(mode="after")
+    def reject_null_values(self) -> "FactReview":
+        for field in ("fact_type", "statement", "evidence", "review_status"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null.")
+        return self
+
+
 class ExtractionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -370,8 +434,38 @@ class ExtractionOut(BaseModel):
     token_usage: dict[str, Any]
     validation_outcome: str
     created_at: datetime
+    source_document_id: uuid.UUID | None = None
 
 
 class ImportResponse(BaseModel):
     component_ids: list[uuid.UUID]
     imported_count: int
+    fact_ids: list[uuid.UUID] = Field(default_factory=list)
+    imported_fact_count: int = 0
+    ambiguous_matches: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SourceDocumentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    revision_id: uuid.UUID
+    filename: str
+    media_type: str | None
+    file_extension: str
+    sha256: str
+    source_reference: dict[str, Any]
+    extraction_method: str | None
+    provider_id: uuid.UUID | None
+    model_id: uuid.UUID | None
+    extraction_id: uuid.UUID | None
+    processing_status: str
+    error_message: str | None
+    started_at: datetime
+    completed_at: datetime | None
+    created_at: datetime
+
+
+class SourceUploadResult(BaseModel):
+    source_document: SourceDocumentOut
+    extraction: ExtractionOut | None = None

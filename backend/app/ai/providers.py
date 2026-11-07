@@ -375,6 +375,8 @@ def adapter_for(
         adapter_type = OpenAICompatibleAdapter
     elif provider.provider_type == "anthropic":
         adapter_type = AnthropicAdapter
+    elif provider.provider_type == "gemini":
+        adapter_type = GeminiAdapter
     else:
         raise AIProviderResponseError("Unsupported AI provider type.")
     return adapter_type(provider.base_url, api_key, timeout, client)

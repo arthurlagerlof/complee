@@ -18,11 +18,15 @@ from app.ai.schemas import (
     CandidateReview,
     ComponentCandidate,
     ExtractionResult,
+    FactReview,
+    EngineeringValue,
+    EngineeringValueReview,
     GenerationRequest,
     ModelCreate,
     ModelUpdate,
     ProviderCreate,
     ProviderUpdate,
+    RelationshipReview,
     TaskConfigurationPut,
     validate_provider_transport,
 )
@@ -37,6 +41,7 @@ from app.db.models import (
     DesignComponent,
     DesignFact,
     DesignRevision,
+    SourceDocument,
 )
 from app.services.common import ConflictError, EntityNotFound, InvalidReference, commit_changes
 from app.services.design.service import ensure_revision_editable
@@ -71,6 +76,66 @@ def _decrypt_secret(value: str | None) -> str | None:
         raise AIConfigurationError(
             "The saved provider credential cannot be decrypted; configure the credential again."
         ) from exc
+
+
+def _provider_api_key(provider: AIProvider) -> str | None:
+    return _decrypt_secret(provider.encrypted_api_key) or (
+        settings.gemini_api_key if provider.provider_type == "gemini" else None
+    )
+
+
+def _builtin_gemini_model(session: Session) -> tuple[uuid.UUID, uuid.UUID]:
+    if not settings.gemini_api_key or not settings.gemini_model:
+        raise AIConfigurationError(
+            "Configure GEMINI_API_KEY and GEMINI_MODEL, or configure the text_component_extraction AI task."
+        )
+    provider_name = "Gemini (backend environment)"
+    provider = session.scalar(select(AIProvider).where(AIProvider.name == provider_name))
+    if provider is None:
+        provider = AIProvider(
+            name=provider_name,
+            provider_type="gemini",
+            base_url=settings.gemini_base_url.rstrip("/"),
+            enabled=True,
+            is_local=False,
+            configuration={"managed_by": "backend_environment"},
+        )
+        session.add(provider)
+        session.flush()
+    if provider.provider_type != "gemini":
+        raise ConflictError("The reserved backend Gemini provider name is already in use.")
+    model_name = settings.gemini_model.removeprefix("models/")
+    model = session.scalar(
+        select(AIModelConfig).where(
+            AIModelConfig.provider_id == provider.id,
+            AIModelConfig.model_name == model_name,
+        )
+    )
+    if model is None:
+        model = AIModelConfig(
+            provider_id=provider.id,
+            model_name=model_name,
+            display_name=model_name,
+            enabled=True,
+            supported_capabilities=["chat", "json_schema"],
+            configuration={"managed_by": "backend_environment"},
+        )
+        session.add(model)
+    session.commit()
+    session.refresh(provider)
+    session.refresh(model)
+    return provider.id, model.id
+
+
+def extraction_target(session: Session) -> tuple[uuid.UUID, uuid.UUID]:
+    task = session.scalar(
+        select(AITaskConfiguration).where(
+            AITaskConfiguration.task_name == "text_component_extraction"
+        )
+    )
+    if task is not None:
+        return task.provider_id, task.model_id
+    return _builtin_gemini_model(session)
 
 
 def provider_output(provider: AIProvider) -> dict[str, Any]:
@@ -118,6 +183,16 @@ def _get_model(session: Session, model_id: uuid.UUID) -> AIModelConfig:
 def _validate_provider_destination(provider: AIProvider) -> None:
     parsed = urlsplit(provider.base_url)
     host = (parsed.hostname or "").lower()
+    if provider.provider_type == "gemini":
+        if (
+            parsed.scheme != "https"
+            or host != "generativelanguage.googleapis.com"
+            or parsed.port not in {None, 443}
+        ):
+            raise AIConfigurationError(
+                "Gemini providers must use the official Google Generative Language API host."
+            )
+        return
     if not host or host in {"metadata", "metadata.google.internal", "metadata.google.com"}:
         raise AIConfigurationError("The configured AI provider host is not permitted.")
     try:
@@ -324,7 +399,7 @@ def generate(
     adapter = None
     try:
         _validate_provider_destination(provider)
-        api_key = _decrypt_secret(provider.encrypted_api_key)
+        api_key = _provider_api_key(provider)
         adapter = adapter_for(provider, api_key, settings.ai_request_timeout_seconds)
         adapter.supported_capabilities = set(model.supported_capabilities)
         response = (
@@ -444,7 +519,7 @@ def test_provider(session: Session, provider_id: uuid.UUID) -> dict[str, Any]:
         _validate_provider_destination(provider)
         adapter = adapter_for(
             provider,
-            _decrypt_secret(provider.encrypted_api_key),
+            _provider_api_key(provider),
             settings.ai_request_timeout_seconds,
         )
         result = adapter.test_connection()
@@ -467,7 +542,7 @@ def _refresh_models(session: Session, provider: AIProvider) -> list[AIModelConfi
     _validate_provider_destination(provider)
     adapter = adapter_for(
         provider,
-        _decrypt_secret(provider.encrypted_api_key),
+        _provider_api_key(provider),
         settings.ai_request_timeout_seconds,
     )
     try:
@@ -511,7 +586,7 @@ def get_model_info(session: Session, provider_id: uuid.UUID, model_name: str) ->
     _validate_provider_destination(provider)
     adapter = adapter_for(
         provider,
-        _decrypt_secret(provider.encrypted_api_key),
+        _provider_api_key(provider),
         settings.ai_request_timeout_seconds,
     )
     try:
@@ -528,6 +603,7 @@ def create_extraction(
     source_file_id: uuid.UUID | None,
     provider_id: uuid.UUID | None,
     model_id: uuid.UUID | None,
+    source_reference: dict[str, Any] | None = None,
 ) -> AIExtraction:
     if len(source_text) > settings.ai_max_source_characters:
         raise InvalidReference(
@@ -535,14 +611,24 @@ def create_extraction(
         )
     if session.get(DesignRevision, revision_id) is None:
         raise EntityNotFound("Design revision not found.")
+    if provider_id is None and model_id is None:
+        task = session.scalar(
+            select(AITaskConfiguration).where(
+                AITaskConfiguration.task_name == "text_component_extraction"
+            )
+        )
+        if task is None:
+            provider_id, model_id = _builtin_gemini_model(session)
     request = GenerationRequest(
         provider_id=provider_id,
         model_id=model_id,
         task_name="text_component_extraction",
         prompt=(
-            "Extract only engineering components and facts explicitly supported by the source. "
+            "Extract only engineering components, relationships, and facts explicitly supported by the source. "
             "Do not invent values; keep missing values null; preserve original values, units, and conflicting evidence. "
-            "Distinguish classification uncertainty, cite exact evidence and section/page when available. "
+            "Distinguish classification uncertainty. Cite exact evidence, page, section, or source_id/object ID "
+            "from the extracted source data. Never infer engineering ratings, materials, capacity, purpose, or "
+            "regulatory status from names or geometry alone. "
             "Return JSON matching the provided schema.\n\nSOURCE TEXT:\n" + source_text
         ),
         system_prompt=(
@@ -564,6 +650,22 @@ def create_extraction(
             + "; ".join(response["validation_errors"])
         )
     result = ExtractionResult.model_validate(response["parsed"])
+    if source_file_id is not None:
+        _ground_extraction_evidence(session, result, source_file_id)
+        _attach_geometry_references(session, result, source_file_id)
+    for candidate in result.components:
+        candidate.review_status = "pending"
+        for value in candidate.properties.values():
+            value.review_status = "pending"
+    for relationship in result.relationships:
+        relationship.review_status = "pending"
+    for fact in result.facts:
+        fact.review_status = "pending"
+    resolved_source_reference = source_reference or {
+        "source_type": "document" if source_file_id or source_name else "manual",
+        "source_name": source_name,
+        "source_file_id": str(source_file_id) if source_file_id else None,
+    }
     row = AIExtraction(
         revision_id=revision_id,
         provider_id=response["provider_id"],
@@ -572,11 +674,8 @@ def create_extraction(
         task_name="text_component_extraction",
         prompt_template_version="text-component-extraction.v1",
         output_schema_version="component-extraction.v1",
-        source_reference={
-            "source_type": "document" if source_file_id or source_name else "manual",
-            "source_name": source_name,
-            "source_file_id": str(source_file_id) if source_file_id else None,
-        },
+        source_document_id=source_file_id,
+        source_reference=resolved_source_reference,
         result=result.model_dump(mode="json"),
         processing_status="completed",
         execution_duration_ms=response["duration_ms"],
@@ -589,11 +688,151 @@ def create_extraction(
     return row
 
 
+def _ground_extraction_evidence(
+    session: Session, result: ExtractionResult, source_document_id: uuid.UUID
+) -> None:
+    source_document = session.get(SourceDocument, source_document_id)
+    if source_document is None or not source_document.parsed_data:
+        return
+    parsed = source_document.parsed_data
+    format_name = parsed.get("format")
+    evidence_by_id: dict[str, str] = {}
+    if format_name in {"txt", "docx"}:
+        for item in parsed.get("blocks", []):
+            if isinstance(item, dict) and isinstance(item.get("source_id"), str):
+                if isinstance(item.get("text"), str):
+                    evidence_by_id[item["source_id"]] = item["text"]
+    elif format_name == "dxf":
+        for item in parsed.get("entities", []):
+            if isinstance(item, dict) and isinstance(item.get("source_id"), str):
+                evidence_by_id[item["source_id"]] = json.dumps(
+                    item, ensure_ascii=False, separators=(",", ":")
+                )
+    elif format_name in {"glb", "gltf"}:
+        for item in parsed.get("nodes", []):
+            if isinstance(item, dict) and isinstance(item.get("source_id"), str):
+                evidence_by_id[item["source_id"]] = json.dumps(
+                    item, ensure_ascii=False, separators=(",", ":")
+                )
+    evidence_by_text: dict[str, str] = {}
+    for source_id, text in evidence_by_id.items():
+        evidence_by_text.setdefault(text.strip().casefold(), source_id)
+    missing_count = 0
+
+    def ground(evidence_items: list[Any]) -> list[Any]:
+        nonlocal missing_count
+        grounded = []
+        for evidence in evidence_items:
+            source_id = evidence.source_id
+            original = evidence_by_id.get(source_id or "")
+            if original is None:
+                source_id = evidence_by_text.get(evidence.text.strip().casefold())
+                original = evidence_by_id.get(source_id or "")
+            if original is None:
+                missing_count += 1
+                continue
+            grounded.append(
+                type(evidence).model_validate(
+                    {
+                        **evidence.model_dump(),
+                        "text": original[:5_000],
+                        "source_id": source_id,
+                        "page": None,
+                    }
+                )
+            )
+        return grounded
+
+    for candidate in result.components:
+        candidate.evidence = ground(candidate.evidence)
+        for value in candidate.properties.values():
+            value.evidence = ground(value.evidence)
+    for relationship in result.relationships:
+        relationship.evidence = ground(relationship.evidence)
+    for fact in result.facts:
+        fact.evidence = ground(fact.evidence)
+    if missing_count and len(result.warnings) < 100:
+        warning = (
+            f"{missing_count} AI evidence citation(s) did not match the uploaded source and were removed."
+        )
+        result.warnings.append(warning)
+
+
+def _attach_geometry_references(
+    session: Session, result: ExtractionResult, source_document_id: uuid.UUID
+) -> None:
+    source_document = session.get(SourceDocument, source_document_id)
+    if source_document is None or not source_document.parsed_data:
+        return
+    parsed = source_document.parsed_data
+    format_name = parsed.get("format")
+    if format_name in {"glb", "gltf"}:
+        source_items = {
+            item.get("source_id"): item
+            for item in parsed.get("nodes", [])
+            if isinstance(item, dict) and isinstance(item.get("source_id"), str)
+        }
+        for candidate in result.components:
+            candidate.geometry_reference = None
+            nodes = [
+                source_items[evidence.source_id]
+                for evidence in candidate.evidence
+                if evidence.source_id in source_items
+            ]
+            if nodes:
+                candidate.geometry_reference = {
+                    "source_document_id": str(source_document_id),
+                    "source_sha256": source_document.sha256,
+                    "nodes": [
+                        {
+                            "node_index": node["node_index"],
+                            "source_model_id": node["source_model_id"],
+                            "source_id": node["source_id"],
+                            "mesh_index": node["mesh_index"],
+                            "bounding_box": node["bounding_box"],
+                        }
+                        for node in nodes
+                    ],
+                }
+    elif format_name == "dxf":
+        entities = {
+            item.get("source_id"): item
+            for item in parsed.get("entities", [])
+            if isinstance(item, dict) and isinstance(item.get("source_id"), str)
+        }
+        for candidate in result.components:
+            candidate.geometry_reference = None
+            referenced = [
+                entities[evidence.source_id]
+                for evidence in candidate.evidence
+                if evidence.source_id in entities
+            ]
+            if referenced:
+                candidate.geometry_reference = {
+                    "source_document_id": str(source_document_id),
+                    "source_sha256": source_document.sha256,
+                    "entity_ids": [entity["source_id"] for entity in referenced],
+                }
+
+
 def get_extraction(session: Session, extraction_id: uuid.UUID) -> AIExtraction:
     extraction = session.get(AIExtraction, extraction_id)
     if extraction is None:
         raise EntityNotFound("AI extraction not found.")
     return extraction
+
+
+def list_source_documents(session: Session, revision_id: uuid.UUID) -> list[SourceDocument]:
+    if session.get(DesignRevision, revision_id) is None:
+        raise EntityNotFound("Design revision not found.")
+    return list(
+        session.scalars(
+            select(SourceDocument)
+            .where(SourceDocument.revision_id == revision_id)
+            .order_by(SourceDocument.created_at.desc(), SourceDocument.id)
+            .limit(100)
+        )
+    )
 
 
 def review_candidate(
@@ -606,6 +845,8 @@ def review_candidate(
     candidate = result.components[candidate_index]
     if candidate.review_status != "pending":
         raise ConflictError("Only pending extraction candidates can be edited or reviewed.")
+    if payload.review_status == "approved" and not candidate.evidence:
+        raise InvalidReference("A component candidate needs source evidence before approval.")
     updated_candidate = candidate.model_dump()
     updated_candidate.update(payload.model_dump(exclude_unset=True))
     result.components[candidate_index] = ComponentCandidate.model_validate(updated_candidate)
@@ -615,8 +856,39 @@ def review_candidate(
     return extraction
 
 
+def review_candidate_property(
+    session: Session,
+    extraction_id: uuid.UUID,
+    candidate_index: int,
+    property_name: str,
+    payload: EngineeringValueReview,
+) -> AIExtraction:
+    extraction = get_extraction(session, extraction_id)
+    result = ExtractionResult.model_validate(extraction.result)
+    if candidate_index < 0 or candidate_index >= len(result.components):
+        raise EntityNotFound("Extraction component candidate not found.")
+    candidate = result.components[candidate_index]
+    property_value = candidate.properties.get(property_name)
+    if property_value is None:
+        raise EntityNotFound("Extraction property candidate not found.")
+    if property_value.review_status != "pending":
+        raise ConflictError("Only pending extraction properties can be edited or reviewed.")
+    if payload.review_status == "approved" and not (property_value.evidence or candidate.evidence):
+        raise InvalidReference("A property fact needs source evidence before approval.")
+    updated = property_value.model_dump()
+    updated.update(payload.model_dump(exclude_unset=True))
+    candidate.properties[property_name] = EngineeringValue.model_validate(updated)
+    extraction.result = result.model_dump(mode="json")
+    session.commit()
+    session.refresh(extraction)
+    return extraction
+
+
 def review_relationship(
-    session: Session, extraction_id: uuid.UUID, relationship_index: int, review_status: str
+    session: Session,
+    extraction_id: uuid.UUID,
+    relationship_index: int,
+    payload: RelationshipReview,
 ) -> AIExtraction:
     extraction = get_extraction(session, extraction_id)
     result = ExtractionResult.model_validate(extraction.result)
@@ -625,7 +897,32 @@ def review_relationship(
     relation = result.relationships[relationship_index]
     if relation.review_status != "pending":
         raise ConflictError("Only pending extraction relationships can be reviewed.")
-    relation.review_status = review_status  # validated by RelationshipReview schema
+    if payload.review_status == "approved" and not relation.evidence:
+        raise InvalidReference("A relationship candidate needs source evidence before approval.")
+    updated_relation = relation.model_dump()
+    updated_relation.update(payload.model_dump(exclude_unset=True))
+    result.relationships[relationship_index] = type(relation).model_validate(updated_relation)
+    extraction.result = result.model_dump(mode="json")
+    session.commit()
+    session.refresh(extraction)
+    return extraction
+
+
+def review_fact(
+    session: Session, extraction_id: uuid.UUID, fact_index: int, payload: FactReview
+) -> AIExtraction:
+    extraction = get_extraction(session, extraction_id)
+    result = ExtractionResult.model_validate(extraction.result)
+    if fact_index < 0 or fact_index >= len(result.facts):
+        raise EntityNotFound("Extraction fact candidate not found.")
+    fact = result.facts[fact_index]
+    if fact.review_status != "pending":
+        raise ConflictError("Only pending extraction facts can be edited or reviewed.")
+    if payload.review_status == "approved" and not fact.evidence:
+        raise InvalidReference("A fact candidate needs source evidence before approval.")
+    updated_fact = fact.model_dump()
+    updated_fact.update(payload.model_dump(exclude_unset=True))
+    result.facts[fact_index] = type(fact).model_validate(updated_fact)
     extraction.result = result.model_dump(mode="json")
     session.commit()
     session.refresh(extraction)
@@ -633,44 +930,68 @@ def review_relationship(
 
 
 def import_approved_candidates(
-    session: Session, extraction_id: uuid.UUID, candidate_indices: list[int]
+    session: Session,
+    extraction_id: uuid.UUID,
+    candidate_indices: list[int],
+    fact_indices: list[int] | None = None,
 ) -> dict[str, Any]:
     extraction = get_extraction(session, extraction_id)
     result = ExtractionResult.model_validate(extraction.result)
     if session.get(DesignRevision, extraction.revision_id) is None:
         raise EntityNotFound("Design revision not found.")
     ensure_revision_editable(session, extraction.revision_id)
-    if not candidate_indices or len(set(candidate_indices)) != len(candidate_indices):
-        raise InvalidReference("Provide one or more distinct candidate indexes.")
+    fact_indices = fact_indices or []
+    if not candidate_indices and not fact_indices:
+        raise InvalidReference("Provide one or more component or fact candidate indexes.")
+    if (
+        len(set(candidate_indices)) != len(candidate_indices)
+        or len(set(fact_indices)) != len(fact_indices)
+    ):
+        raise InvalidReference("Candidate indexes must be distinct.")
     if any(index < 0 or index >= len(result.components) for index in candidate_indices):
         raise EntityNotFound("Extraction component candidate not found.")
+    if any(index < 0 or index >= len(result.facts) for index in fact_indices):
+        raise EntityNotFound("Extraction fact candidate not found.")
     selected = [result.components[index] for index in candidate_indices]
     if any(candidate.review_status != "approved" for candidate in selected):
         raise InvalidReference("Only engineer-approved candidates can be imported.")
+    selected_facts = [result.facts[index] for index in fact_indices]
+    if any(fact.review_status != "approved" for fact in selected_facts):
+        raise InvalidReference("Only engineer-approved facts can be imported.")
 
     component_by_name: dict[str, DesignComponent] = {}
     imported: list[uuid.UUID] = []
+    imported_facts: list[uuid.UUID] = []
+    ambiguous_matches: list[dict[str, Any]] = []
     imported_fact_values: set[tuple[uuid.UUID, str, str]] = set()
     existing_components = list(
         session.scalars(select(DesignComponent).where(DesignComponent.revision_id == extraction.revision_id))
     )
-    for candidate in selected:
-        component = next(
-            (
-                existing
-                for existing in existing_components
-                if (
-                    existing.component_type == candidate.component_type
-                    and existing.name == candidate.name
-                )
-                or (
-                    candidate.tag
-                    and isinstance(existing.properties.get("tag"), dict)
-                    and existing.properties["tag"].get("value") == candidate.tag
-                )
-            ),
-            None,
-        )
+    for candidate_index, candidate in zip(candidate_indices, selected):
+        matches = [
+            existing
+            for existing in existing_components
+            if (
+                existing.component_type == candidate.component_type
+                and existing.name.casefold() == candidate.name.casefold()
+            )
+            or (
+                candidate.tag
+                and isinstance(existing.properties.get("tag"), dict)
+                and existing.properties["tag"].get("value") == candidate.tag
+            )
+        ]
+        if len(matches) > 1:
+            ambiguous_matches.append(
+                {
+                    "candidate_index": candidate_index,
+                    "candidate_name": candidate.name,
+                    "reason": "multiple_existing_components_match",
+                    "component_ids": [str(item.id) for item in matches],
+                }
+            )
+            continue
+        component = matches[0] if matches else None
         if component is None:
             properties = {
                 name: value.model_dump(mode="json", include={"value", "unit"})
@@ -685,6 +1006,7 @@ def import_approved_candidates(
                 component_type=candidate.component_type,
                 name=candidate.name,
                 properties=properties,
+                geometry_reference=candidate.geometry_reference,
                 source_reference={
                     **extraction.source_reference,
                     "extraction_id": str(extraction.id),
@@ -754,12 +1076,97 @@ def import_approved_candidates(
             )
             imported_fact_values.add(value_key)
 
-    for relation in result.relationships:
+    for fact_index, fact_candidate in zip(fact_indices, selected_facts):
+        component_id = None
+        if fact_candidate.component_name:
+            component = component_by_name.get(fact_candidate.component_name)
+            if component is None:
+                matches = [
+                    item
+                    for item in existing_components
+                    if item.name.casefold() == fact_candidate.component_name.casefold()
+                ]
+                if len(matches) != 1:
+                    ambiguous_matches.append(
+                        {
+                            "fact_index": fact_index,
+                            "component_name": fact_candidate.component_name,
+                            "reason": (
+                                "multiple_existing_components_match"
+                                if matches
+                                else "component_not_found"
+                            ),
+                            "component_ids": [str(item.id) for item in matches],
+                        }
+                    )
+                    continue
+                component = matches[0]
+            component_id = component.id
+        duplicates = session.scalars(
+            select(DesignFact).where(
+                DesignFact.revision_id == extraction.revision_id,
+                DesignFact.component_id == component_id,
+                DesignFact.fact_type == fact_candidate.fact_type,
+            )
+        ).all()
+        if any(
+            item.value == fact_candidate.value and item.statement == fact_candidate.statement
+            for item in duplicates
+        ):
+            continue
+        fact = DesignFact(
+            revision_id=extraction.revision_id,
+            component_id=component_id,
+            fact_type=fact_candidate.fact_type,
+            statement=fact_candidate.statement,
+            value=fact_candidate.value,
+            source_reference={
+                **extraction.source_reference,
+                "extraction_id": str(extraction.id),
+                "evidence": [item.model_dump(mode="json") for item in fact_candidate.evidence],
+                "provider_id": str(extraction.provider_id),
+                "model_id": str(extraction.model_id),
+                "candidate_fact_index": fact_index,
+            },
+            confidence=fact_candidate.confidence,
+            review_status="approved",
+        )
+        session.add(fact)
+        session.flush()
+        imported_facts.append(fact.id)
+
+    for relation_index, relation in enumerate(result.relationships):
         if relation.review_status != "approved":
             continue
         source = component_by_name.get(relation.source_component_name)
         target = component_by_name.get(relation.target_component_name)
-        if source is None or target is None or source.id == target.id:
+        if source is None or target is None:
+            ambiguous_matches.append(
+                {
+                    "relationship_index": relation_index,
+                    "source_component_name": relation.source_component_name,
+                    "target_component_name": relation.target_component_name,
+                    "reason": "relationship_component_not_imported",
+                }
+            )
+            continue
+        if source.id == target.id:
+            ambiguous_matches.append(
+                {
+                    "relationship_index": relation_index,
+                    "source_component_name": relation.source_component_name,
+                    "target_component_name": relation.target_component_name,
+                    "reason": "relationship_resolves_to_same_component",
+                }
+            )
+            continue
+        if not relation.evidence:
+            ambiguous_matches.append(
+                {
+                    "relationship_index": relation_index,
+                    "reason": "relationship_missing_source_evidence",
+                }
+            )
             continue
         exists = session.scalar(
             select(ComponentRelationship.id).where(
@@ -780,6 +1187,7 @@ def import_approved_candidates(
                         "source_reference": extraction.source_reference,
                         "extraction_id": str(extraction.id),
                         "evidence": [item.model_dump(mode="json") for item in relation.evidence],
+                        "confidence": relation.confidence,
                         "provider_id": str(extraction.provider_id),
                         "model_id": str(extraction.model_id),
                     },
@@ -791,4 +1199,10 @@ def import_approved_candidates(
     except IntegrityError as exc:
         session.rollback()
         raise ConflictError("Approved extraction data could not be imported due to a design conflict.") from exc
-    return {"component_ids": list(dict.fromkeys(imported)), "imported_count": len(imported)}
+    return {
+        "component_ids": list(dict.fromkeys(imported)),
+        "imported_count": len(imported),
+        "fact_ids": imported_facts,
+        "imported_fact_count": len(imported_facts),
+        "ambiguous_matches": ambiguous_matches,
+    }

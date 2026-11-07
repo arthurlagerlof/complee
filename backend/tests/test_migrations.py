@@ -27,6 +27,7 @@ APPLICATION_TABLES = {
     "sc_ai_task_configurations",
     "sc_ai_extractions",
     "sc_ai_executions",
+    "sc_source_documents",
 }
 
 
