@@ -1,3 +1,5 @@
+import path from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { createEvidenceProvider } from './src/evidence-provider.mjs'
@@ -46,6 +48,42 @@ function evidenceApi() {
   }
 }
 
+// Two pages on the Vite dev server:
+//   /landing      the Complee landing page (this React app); / redirects here
+//   /inspection/  ShipCheck (shipcheck/), served by its own request handler: checker, 3D viewer, evidence page
+// ShipCheck is imported at runtime (not bundled into this config), so it finds its own files and its APS keys
+// in shipcheck/3D_Since_AI/.env. Its pages use relative URLs, so they work under this prefix and on port 8080.
+function shipcheckPages() {
+  return {
+    name: 'complee-shipcheck-pages',
+    async configureServer(server) {
+      const entry = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'shipcheck/server.mjs')
+      const { handleRequest } = await import(pathToFileURL(entry).href)
+      server.middlewares.use((req, res, next) => {
+        const url = req.url || '/'
+        const [pathname, query = ''] = url.split('?')
+        const q = query ? `?${query}` : ''
+        if (pathname === '/' || pathname === '/index.html') {
+          res.statusCode = 302
+          res.setHeader('Location', `/landing${q}`)
+          return res.end()
+        }
+        if (pathname === '/inspection') {
+          res.statusCode = 302
+          res.setHeader('Location', `/inspection/${q}`)
+          return res.end()
+        }
+        if (url.startsWith('/inspection/')) {
+          req.url = url.slice('/inspection'.length)
+          return handleRequest(req, res)
+        }
+        if (pathname === '/landing' || pathname === '/landing/') req.url = `/index.html${q}`
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [evidenceApi(), react()],
+  plugins: [evidenceApi(), shipcheckPages(), react()],
 })

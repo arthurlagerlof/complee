@@ -44,7 +44,7 @@ function render() {
 
 async function loadProvider() {
   try {
-    const response = await fetch('/api/evidence/provider'); const payload = await response.json();
+    const response = await fetch('api/evidence/provider'); const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || response.status);
     $('#evidenceSourceStatus').textContent = `${payload.id} · ${payload.metadata?.record_count ?? 0} passages · ${payload.metadata?.retrieval || 'source retrieval'}`;
   } catch (error) { $('#evidenceSourceStatus').textContent = `Local source unavailable: ${error.message}`; }
@@ -57,7 +57,7 @@ async function searchSources() {
   $('#evidenceSearch').disabled = true;
   $('#evidenceSourceResults').innerHTML = '<div class="evidence-empty">Searching local source…</div>';
   try {
-    const response = await fetch(`/api/evidence/search?q=${encodeURIComponent(query)}&limit=6`); const payload = await response.json();
+    const response = await fetch(`api/evidence/search?q=${encodeURIComponent(query)}&limit=6`); const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || response.status);
     $('#evidenceSourceResults').innerHTML = payload.results?.length ? payload.results.map((item) => `<article class="evidence-source-result"><b>${esc(item.provision_reference || item.id)} · ${esc(item.title || '')}</b><small><br>${esc(item.source?.kind || 'source')} · pages ${esc((item.source?.pages || []).join(', ') || 'n/a')} · applicability unverified</small><p>${esc(item.text || '')}</p></article>`).join('') : '<div class="evidence-empty">No matches. Try shorter key terms.</div>';
   } catch (error) { $('#evidenceSourceResults').innerHTML = `<div class="evidence-empty">Could not search source: ${esc(error.message)}</div>`; }
@@ -75,7 +75,7 @@ async function reviewDocuments() {
     for (const file of docs) {
       const bytes = new Uint8Array(await file.arrayBuffer()); let binary = '';
       for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-      const response = await fetch('/api/evidence/review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: file.name, dataBase64: btoa(binary) }) });
+      const response = await fetch('api/evidence/review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: file.name, dataBase64: btoa(binary) }) });
       const payload = await response.json(); if (!response.ok) throw new Error(payload.error || `Review failed (${response.status})`); results.push(payload);
     }
     reviewContent.innerHTML = results.map(renderReview).join('');

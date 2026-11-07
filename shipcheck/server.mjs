@@ -4,7 +4,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runCheck, loadRules, loadScenarios } from './src/load.mjs';
 import { createEvidenceProvider } from './src/evidence-provider.mjs';
 import { reviewDocumentEvidence } from './src/document-review.mjs';
@@ -130,7 +130,9 @@ const routes = {
 
 export function addRoute(key, handler) { routes[key] = handler; }
 
-export const server = http.createServer(async (req, res) => {
+// The request handler is exported so other servers can mount ShipCheck under a path prefix
+// (the Vite dev server serves it at /inspection/, see ../vite.config.ts).
+export async function handleRequest(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const p = decodeURIComponent(url.pathname);
   const handler = routes[`${req.method} ${p}`];
@@ -145,9 +147,12 @@ export const server = http.createServer(async (req, res) => {
   }
   if (req.method !== 'GET') return sendJSON(res, 405, { error: 'Method not allowed' });
   serveStatic(p === '/' ? '/evidence.html' : p, res);
-});
+}
 
-server.listen(PORT, () => {
+export const server = http.createServer(handleRequest);
+
+// Listen on PORT only when started directly (npm start / node server.mjs), not when imported.
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) server.listen(PORT, () => {
   for (const s of loadScenarios()) {
     const out = runCheck(s.id);
     console.log(`${s.name}: ${JSON.stringify(out.summary)}`);

@@ -36,13 +36,13 @@ function loadViewerScript() {
 }
 
 export async function createApsViewer(container, { onPick } = {}) {
-  const status = await fetch('/api/aps/status', { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ configured: false }));
+  const status = await fetch('api/aps/status', { cache: 'no-store' }).then((r) => r.json()).catch(() => ({ configured: false }));
   if (!status.configured) throw new Error(status.reason || 'APS is not configured on the server (3D_Since_AI/.env)');
   if (!status.urn) throw new Error('No model URN (3D_Since_AI/urn.txt)');
   await loadViewerScript();
   const AV = window.Autodesk.Viewing;
   const getAccessToken = async (cb) => {
-    const r = await fetch('/api/aps/token', { cache: 'no-store' });
+    const r = await fetch('api/aps/token', { cache: 'no-store' });
     if (!r.ok) throw new Error(`token: ${r.status}`);
     const t = await r.json();
     cb(t.access_token, t.expires_in);
@@ -333,7 +333,7 @@ export function createFallbackViewer(container) {
   }
   // The gallery is only rebuilt when the image list changes, so selecting parts does not reload the images.
   function renderGallery() {
-    gallery.innerHTML = images.map((src) => `<figure><img src="/${src}" alt="RCRV model screenshot" onerror="this.closest('figure').remove()"><figcaption>${esc(src.split('/').pop())}</figcaption></figure>`).join('');
+    gallery.innerHTML = images.map((src) => `<figure><img src="${src}" alt="RCRV model screenshot" onerror="this.closest('figure').remove()"><figcaption>${esc(src.split('/').pop())}</figcaption></figure>`).join('');
   }
   const noop = () => {};
   return {

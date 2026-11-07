@@ -21,7 +21,7 @@ import EvidenceIntake from './EvidenceIntake'
 
 gsap.registerPlugin(ScrollTrigger)
 
-const SHIPCHECK_REVIEW_URL = import.meta.env.VITE_SHIPCHECK_REVIEW_URL || 'http://127.0.0.1:8080/index.html?scenario=rcrv-3d'
+const SHIPCHECK_REVIEW_URL = import.meta.env.VITE_SHIPCHECK_REVIEW_URL || '/inspection/index.html?scenario=rcrv-3d'
 
 function ProductName() {
   return (

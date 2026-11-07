@@ -32,7 +32,7 @@ npm install
 npm start
 ```
 
-Run these commands inside `shipcheck/`. Open http://localhost:8080 (the evidence intake; the checker is at http://localhost:8080/index.html). Run the tests:
+From the repository root, `npm run dev` serves ShipCheck at http://localhost:5173/inspection/ next to the Complee landing page (`/landing`). On its own: run these commands inside `shipcheck/`. Open http://localhost:8080 (the evidence intake; the checker is at http://localhost:8080/index.html). Run the tests:
 
 ```bash
 npm test
