@@ -74,16 +74,29 @@ export async function createApsViewer(container, { onPick } = {}) {
   let idToDb = new Map(), dbToId = new Map(), results = null, checked = [], context = new Set();
   let mode = 'all', simple = false, override = null, cut = null, selectedId = null, labelAnchor = null;
 
+  // Self-healing cache: a flag is set while the model loads and cleared on success. If the previous load never
+  // finished (e.g. the viewer's local OPFS model cache got corrupted), the cache is removed before loading again.
+  const FLAG = 'shipcheck.apsLoadPending';
+  async function clearStaleCache() {
+    let pending = false;
+    try { pending = localStorage.getItem(FLAG) === '1'; } catch { /* storage blocked */ }
+    if (!pending) return;
+    const root = await navigator.storage?.getDirectory?.().catch(() => null);
+    await root?.removeEntry('otg_cache', { recursive: true }).catch(() => null);
+  }
+  const setFlag = (on) => { try { on ? localStorage.setItem(FLAG, '1') : localStorage.removeItem(FLAG); } catch { /* ignore */ } };
+
   function load() {
     if (loaded) return loaded;
     badge.textContent = 'Loading the RCRV model from Autodesk APS…';
-    loaded = withTimeout(new Promise((res, rej) => {
+    loaded = clearStaleCache().then(() => { setFlag(true); return withTimeout(new Promise((res, rej) => {
       AV.Document.load(`urn:${status.urn}`, (doc) => {
         const node = doc.getRoot().getDefaultGeometry();
         viewer.addEventListener(AV.GEOMETRY_LOADED_EVENT, () => res(), { once: true });
         viewer.loadDocumentNode(doc, node).catch(rej);
       }, (code, msg) => rej(new Error(`APS model load failed (${code}): ${msg}`)));
-    }), LOAD_TIMEOUT_MS, 'Loading the APS model').then(async () => {
+    }), LOAD_TIMEOUT_MS, 'Loading the APS model'); }).then(async () => {
+      setFlag(false);
       badge.textContent = 'Autodesk APS viewer · real RCRV model';
       await viewer.loadExtension('Autodesk.Section').catch(() => null); // section tool in the toolbar; our deck cut uses its cut planes
     });

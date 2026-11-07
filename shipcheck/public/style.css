@@ -213,3 +213,13 @@ blockquote { margin: 6px 0 0; padding: 2px 0 2px 8px; border-left: 3px solid var
 .aps-label::after { content: ''; position: absolute; left: 50%; bottom: -6px; margin-left: -6px; border: 6px solid transparent; border-bottom: 0; border-top-color: inherit; }
 .aps-label.st-non_compliant { background: var(--bad); border-color: var(--bad); } .aps-label.st-not_enough_info { background: var(--info); border-color: var(--info); }
 .aps-label.st-compliant { background: var(--ok); border-color: var(--ok); } .aps-label.st-none { background: var(--ink); border-color: var(--ink); }
+
+/* component and rule views */
+.ruleRow { padding: 4px 6px; border-radius: 6px; cursor: pointer; display: flex; flex-direction: column; }
+.ruleRow:hover { background: var(--soft); } .ruleRow.sel { background: #e7eefc; }
+.ruleLink { color: inherit; text-decoration: none; border-bottom: 1px dashed #9aa3ad; } .ruleLink:hover { color: var(--accent); }
+.rulecount { font-weight: 600; margin: 8px 0 2px; }
+.tag.whatif { background: #e8f5ec; color: #23673f; }
+.na.whatif { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+button.tiny { padding: 0 6px; font-size: 11px; }
+.kv.comp td:first-child { width: 32%; }

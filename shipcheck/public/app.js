@@ -14,7 +14,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const LABEL = { compliant: 'Compliant', non_compliant: 'Non-compliant', not_enough_info: 'Not enough info', null: 'No rule' };
 const ORDER = { non_compliant: 0, not_enough_info: 1, compliant: 2, null: 3 };
-const EDIT_SOURCE = 'edited in session by engineer';
+const EDIT_SOURCE = 'what-if, not in model';
 
 export function family(source = '') {
   if (/ADA|PVAG/.test(source)) return 'ADA / PVAG';
@@ -30,7 +30,7 @@ export function family(source = '') {
 }
 
 function provClass(src = '') {
-  if (/edited/.test(src)) return 'edit';
+  if (/edited|what-if/.test(src)) return 'edit';
   if (/planted/.test(src)) return 'plant';
   if (/derived by ShipCheck|not in the model/.test(src)) return 'der';
   if (/public|GA drawing|ShipConstructor model|viewer dbId/.test(src)) return 'pub';
@@ -44,7 +44,7 @@ const S = {
   coreRules: [], expected: null, baseline: null, results: null,
   selected: null, edits: new Map(),
   filter: { status: new Set(['non_compliant', 'not_enough_info', 'compliant', 'null']), family: '', deck: '' },
-  lastCheckMs: 0, demo: null,
+  lastCheckMs: 0, demo: null, ruleView: null,
 };
 const allRules = () => S.coreRules;
 const ruleById = (id) => allRules().find((r) => r.id === id);
@@ -78,6 +78,11 @@ function useViewer(sc) {
     try {
       // ?noaps forces the offline fallback (test without internet).
       if (new URLSearchParams(location.search).has('noaps')) throw new Error('disabled with ?noaps');
+      // ?clearcache removes the Autodesk viewer's local model cache first (a corrupt cache can stall loading).
+      if (new URLSearchParams(location.search).has('clearcache')) {
+        const root = await navigator.storage?.getDirectory?.().catch(() => null);
+        await root?.removeEntry('otg_cache', { recursive: true }).catch(() => null);
+      }
       views.aps ??= await createApsViewer($('#apsView'), { onPick });
       await views.aps.load();
       if (S.sc !== sc) return 'stale';
@@ -161,6 +166,7 @@ async function loadScenario(id) {
   S.expected = expected;
   S.edits.clear();
   S.selected = null;
+  S.ruleView = null;
   listLimit = LIST_PAGE;
   // Large real models start with the findings only (thousands of compliant parts otherwise).
   S.filter.status = new Set(S.norm.elements.length > 2000 ? ['non_compliant', 'not_enough_info'] : ['non_compliant', 'not_enough_info', 'compliant', 'null']);
@@ -186,13 +192,19 @@ function runCheck() {
   S.lastCheckMs = performance.now() - t0;
 }
 
-function recheck() {
+function recheck(ids) {
   runCheck();
-  viewer.update(S.results);
+  viewer.update(S.results, ids);
   renderSummary();
+  renderRules();
   renderEdits();
   renderList();
-  if (S.selected) renderResults(S.selected);
+  if (S.ruleView) { renderRuleView(S.ruleView); return; }
+  if (S.selected) {
+    renderResults(S.selected);
+    renderComponent(S.selected);
+    viewer.setLabel?.(S.selected, labelFor(S.selected), S.results.elements[S.selected]?.worst);
+  }
 }
 
 // ---------- sidebar ----------
@@ -201,6 +213,7 @@ function renderAll() {
   renderShip();
   renderScore();
   renderSummary();
+  renderRules();
   renderEdits();
   renderFilters();
   renderList();
@@ -275,9 +288,11 @@ function renderSummary() {
 function renderEdits() {
   const box = $('#edits');
   if (!S.edits.size) { box.innerHTML = ''; return; }
-  box.innerHTML = `<h2>Session edits (${S.edits.size})</h2>` +
-    [...S.edits.values()].map((x) => `<div class="na"><code>${esc(x.id)}.${esc(x.key)}</code>: ${esc(x.before)} → <b>${esc(x.after)}</b></div>`).join('') +
-    `<div class="row" style="display:flex;gap:6px;margin-top:6px"><button id="resetEdits">Reset edits</button><button id="exportModel">Export edited model</button></div>`;
+  box.innerHTML = `<h2>What-if values, not in model (${S.edits.size})</h2>` +
+    [...S.edits.values()].map((x) => `<div class="na whatif"><code>${esc(x.id)}.${esc(x.key)}</code>: ${esc(x.before)} → <b>${esc(x.after)}</b>
+      <button class="tiny resetOne" data-id="${esc(x.id)}" data-key="${esc(x.key)}" title="Back to the model value">reset</button></div>`).join('') +
+    `<div class="row" style="display:flex;gap:6px;margin-top:6px"><button id="resetEdits">Reset all</button><button id="exportModel">Export edited model</button></div>`;
+  box.querySelectorAll('.resetOne').forEach((b) => (b.onclick = () => resetEdit(b.dataset.id, b.dataset.key)));
   $('#resetEdits').onclick = () => loadScenario(S.sc.id);
   $('#exportModel').onclick = () => download(`${S.sc.id}-edited.json`, JSON.stringify(S.model, null, 1), 'application/json');
 }
@@ -340,7 +355,8 @@ function select(id, { fly = true } = {}) {
     $('#deck').value = el.deck;
     viewer.setMode(el.deck);
   }
-  viewer.select(id, { fly });
+  if (S.ruleView) { S.ruleView = null; viewer.clearHighlight?.(); }
+  viewer.select(id, { fly, label: labelFor(id), status: S.results.elements[id]?.worst });
   document.querySelectorAll('#list .item').forEach((n) => n.classList.toggle('sel', n.dataset.id === id));
   document.querySelector(`#list .item[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' });
   renderDetail(id);
@@ -353,11 +369,146 @@ function renderDetail(id) {
     <div class="muted">${esc(el.type)} · ${esc(deckName(el.deck))}${el.objectid != null ? ` · viewer dbId ${el.objectid}` : ''} · source: ${prov(el.source || S.model.source || 'not stated')}</div>
     <div id="dStatus" style="margin-top:6px"></div>
     ${el.note ? `<div class="note"><b>Model note:</b> ${esc(el.note)}</div>` : ''}
+    <div id="dComponent"></div>
     <div id="dResults"></div>
-    <h2>Design data</h2>
+    <h2>Design data (what-if editing)</h2>
     <div id="dEditor"></div>`;
+  renderComponent(id);
   renderResults(id);
   renderEditor(id);
+}
+
+// ---------- component view: part -> requirements ----------
+
+const COMPONENT_FIELDS = [
+  ['Drawing', 'drawing'], ['Part name', 'part_name'], ['Material', 'material'], ['Steel grade', 'steel_grade'],
+  ['Thickness', 'thickness'], ['Clear opening', 'clear_opening'], ['Smaller side', 'clear_opening_min_side'],
+  ['Pipe material', 'pipe_material'], ['System', 'system'], ['Size', 'size'], ['SWBS', 'swbs'], ['Design status', 'design_status'],
+];
+
+// A length as model text and mm: 5/8" = 15.88 mm; a what-if value shows its own unit.
+function showValue(v) {
+  if (!v) return null;
+  if (typeof v.value === 'number' && v.unit in UNIT_TO_MM) {
+    const mm = v.value * UNIT_TO_MM[v.unit];
+    const mmTxt = `${Math.abs(mm) < 100 ? Math.round(mm * 100) / 100 : Math.round(mm)} mm`;
+    if (v.original != null) return `${v.original} = ${mmTxt}`;
+    return v.unit === 'mm' ? `${mmTxt} (${Math.round(mm / 25.4 * 100) / 100} in)` : `${v.value} ${v.unit} = ${mmTxt}`;
+  }
+  return Array.isArray(v.value) ? v.value.join(', ') : String(v.value);
+}
+
+function renderComponent(id) {
+  const el = elById(id), e = S.results.elements[id];
+  if (!el || !$('#dComponent')) return;
+  // Fixed component fields, plus every value a rule on this part uses (e.g. clear_width on a corridor).
+  const ruleParams = e.results.flatMap((r) => [r.parameter, ruleById(r.rule_id)?.key]).filter(Boolean)
+    .filter((k) => !COMPONENT_FIELDS.some(([, f]) => f === k)).map((k) => [k.replace(/_/g, ' '), k]);
+  const rows = [...COMPONENT_FIELDS, ...new Map(ruleParams.map((p) => [p[1], p])).values()].map(([label, k]) => {
+    const v = readValue(el.props?.[k], S.norm.units, el.source || S.model.source || 'not stated');
+    if (!v) return '';
+    const whatIf = S.edits.has(`${id}.${k}`);
+    // A what-if value's provenance already reads "what-if, not in model".
+    return `<tr class="${whatIf ? 'changed' : ''}"><td>${label}</td><td>${esc(showValue(v))}${prov(v.source)}</td></tr>`;
+  }).join('');
+  // Missing data: inputs a rule needed but the model does not have (never guessed).
+  const missing = e.results.filter((r) => r.status === 'not_enough_info').map((r) => {
+    const m = r.explanation.match(/^"?([\w .]+?)"? is missing/) || r.explanation.match(/^(\S+) of .* is not/);
+    const what = m ? m[1].replace(/"/g, '') : r.measured ? r.measured : 'value';
+    return `<div class="na">• <b>${esc(what)}</b> for ${esc(r.rule_id)}: ${esc(r.explanation)}</div>`;
+  }).join('');
+  $('#dComponent').innerHTML = `<h2>Component</h2>
+    <table class="kv comp">${rows || '<tr><td colspan="2" class="muted">No component data in the model.</td></tr>'}
+    ${el.source ? `<tr><td>Source file</td><td>${prov(el.source)}</td></tr>` : ''}</table>
+    ${missing ? `<h2>Missing data</h2>${missing}` : ''}`;
+}
+
+// The key value shown on the part in 3D, e.g. "762 mm (30 in) · required ≥ 600 mm".
+function labelFor(id) {
+  const e = S.results?.elements[id];
+  if (!e || !e.results.length) return null;
+  const r = [...e.results].sort((a, b) => (STATUS_RANK[b.status] ?? 0) - (STATUS_RANK[a.status] ?? 0))[0];
+  const el = elById(id);
+  const p = r.parameter && readValue(el?.props?.[r.parameter], S.norm.units);
+  let key;
+  if (p && typeof p.value === 'number' && p.unit in UNIT_TO_MM) {
+    const mm = p.value * UNIT_TO_MM[p.unit];
+    key = `${Math.abs(mm) < 100 ? Math.round(mm * 100) / 100 : Math.round(mm)} mm (${Math.round(mm / 25.4 * 100) / 100} in)`;
+  } else key = r.measured ?? 'value not in model';
+  const whatIf = r.parameter && S.edits.has(`${id}.${r.parameter}`);
+  return `${esc(key)}${whatIf ? ' · what-if' : ''}<small>required ${esc(r.required)} · ${esc(r.rule_id)}</small>`;
+}
+
+function resetEdit(id, key) {
+  const el = elById(id);
+  const orig = S.pristine.elements.find((x) => x.id === id)?.props?.[key];
+  if (orig === undefined) delete el.props[key]; else el.props[key] = structuredClone(orig);
+  S.edits.delete(`${id}.${key}`);
+  recheck([id]);
+  if (S.selected === id && !S.ruleView) renderEditor(id);
+}
+
+// ---------- rule view: requirement -> parts ----------
+
+const PLURAL = { hatch: 'hatches', plate: 'plates', stiffener: 'stiffeners', structure_part: 'structural parts', pipe: 'oil fuel pipe items',
+  corridor: 'corridors', door: 'doors', stair: 'stairs', ramp: 'ramps', fuel_tank: 'fuel tanks', guard_rail: 'guard rails',
+  machinery_space: 'machinery spaces', escape_zone: 'escape zones', system_item: 'system items', manhole: 'manholes' };
+
+function ruleHits(ruleId) {
+  const hits = [];
+  for (const e of Object.values(S.results.elements)) {
+    const r = e.results.find((x) => x.rule_id === ruleId);
+    if (r) hits.push({ id: e.id, name: e.name, type: e.type, status: r.status, measured: r.measured });
+  }
+  return hits.sort((a, b) => (STATUS_RANK[b.status] ?? 0) - (STATUS_RANK[a.status] ?? 0));
+}
+
+function countLine(hits) {
+  const types = [...new Set(hits.map((h) => h.type))];
+  const noun = types.length === 1 ? (hits.length === 1 ? types[0].replace('_', ' ') : PLURAL[types[0]] ?? `${types[0]}s`) : 'parts';
+  const n = (st) => hits.filter((h) => h.status === st).length;
+  return `${hits.length.toLocaleString('en')} ${noun}: ${n('compliant').toLocaleString('en')} pass, ${n('non_compliant').toLocaleString('en')} fail, ${n('not_enough_info').toLocaleString('en')} not enough info`;
+}
+
+function renderRules() {
+  const box = $('#rulesBox');
+  if (!box) return;
+  const used = allRules().filter((r) => !r.draft).map((r) => ({ r, hits: ruleHits(r.id) })).filter((x) => x.hits.length);
+  box.innerHTML = `<h2>Rules (${used.length})</h2>` + used.map(({ r, hits }) => `<div class="ruleRow ${S.ruleView === r.id ? 'sel' : ''}" data-rule="${esc(r.id)}">
+      <b>${esc(r.id)}</b><span class="muted">${esc(countLine(hits))}</span></div>`).join('');
+  box.querySelectorAll('.ruleRow').forEach((n) => (n.onclick = () => showRule(n.dataset.rule)));
+}
+
+function showRule(ruleId) {
+  S.ruleView = ruleId;
+  S.selected = null;
+  document.querySelectorAll('#list .item.sel').forEach((n) => n.classList.remove('sel'));
+  const hits = ruleHits(ruleId);
+  viewer.highlight?.(Object.fromEntries(hits.map((h) => [h.id, h.status])));
+  if (!viewer.highlight) viewer.setFilter(new Set(hits.map((h) => h.id)));
+  renderRules();
+  renderRuleView(ruleId);
+}
+
+function renderRuleView(ruleId) {
+  const rule = ruleById(ruleId), hits = ruleHits(ruleId);
+  const shown = hits.slice(0, 300);
+  $('#detail').innerHTML = `
+    <div class="muted">Rule view · requirement → parts</div>
+    <h1>${esc(rule.id)}</h1>
+    <div class="muted">${esc(rule.source)} - ${esc(rule.clause)}</div>
+    <blockquote>“${esc(rule.text)}”</blockquote>
+    <div class="tags">${rule.verified ? '<span class="tag blue">Value verified</span>' : '<span class="tag">Rule value not yet verified against official text</span>'}
+      ${rule.review_status ? `<span class="tag review">${esc(rule.review_status)}</span>` : ''}
+      ${rule.basis && rule.basis !== 'explicit' ? `<span class="tag grey" title="${esc(rule.basis_note || '')}">basis: ${esc(rule.basis)}</span>` : ''}</div>
+    <div class="rulecount" id="ruleCount">${esc(countLine(hits))}</div>
+    <div class="row" style="display:flex;gap:6px;margin:6px 0"><button id="ruleBack">Back to all findings</button></div>
+    <div id="ruleParts">${shown.map((h) => `<div class="item" data-id="${esc(h.id)}"><span class="dot st-${h.status}"></span>
+      <span><b>${esc(h.id)}</b> ${esc(h.name)}<br><span class="muted">${esc(h.measured ?? 'value missing')}</span></span></div>`).join('')}
+      ${hits.length > shown.length ? `<p class="muted">${(hits.length - shown.length).toLocaleString('en')} more parts (use the traceability table or the report).</p>` : ''}</div>`;
+  $('#ruleBack').onclick = () => { S.ruleView = null; viewer.clearHighlight?.(); viewer.overview(); renderRules(); renderList();
+    $('#detail').innerHTML = '<p class="muted">Click a part, a finding or a rule.</p>'; };
+  $('#ruleParts').querySelectorAll('.item').forEach((n) => (n.onclick = () => select(n.dataset.id)));
 }
 
 function renderResults(id) {
@@ -368,7 +519,7 @@ function renderResults(id) {
 
   const cards = e.results.map((r) => `
     <div class="res st-${r.status}" data-rule="${esc(r.rule_id)}">
-      <div class="head"><span>${esc(r.rule_id)}</span><span class="badge st-${r.status}">${LABEL[r.status]}</span></div>
+      <div class="head"><a href="#" class="ruleLink" data-rule="${esc(r.rule_id)}" title="Show every part this rule applies to">${esc(r.rule_id)}</a><span class="badge st-${r.status}">${LABEL[r.status]}</span></div>
       <div class="muted">${esc(r.source)} - ${esc(r.clause)}</div>
       <table class="kv" style="margin-top:4px"><tr><td>Measured</td><td>${esc(r.measured ?? 'missing')}</td></tr><tr><td>Required</td><td>${esc(r.required)}</td></tr></table>
       <div class="expl">${esc(r.explanation)}</div>
@@ -407,6 +558,7 @@ function renderResults(id) {
     ${also || '<p class="muted">No related rules outside the ones applied above.</p>'}
     ${na ? `<h2>Considered, not applicable (${e.not_applicable.length})</h2>${na}` : ''}`;
   document.querySelectorAll('#dResults .goto').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); select(a.dataset.id); }));
+  document.querySelectorAll('#dResults .ruleLink').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); showRule(a.dataset.rule); }));
 }
 
 function lengthParams() {
@@ -479,7 +631,7 @@ function applyEdit(id, key, value, unit) {
   const opts = el.props[key]?.options;
   el.props[key] = { value, ...(unit ? { unit } : {}), ...(opts ? { options: opts } : {}), source: EDIT_SOURCE };
   S.edits.set(`${id}.${key}`, { id, key, before, after: unit ? `${value} ${unit}` : Array.isArray(value) ? value.join(', ') : String(value) });
-  recheck();
+  recheck([id]);
   const row = $('#dEditor').querySelector(`[data-key="${CSS.escape(key)}"]`)?.closest('tr');
   if (row) {
     row.classList.add('changed');
