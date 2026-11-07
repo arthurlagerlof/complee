@@ -756,7 +756,7 @@ async function waitViewer(step, token) {
   const ready = S.viewerReady ?? Promise.resolve();
   let done = false;
   ready.finally(() => { done = true; });
-  if (!done) caption('Loading the real 3D model from Autodesk APS…', 'Streamed once per session; the check itself already ran locally');
+  if (!done) caption('Loading the real 3D model…', 'The check itself already ran locally');
   while (!done) { await step(250); if (token.stop) return; }
 }
 
