@@ -237,3 +237,7 @@ table.trace td.part { cursor: pointer; max-width: 360px; overflow: hidden; text-
 table.trace td.cell { cursor: pointer; color: #fff; text-align: center; font-weight: 600; }
 table.trace td.cell.none { background: #fafbfc; cursor: default; }
 table.trace td.cell:hover { outline: 2px solid var(--accent); }
+
+/* Demo: no technical loading badge while the story runs; presenter keys under the caption */
+.demo-running #localView .aps-status { display: none; }
+#caption small.keys { margin-top: 6px; font-size: 11px; opacity: .55; letter-spacing: .02em; }

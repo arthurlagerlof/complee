@@ -864,7 +864,8 @@ function exportReport() {
 function caption(text, sub = '') {
   const c = $('#caption');
   c.hidden = !text;
-  c.innerHTML = `${esc(text)}${sub ? `<small>${esc(sub)}</small>` : ''}`;
+  const keys = S.demo ? (S.demo.manual ? 'Space / → next · Esc stop' : 'Space / → takes over step by step · Esc stop') : '';
+  c.innerHTML = `${esc(text)}${sub ? `<small>${esc(sub)}</small>` : ''}${keys ? `<small class="keys">${keys}</small>` : ''}`;
 }
 function pulse(sel) {
   const n = typeof sel === 'string' ? document.querySelector(sel) : sel;
@@ -879,6 +880,13 @@ async function waitViewer(step, token) {
   ready.finally(() => { done = true; });
   if (!done) caption('Loading the real 3D model…', 'The check itself already ran locally');
   while (!done) { await step(250); if (token.stop) return; }
+  // Start only when the ship is fully on screen (streamed viewer): no parts popping in during the story. At most 90 s.
+  const st = viewer.stats;
+  if (viewer.kind !== 'local' || !st || !('pending' in st)) return;
+  for (let waited = 0; waited < 90000 && (st.pending || !(st.viewComplete || st.coverageComplete)); waited += 250) {
+    caption('Loading the real 3D model…', `${viewer.residentTiles ?? st.residentTiles ?? ''} parts of the view loaded · the check itself already ran locally`.replace(/^ parts/, 'Parts'));
+    await step(250);
+  }
 }
 
 function ruleQuote(r, match) {
@@ -913,8 +921,17 @@ async function demoTypeFix(step, focus, fix) {
 // RCRV real model -> check -> first red part with the rule quote -> cruise deck -> C2 overlap -> live fix -> green -> export.
 async function runDemo() {
   if (S.demo) { S.demo.stop = true; return; }
-  const token = (S.demo = { stop: false });
+  const token = (S.demo = { stop: false, manual: new URLSearchParams(location.search).has('present'), next: null });
   const step = async (ms) => { await sleep(ms); if (token.stop) throw new Error('stopped'); };
+  // A beat is a pause in the story. Autoplay waits ms; Space / → / Page Down skips ahead and switches to presenter
+  // mode, where every beat waits for the next key press (presentation clickers send → or Page Down).
+  const beat = async (ms) => {
+    const key = new Promise((resolve) => { token.next = resolve; });
+    await (token.manual ? key : Promise.race([sleep(ms), key]));
+    token.next = null;
+    if (token.stop) throw new Error('stopped');
+  };
+  document.body.classList.add('demo-running');
   $('#demoBtn').textContent = '■ Stop demo';
   const real = S.scenarios.find((s) => s.kind === 'parts');
   const cruise = S.scenarios.find((s) => s.id === 'cruise');
@@ -928,7 +945,7 @@ async function runDemo() {
       caption('OSU RCRV: real ShipConstructor production model', `${c ? `${c.objects.toLocaleString('en')} objects in the model · ` : ''}${S.norm.elements.length.toLocaleString('en')} parts checked · inches converted to mm`);
       showOverview();
       viewer.paintNeutral();
-      await step(2800);
+      await beat(2800);
 
       // 2. Run the check: colours appear group by group.
       const run = allRules().filter((r) => !r.draft && Object.values(S.results.elements).some((e) => e.results.some((x) => x.rule_id === r.id)));
@@ -938,7 +955,7 @@ async function runDemo() {
       caption(`${s.non_compliant} non-compliant · ${s.not_enough_info.toLocaleString('en')} not enough info · ${s.compliant.toLocaleString('en')} compliant`,
         S.baseline ? `Ground truth: ${S.baseline.line ?? scoreLine(S.baseline)}` : 'Deterministic checker: same input, same result');
       pulse('#pills'); pulse('#scorebox'); pulse('#accBadge');
-      await step(3000);
+      await beat(3000);
 
       // 3. Fly to the first red part, with the rule quote.
       const d = S.model.demo || {};
@@ -949,7 +966,7 @@ async function runDemo() {
         caption(`${first.element}: ${r.measured} in hull structure (SWBS ${elById(first.element)?.props?.swbs_group?.value ?? '1xx'})`,
           `“${ruleQuote(r, d.quote_match)}” (${r.source.split(':')[0]})`);
         document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
-        await step(4800);
+        await beat(4800);
       }
 
       // 3b. Component view and rule view on a hatch (about 20 s). The model has no failing hatch: this one's
@@ -960,16 +977,16 @@ async function runDemo() {
         const hr = S.results.elements[h.focus].results.find((x) => x.rule_id === h.rule);
         caption(`Component view: ${elById(h.focus).name.split(' · ')[0]}`,
           hr.status === 'not_enough_info' ? `${LABEL[hr.status]}: ${hr.parameter.replace(/_/g, ' ')} not in the model (no size in the name) · required ${hr.required}` : `${LABEL[hr.status]}: ${hr.measured} · required ${hr.required}`);
-        await step(3800);
+        await beat(3800);
         caption(`The card shows the rule, its source and review status`, `${hr.source.split(';')[0]} · ${hr.review_status ?? ''}`);
         const card = document.querySelector(`#dResults .res[data-rule="${CSS.escape(h.rule)}"]`);
         card?.scrollIntoView({ block: 'center', behavior: 'smooth' });
         if (card) pulse(card);
-        await step(3800);
+        await beat(3800);
         showRule(h.rule);
         caption(`Rule view: ${countLine(ruleHits(h.rule))}`, 'Every part the rule applies to, coloured by that rule');
         pulse('#ruleCount');
-        await step(4200);
+        await beat(4200);
         select(h.focus);
         caption(`What-if: ${h.fix.prop.replace(/_/g, ' ')} = ${h.fix.value} ${h.fix.unit}`, 'Labelled "what-if, not in model"; re-checked and recoloured instantly');
         await step(800);
@@ -978,7 +995,7 @@ async function runDemo() {
           const now = S.results.elements[h.focus].worst;
           caption(`${h.focus} is now ${LABEL[now].toLowerCase()} (what-if, not in model)`, 'Reset restores the model value; the model itself is never changed');
           pulse('#dStatus');
-          await step(3200);
+          await beat(3200);
         }
       }
     }
@@ -998,7 +1015,7 @@ async function runDemo() {
         gov ? `The strictest governs: ${gov.required} (${gov.rule_id}). Measured: ${bad[0]?.measured}` : '');
       document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
       pulse('#dResults .gov');
-      await step(4200);
+      await beat(4200);
 
       // 5. Fix it live and watch it turn green.
       const fix = d.fix || {};
@@ -1010,17 +1027,19 @@ async function runDemo() {
           `Re-checked in ${S.lastCheckMs.toFixed(1)} ms · logged as a session edit for the class submission report`);
         $('#detail').scrollTo({ top: 0, behavior: 'smooth' });
         pulse('#dStatus');
-        await step(3000);
+        await beat(3000);
       }
     }
+    showOverview(); // end on the whole deck with every result coloured
     caption('Export the findings: HTML report and CSV', 'Rule references, measured vs required, value provenance, inch → mm conversions');
     pulse('#reportBtn'); pulse('#csvBtn');
-    await step(2600);
+    await beat(2600);
   } catch (e) {
     if (e.message !== 'stopped') console.error(e);
   } finally {
-    caption('');
+    document.body.classList.remove('demo-running');
     S.demo = null;
+    caption('');
     $('#demoBtn').innerHTML = '&#9654; Demo run-through';
   }
 }
@@ -1038,7 +1057,15 @@ $('#demoBtn').onclick = runDemo;
 $('#reportBtn').onclick = exportReport;
 $('#traceBtn').onclick = () => ($('#tracePanel').hidden ? openTrace() : closeTrace());
 $('#csvBtn').onclick = exportCSV;
-addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.demo) S.demo.stop = true; });
+addEventListener('keydown', (e) => {
+  if (!S.demo) return;
+  if (e.key === 'Escape') { S.demo.stop = true; S.demo.next?.(); return; }
+  if ([' ', 'ArrowRight', 'PageDown', 'Enter'].includes(e.key) && !/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) {
+    e.preventDefault();
+    if (!S.demo.manual) { S.demo.manual = true; const c = $('#caption'); c.querySelector('.keys')?.replaceChildren('Space / → next · Esc stop'); }
+    S.demo.next?.();
+  }
+});
 // Simple view (real model): context (shell + decks) and checked parts only; deck cut from the deck plating.
 $('#simpleBtn').onclick = () => {
   const on = !viewer.simple;

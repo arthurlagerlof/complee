@@ -14,6 +14,15 @@
    "full model … MB") and appears in grey in the overview once all filter chips are on. It never changes a colour or count; the
    rule and component steps hide the grey parts, keeping the compliance view clear.
 
+## Presenting live (recommended)
+
+- Full screen, 1920×1080 (below about 800 px width the 3D view has no room). Use the local viewer (default), not `?viewer=aps`.
+- Open `/inspection/index.html?scenario=rcrv-3d&demo&present`: the demo first waits until the whole ship is loaded
+  (caption "Loading the real 3D model…"), then stops at every step. **Space**, **→**, **Page Down** or **Enter** (a presentation
+  clicker) goes to the next step, **Esc** ends the demo. Without `&present` it plays by itself; the first key press switches
+  it to step-by-step.
+- The technical loading badge is hidden while the demo runs.
+
 ## The "Demo run-through" button (about 45 s)
 
 The captions are generated from the data, so the numbers are always correct.
