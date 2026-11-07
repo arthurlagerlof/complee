@@ -6,11 +6,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { runCheck, loadRules, loadScenarios } from './src/load.mjs';
+import { parseAllowedOrigins, corsHeaders } from './src/cors.mjs';
 import { createEvidenceProvider } from './src/evidence-provider.mjs';
 import { reviewDocumentEvidence } from './src/document-review.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8080);
+const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+// CORS: ALLOWED_ORIGINS="https://a.example,https://b.example" (default: localhost on any port only).
+const ALLOWED_ORIGINS = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
+const MODEL_DIR = path.resolve(ROOT, process.env.MODEL_DIR || 'model');
+
+function health() {
+  let chunks = 0, restChunks = 0, manifest = false, parts = false;
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(MODEL_DIR, 'manifest.json'), 'utf8'));
+    manifest = true; chunks = m.chunks?.length ?? 0; restChunks = m.chunks?.filter((c) => c.group === 'rest').length ?? 0;
+  } catch { /* no model deployed */ }
+  try { parts = Array.isArray(JSON.parse(fs.readFileSync(path.join(ROOT, 'ships/rcrv/parts.json'), 'utf8')).parts); } catch { /* missing */ }
+  return { status: 'ok', version: VERSION, model_manifest: manifest, chunks, rest_chunks: restChunks, parts_loaded: parts, viewer: manifest ? 'local' : 'aps-or-fallback' };
+}
 const evidenceProvider = await createEvidenceProvider({ kind: process.env.EVIDENCE_PROVIDER || 'sinceai' });
 
 // Autodesk APS keys for the 3D viewer: read from 3D_Since_AI/.env into a private object (not process.env),
@@ -49,6 +64,7 @@ const localOnly = (req) => { if (!isLoopback(req)) throw Object.assign(new Error
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.js': 'text/javascript',
   '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.csv': 'text/csv', '.png': 'image/png',
+  '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.wasm': 'application/wasm',
 };
 // URL prefix -> folder on disk. Anything else is 404.
 const STATIC = [
@@ -57,6 +73,9 @@ const STATIC = [
   ['/tests/expected/', 'tests/expected'],
   ['/demo/', 'demo'],
   ['/node_modules/three/', 'node_modules/three'],
+  ['/node_modules/three-mesh-bvh/', 'node_modules/three-mesh-bvh'],
+  // Local 3D viewer model chunks (exported with tools/export; not in Git, deployed with deploy.sh / deploy.ps1)
+  ['/model/', process.env.MODEL_DIR || 'model'],
   ['/', 'public'],
 ];
 const ROOT_FILES = new Set(['/rules.json', '/scenarios.json']);
@@ -74,13 +93,13 @@ function readBody(req, limit = 200_000) {
   });
 }
 
-function serveStatic(p, res) {
+function serveStatic(p, res, req) {
   let file = null;
   if (ROOT_FILES.has(p)) file = path.join(ROOT, p);
   else {
     for (const [prefix, dir] of STATIC) {
       if (!p.startsWith(prefix)) continue;
-      const base = path.join(ROOT, dir);
+      const base = path.resolve(ROOT, dir);
       const candidate = path.normalize(path.join(base, p.slice(prefix.length) || 'index.html'));
       if (candidate.startsWith(base + path.sep) || candidate === base) file = candidate;
       break;
@@ -90,11 +109,34 @@ function serveStatic(p, res) {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     return res.end('Not found');
   }
-  res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+  const ext = path.extname(file);
+  const size = fs.statSync(file).size;
+  // Model chunks never change under the same name: cache them for a year. Everything else: always fresh.
+  const cache = ext === '.glb' ? 'public, max-age=31536000, immutable' : 'no-store';
+  const headers = { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': cache, 'Accept-Ranges': 'bytes' };
+  // HTTP Range (single range), e.g. for resuming large model chunks.
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(req?.headers?.range || ''));
+  if (m && (m[1] || m[2])) {
+    let start = m[1] ? Number(m[1]) : size - Number(m[2]);
+    let end = m[1] && m[2] ? Number(m[2]) : size - 1;
+    if (start < 0) start = 0;
+    if (end >= size) end = size - 1;
+    if (start > end || start >= size) {
+      res.writeHead(416, { 'Content-Range': `bytes */${size}` });
+      return res.end();
+    }
+    res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 });
+    if (req?.method === 'HEAD') return res.end();
+    return fs.createReadStream(file, { start, end }).pipe(res);
+  }
+  res.writeHead(200, { ...headers, 'Content-Length': size });
+  if (req?.method === 'HEAD') return res.end();
   fs.createReadStream(file).pipe(res);
 }
 
 const routes = {
+  'GET /api/health': () => health(),
+  'GET /api/model/config': () => ({ base_url: process.env.MODEL_BASE_URL || 'model/', manifest: 'stream/manifest.json', legacy_manifest: 'manifest.json' }),
   'GET /api/scenarios': () => loadScenarios(),
   'GET /api/rules': () => ({ rules: loadRules() }),
   'GET /api/check': (q) => runCheck(q.get('scenario') || 'rcrv-3d'),
@@ -135,6 +177,14 @@ export function addRoute(key, handler) { routes[key] = handler; }
 export async function handleRequest(req, res) {
   const url = new URL(req.url, 'http://localhost');
   const p = decodeURIComponent(url.pathname);
+  // CORS: headers only for allowed origins; preflight answered here (204 allowed, 403 not allowed).
+  const origin = req.headers.origin;
+  const cors = corsHeaders(origin, ALLOWED_ORIGINS);
+  if (cors) for (const [k, v] of Object.entries(cors)) res.setHeader(k, v);
+  if (req.method === 'OPTIONS') {
+    res.writeHead(origin && !cors ? 403 : 204, cors ? {} : { Vary: 'Origin' });
+    return res.end();
+  }
   const handler = routes[`${req.method} ${p}`];
   if (handler) {
     try {
@@ -145,8 +195,8 @@ export async function handleRequest(req, res) {
       return sendJSON(res, e.status || 500, { error: e.message });
     }
   }
-  if (req.method !== 'GET') return sendJSON(res, 405, { error: 'Method not allowed' });
-  serveStatic(p === '/' ? '/evidence.html' : p, res);
+  if (req.method !== 'GET' && req.method !== 'HEAD') return sendJSON(res, 405, { error: 'Method not allowed' });
+  serveStatic(p === '/' ? '/evidence.html' : p, res, req);
 }
 
 export const server = http.createServer(handleRequest);

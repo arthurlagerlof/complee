@@ -74,6 +74,9 @@ export async function createApsViewer(container, { onPick } = {}) {
   viewer.setGroundReflection?.(false);
   viewer.setBackgroundColor?.(243, 245, 248, 226, 231, 238);
   window.apsViewer = viewer; // for the browser console
+  // Timings for the viewer comparison (README): first picture and fully loaded, in ms since the viewer started.
+  const stats = { started: performance.now(), firstPicture: null, loaded: null };
+  viewer.addEventListener(AV.RENDER_FIRST_PIXEL ?? 'renderFirstPixel', () => { stats.firstPicture ??= performance.now() - stats.started; });
 
   let loaded = null;
   let idToDb = new Map(), dbToId = new Map(), results = null, checked = [], context = new Set();
@@ -114,6 +117,7 @@ export async function createApsViewer(container, { onPick } = {}) {
     }).then(async () => {
       viewer.removeEventListener(AV.PROGRESS_UPDATE_EVENT, progress);
       setFlag(false);
+      stats.loaded = performance.now() - stats.started;
       onGeometryDone?.();
       badge.textContent = 'Autodesk APS viewer · real RCRV model';
       await viewer.loadExtension('Autodesk.Section').catch(() => null); // section tool in the toolbar; our deck cut uses its cut planes
@@ -280,6 +284,8 @@ export async function createApsViewer(container, { onPick } = {}) {
 
   let elementsById = new Map();
   return {
+    kind: 'aps',
+    stats,
     load,
     build(norm, r) {
       idToDb = new Map(norm.elements.filter((e) => e.objectid != null).map((e) => [e.id, e.objectid]));

@@ -9,7 +9,8 @@
 <script type="importmap">
   { "imports": {
       "three": "./node_modules/three/build/three.module.js",
-      "three/addons/": "./node_modules/three/examples/jsm/"
+      "three/addons/": "./node_modules/three/examples/jsm/",
+      "three-mesh-bvh": "./node_modules/three-mesh-bvh/src/index.js"
   } }
 </script>
 </head>
@@ -21,6 +22,7 @@
   <label>Decks <select id="deck"></select></label>
   <button id="planBtn" title="Top-down plan view">Plan view</button>
   <button id="simpleBtn" hidden title="Show only the shell, the decks and the checked parts">Simple view</button>
+  <button id="fullBtn" hidden title="Full model: also show the parts no rule looks at, in grey (overview only; hidden while a findings filter, a rule or a component is shown)">Full model</button>
   <select id="cutSel" hidden title="Cut the model above one deck (Autodesk.Section) and look at it like a plan"><option value="">No deck cut</option></select>
   <span id="accBadge" class="accbadge" hidden title="Ground truth of the unedited design: the same files and scoring as npm test"></span>
   <span class="grow"></span>
@@ -51,6 +53,7 @@
   <section id="view">
     <div id="threeView" class="viewpane"></div>
     <div id="apsView" class="viewpane" hidden></div>
+    <div id="localView" class="viewpane" hidden></div>
     <div id="fallbackView" class="viewpane" hidden></div>
     <div id="tracePanel" class="viewpane" hidden></div>
     <div id="caption" hidden></div>

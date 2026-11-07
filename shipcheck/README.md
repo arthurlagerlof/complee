@@ -55,6 +55,93 @@ Use **Add evidence** in the top bar to attach files to the selected scenario. Th
 short-lived read-only token (`/api/aps/token`, scope `viewables:read`, localhost only). The model URN is in `3D_Since_AI/urn.txt`.
 Without keys or internet, the app shows saved screenshots (`public/fallback/`) next to the locally computed findings. `?noaps` forces that fallback.
 
+### Local 3D viewer (default) and the APS fallback
+
+The real RCRV model is shown by ShipCheck's own Three.js viewer from glTF chunks on our server (`model/`), with the same
+colours, component card, rule view, labels, deck cut and what-if as before. `?viewer=aps` switches to the Autodesk viewer,
+`?noaps` to the saved screenshots. If `model/manifest.json` is missing the app falls back to APS automatically.
+
+The chunks are exported once from the Autodesk model (needs the APS keys; the files are gitignored, 226.5 MB of GLBs plus 56.7 MB of on-demand properties):
+
+```bash
+cd tools/export && npm install
+```
+```bash
+node request-svf.mjs
+```
+```bash
+node --max-old-space-size=12288 map-ids.mjs
+```
+```bash
+node --max-old-space-size=12288 export-chunks.mjs
+```
+```bash
+node --max-old-space-size=12288 export-rest.mjs --plan
+```
+Then `node --max-old-space-size=12288 export-rest.mjs --chunk 1`, `--chunk 2`, … (one run per sub-chunk, as many as the plan prints) and `node --max-old-space-size=12288 export-rest.mjs --props`. Finish with `node --max-old-space-size=12288 audit-model.mjs`.
+
+`request-svf.mjs` copies the source file inside our APS bucket and translates the copy to SVF (svf-utils 8 reads SVF only;
+the original model keeps its SVF2 for the APS viewer). `map-ids.mjs` matches the SVF copy's node ids to the APS model's dbIds
+(the two translations number objects differently) by DWG source file + entity handle; `verify-ids.mjs` checks the result
+(each part's ShipConstructor centre of gravity must lie inside its geometry: 99.7 %). `export-chunks.mjs` merges each chunk
+(context, openings, structure with findings, piping, stairs/ladders, other structure) into one mesh with the part's dbId on
+every vertex, compresses it with gltfpack (meshopt, no simplification) and writes `model/manifest.json`.
+
+The retained `viewer-local.js` uses the six main GLBs and rest chunks for the previous full-load approach. The default `viewer-stream.js` now requests spatial tiles on demand; the original GLBs are retained as lossless inputs for `tile-model.mjs`. See **Viewport streaming and simplified example** below.
+
+The full geometry is rendered without simplification; decoding and picking-index construction run in workers. See [export coverage and measured performance](tools/export/README.md) for sizes, timings, dbId mapping limits and the correction to the original six chunks.
+
+## Deploy to Vultr
+
+One small Linux server runs everything: the app (UI, `/api`, model chunks) in Docker behind Caddy (HTTPS, gzip/zstd).
+No Autodesk keys are needed on the server.
+
+**Server:** Ubuntu 24.04, 1 vCPU, 2 GB RAM, 25 GB+ disk is enough (the app needs about 0.5 GB RAM; the model chunks
+are tens of MB). **Firewall:** allow TCP 22 (SSH), 80 (HTTP) and 443 (HTTPS, plus UDP 443 for HTTP/3); nothing else.
+
+1. On the server, once (as root):
+   ```bash
+   curl -fsSL https://get.docker.com | sh
+   ```
+   ```bash
+   ufw allow 22/tcp && ufw allow 80/tcp && ufw allow 443 && ufw --force enable
+   ```
+2. Optional: point a domain's DNS A record at the server; Caddy then gets an HTTPS certificate automatically.
+3. On your laptop: copy `deploy/deploy.env.example` to `deploy/deploy.env` (gitignored) and fill in `SERVER_HOST`,
+   `SERVER_USER`, optionally `DOMAIN` and `ALLOWED_ORIGINS` (sites allowed to call the API from a browser).
+4. Commit your changes (the scripts upload the last commit of `shipcheck/` plus `model/`), then deploy:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File deploydeploy.ps1
+   ```
+   or on Linux/macOS:
+   ```bash
+   bash deploy/deploy.sh
+   ```
+
+**Check it works** (replace the host):
+
+```bash
+curl -s https://shipcheck.example.com/api/health
+```
+should print `{"status":"ok","version":"…","model_manifest":true,"chunks":7,"parts_loaded":true,…}`.
+
+```bash
+curl -sI https://shipcheck.example.com/model/context.glb
+```
+should show `content-type: model/gltf-binary`, `cache-control: public, max-age=31536000, immutable` and `accept-ranges: bytes`.
+
+CORS: an allowed origin gets `access-control-allow-origin`, any other origin does not, and its preflight gets 403:
+
+```bash
+curl -si -X OPTIONS -H "Origin: https://allowed.example" -H "Access-Control-Request-Method: GET" https://shipcheck.example.com/api/health
+```
+```bash
+curl -si -X OPTIONS -H "Origin: https://not-allowed.example" -H "Access-Control-Request-Method: GET" https://shipcheck.example.com/api/health
+```
+
+Logs and restart on the server: `cd /opt/shipcheck && docker compose -f deploy/docker-compose.yml logs -f` /
+`… up -d --build`. The app also runs without Docker: `npm ci --omit=dev && MODEL_DIR=/path/to/model node server.mjs`.
+
 ## Project structure
 
 ```
@@ -112,3 +199,13 @@ VERIFY.md                  unverified values, interpretations, mentor questions
 - **Every model value says where it comes from**: the ShipConstructor model (with the source drawing), derived by ShipCheck (with the field it was derived from),
   public particulars, estimated, fictional, or edited in session. The UI shows this next to every value, and inch values next to their mm conversion.
 - **Missing data gives *not enough info***, never a guess.
+
+### Viewport streaming and simplified example
+
+The scenario selector includes **Simplified research vessel (example)** again, with the original eight expected findings and estimated geometry. The real model now loads small spatial tiles for the current camera view: hull/decks for the overview, nearby detail on zoom, and requested component tiles on selection; leaving a region cancels requests and releases its geometry and picking data. The **Full model** button permits nearby untested detail; it no longer downloads the whole ship.
+
+Run `node --max-old-space-size=4096 tools/export/tile-model.mjs` inside `shipcheck/` after the original GLBs are available. This preserves every packed triangle and attribute byte, leaves the original files untouched, and writes `model/stream/manifest.json` plus content-addressed tiles. The tiler stops below 3 GB free. The default client budget estimates at most 512 MB resident geometry/picking data and 1.5 million nearby detail triangles (hull context is counted against the memory budget). This is view selection, not mesh simplification; if the budget is reached, the badge asks you to zoom in.
+
+Model files can live on a different host: see [separate model server](docs/model-serving.md) for `MODEL_BASE_URL`, CORS and read-only server commands. The original merged viewer code and APS/screenshot fallbacks remain in the repository.
+
+[Viewport architecture, measured request sizes and screenshots](docs/viewport/README.md).

@@ -10,6 +10,9 @@
 4. No internet, or APS is down: open http://localhost:8080/?noaps. The 3D view switches to the saved screenshots and the findings
    still come from the local check. Every caption and step stays the same.
 5. `?demo` starts the run-through on load. **Esc** stops it.
+6. **Full model** (top bar, on by default): after the checked parts, the rest of the ship loads in the background (badge
+   "full model … MB") and appears in grey in the overview once all filter chips are on. It never changes a colour or count; the
+   rule and component steps hide the grey parts, keeping the compliance view clear.
 
 ## The "Demo run-through" button (about 45 s)
 
@@ -73,3 +76,6 @@ design changes, before the class review.
 
 **6. Ask (10 s).** A verified rule set for one area (hull materials or means of escape) and an anonymised cruise model, to run a
 pilot with one design team.
+
+Viewport streaming: the real-model overview loads hull/decks; zooming requests nearby full-quality tiles, and selecting a finding fetches only the tiles containing that component. The rest of the ship remains on the model server.
+The selector also includes **Simplified research vessel (example)**: use it for the lightweight five-deck layout demonstration (8/8 expected findings). `MODEL_BASE_URL` can point the app at the separate read-only model host; see `docs/model-serving.md`.

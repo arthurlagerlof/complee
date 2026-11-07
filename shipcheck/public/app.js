@@ -7,6 +7,7 @@ import { reportRows, toCSV, toHTML } from './src/report.mjs';
 import { traceMatrix, traceCSV, cellLabel } from './src/trace.mjs';
 import { createViewer } from './viewer3d.js';
 import { createApsViewer, createFallbackViewer } from './viewer-aps.js';
+import { createLocalViewer } from './viewer-stream.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -54,31 +55,67 @@ const deckName = (id) => S.norm.decks.find((d) => d.id === id)?.name ?? id;
 
 // Two viewers share the centre pane: Three.js for deck models, the Autodesk APS viewer for the real
 // production model (with a screenshot + findings fallback when APS cannot be reached).
-const onPick = (id) => { if (S.results?.elements[id]) select(id, { fly: false }); };
+const onPick = (id) => { if (S.results?.elements[id]) select(id, { fly: viewer?.kind === 'local' }); };
 const views = { three: createViewer($('#threeView'), { onPick }), aps: null, fallback: null };
 let viewer = views.three;
 const LIST_PAGE = 400;
 let listLimit = LIST_PAGE;
+let restRequest = 0;
 
 // The findings render at once; the APS model (large, streamed from Autodesk) is coloured when it arrives.
 // S.viewerReady resolves when the scenario's viewer is usable.
 const NOOP_VIEWER = { build() {}, update() {}, paintNeutral() {}, select() {}, flyToElement() {}, setFilter() {}, overview() {}, setMode() {}, setPlan() {}, mode: 'all', plan: false };
 function useViewer(sc) {
+  views.local?.setActive?.(false);
   const want = sc.viewer === 'aps' ? 'aps' : 'three';
   $('#threeView').hidden = want !== 'three';
-  $('#apsView').hidden = want !== 'aps';
+  $('#apsView').hidden = true;
+  $('#localView').hidden = true;
   $('#fallbackView').hidden = true;
   $('#planBtn').hidden = want !== 'three';
-  $('#simpleBtn').hidden = $('#cutSel').hidden = true;
+  $('#simpleBtn').hidden = $('#cutSel').hidden = $('#fullBtn').hidden = true;
   $('#simpleBtn').classList.remove('on');
   if (want === 'three') { viewer = views.three; S.viewerReady = Promise.resolve('three'); return; }
   views.fallback ??= createFallbackViewer($('#fallbackView'));
   views.fallback.setImages(sc.fallback_images || []);
   viewer = NOOP_VIEWER;
+  // Real model: our own local viewer (glTF chunks from our server) by default; ?viewer=aps uses the Autodesk viewer.
+  // Order when something is missing: local -> APS -> screenshots. ?noaps skips straight to the screenshots.
+  const params = new URLSearchParams(location.search);
+  const showControls = () => {
+    $('#simpleBtn').classList.toggle('on', !!viewer.simple); // Simple view is the default: light and readable
+    $('#simpleBtn').hidden = $('#cutSel').hidden = false;
+    $('#fullBtn').hidden = !viewer.hasRest; // local viewer with the rest of the model exported
+    $('#fullBtn').classList.toggle('on', !!viewer.fullModel);
+    $('#cutSel').innerHTML = '<option value="">No deck cut</option>';
+  };
   S.viewerReady = (async () => {
+    const notes = [];
+    if (!params.has('noaps') && (params.get('viewer') || 'local') === 'local') {
+      try {
+        $('#localView').hidden = false;
+        views.local ??= await createLocalViewer($('#localView'), { onPick, onPickRest });
+        if (S.sc !== sc) { views.local.setActive?.(false); return 'stale'; }
+        views.local.build(S.norm, S.results); // colours apply chunk by chunk while loading
+        await views.local.load();
+        if (S.sc !== sc) { views.local.setActive?.(false); return 'stale'; }
+        viewer = views.local;
+        viewer.build(S.norm, S.results);
+        showControls();
+        renderList();
+        if (S.selected) select(S.selected);
+        return 'local';
+      } catch (e) {
+        views.local?.setActive?.(false);
+        console.warn('Local viewer unavailable, trying the Autodesk viewer:', e.message);
+        notes.push(`local viewer: ${e.message}`);
+        $('#localView').hidden = true;
+      }
+    }
     try {
       // ?noaps forces the offline fallback (test without internet).
-      if (new URLSearchParams(location.search).has('noaps')) throw new Error('disabled with ?noaps');
+      if (params.has('noaps')) throw new Error('disabled with ?noaps');
+      $('#apsView').hidden = false;
       // ?clearcache removes the Autodesk viewer's local model cache first (a corrupt cache can stall loading).
       if (new URLSearchParams(location.search).has('clearcache')) {
         const root = await navigator.storage?.getDirectory?.().catch(() => null);
@@ -89,16 +126,14 @@ function useViewer(sc) {
       if (S.sc !== sc) return 'stale';
       viewer = views.aps;
       viewer.build(S.norm, S.results);
-      $('#simpleBtn').classList.toggle('on', !!viewer.simple); // Simple view is the default: light and readable
-      $('#simpleBtn').hidden = $('#cutSel').hidden = false;
-      $('#cutSel').innerHTML = '<option value="">No deck cut</option>';
+      showControls();
       renderList();
       if (S.selected) select(S.selected);
       return 'aps';
     } catch (e) {
       console.warn('APS viewer unavailable, using fallback:', e.message);
       if (S.sc !== sc) return 'stale';
-      views.fallback.setReason(e.message);
+      views.fallback.setReason([...notes, e.message].join('; '));
       $('#apsView').hidden = true;
       $('#fallbackView').hidden = false;
       viewer = views.fallback;
@@ -154,6 +189,7 @@ function resultsFromPrecomputed(pre) {
 }
 
 async function loadScenario(id) {
+  restRequest++;
   S.sc = S.scenarios.find((s) => s.id === id);
   $('#scenario').value = id;
   const [{ model, precomputed }, expected] = await Promise.all([
@@ -171,8 +207,8 @@ async function loadScenario(id) {
   traceState = { findingsOnly: null, limit: TRACE_PAGE };
   closeTrace();
   listLimit = LIST_PAGE;
-  // Large real models start with the findings only (thousands of compliant parts otherwise).
-  S.filter.status = new Set(S.norm.elements.length > 2000 ? ['non_compliant', 'not_enough_info'] : ['non_compliant', 'not_enough_info', 'compliant', 'null']);
+  // Start at the full overview; filtering by status hides the rest geometry.
+  S.filter.status = new Set(['non_compliant', 'not_enough_info', 'compliant', 'null']);
   // Ground-truth score is computed on the unedited design with the core rule set only.
   S.baseline = precomputed ? precomputed.score : expected ? scoreResults(checkModel(S.pristine, S.coreRules), expected) : null;
   if (S.baseline && !S.baseline.line) S.baseline.line = scoreLine(S.baseline);
@@ -366,6 +402,7 @@ function select(id, { fly = true } = {}) {
 }
 
 function renderDetail(id) {
+  restRequest++;
   const e = S.results.elements[id], el = elById(id);
   $('#detail').innerHTML = `
     <h1>${esc(id)} · ${esc(el.name)}</h1>
@@ -386,6 +423,31 @@ function renderDetail(id) {
     renderList();
     $('#detail').innerHTML = '<p class="muted">Click a part, a finding or a rule.</p>';
   };
+}
+
+// ---------- rest part (full model, not checked by any rule) ----------
+
+const restProps = new Map(); // props shard -> Promise of { dbId: record }
+async function onPickRest(db) {
+  const request = ++restRequest, scenario = S.sc;
+  S.selected = null;
+  if (S.ruleView) { S.ruleView = null; viewer.clearHighlight?.(); }
+  document.querySelectorAll('#list .item.sel').forEach((n) => n.classList.remove('sel'));
+  const shard = Math.floor(db / 1000);
+  if (!viewer.getProperties && !restProps.has(shard)) restProps.set(shard, fetchJSON(`model/props/${shard}.json`).catch(() => ({})));
+  $('#detail').innerHTML = `<h1>dbId ${db}</h1><div class="muted">Not checked by any rule · loading the part data…</div>`;
+  const rec = viewer.getProperties ? await viewer.getProperties(db) : (await restProps.get(shard))[db];
+  if (request !== restRequest || S.sc !== scenario) return;
+  const name = rec?.name || 'Model object';
+  const table = (props) => Object.entries(props || {}).map(([group, kv]) => `<h2>${esc(group)}</h2><table class="kv">${
+    Object.entries(kv || {}).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc([].concat(v).join(', '))}</td></tr>`).join('')}</table>`).join('');
+  $('#detail').innerHTML = `
+    <h1>dbId ${db} · ${esc(name)}</h1>
+    <div class="muted">Not checked by any rule · full model (${esc(rec?.chunk || 'rest')})${rec?.path?.length ? ` · ${esc(rec.path.join(' › '))}` : ''}</div>
+    <div class="note">This part is shown for context only. No rule in the rule set applies to it, so it has no pass/fail status and does not count in the findings.</div>
+    ${rec ? table(rec.properties) : '<p class="muted">No properties found for this object.</p>'}
+    ${rec?.part_of ? `<h2 style="margin-top:10px">Part: ${esc(rec.part_of.name)} (dbId ${rec.part_of.dbId})</h2>${table(rec.part_of.properties)}` : ''}`;
+  viewer.selectRest?.(db, { label: `<b>${esc(name)}</b> · dbId ${db}<br>not checked by any rule` });
 }
 
 // ---------- component view: part -> requirements ----------
@@ -727,7 +789,7 @@ async function waitViewer(step, token) {
   const ready = S.viewerReady ?? Promise.resolve();
   let done = false;
   ready.finally(() => { done = true; });
-  if (!done) caption('Loading the real 3D model from Autodesk APS…', 'Streamed once per session; the check itself already ran locally');
+  if (!done) caption('Loading the real 3D model…', 'The check itself already ran locally');
   while (!done) { await step(250); if (token.stop) return; }
 }
 
@@ -898,6 +960,12 @@ $('#cutSel').onfocus = () => {
   $('#cutSel').innerHTML = '<option value="">No deck cut</option>' + lv.map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join('');
 };
 $('#cutSel').onchange = (e) => viewer.setDeckCut?.(e.target.value);
+// Full model (local viewer): the parts no rule looks at, in grey, in the overview.
+$('#fullBtn').onclick = () => {
+  const on = !viewer.fullModel;
+  viewer.setFullModel?.(on);
+  $('#fullBtn').classList.toggle('on', on);
+};
 $('#planBtn').onclick = () => { viewer.setPlan(!viewer.plan); $('#planBtn').classList.toggle('on', viewer.plan); };
 
 window.__shipcheck = S; // for debugging in the console

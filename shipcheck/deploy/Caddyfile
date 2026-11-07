@@ -1,0 +1,25 @@
+# Reverse proxy for ShipCheck.
+# DOMAIN set (e.g. shipcheck.example.com, DNS A record -> server): automatic HTTPS (Let's Encrypt).
+# DOMAIN empty: plain HTTP on port 80 (e.g. http://<server-ip>/ for a first test).
+{$DOMAIN::80} {
+	# Compress text responses (JSON, JS, CSS, HTML). Model chunks are already meshopt-compressed.
+	# Caddy ships gzip and zstd; brotli needs a custom Caddy build, browsers fall back to gzip/zstd.
+	encode {
+		zstd
+		gzip
+		match {
+			header Content-Type application/json*
+			header Content-Type text/*
+			header Content-Type application/javascript*
+			header Content-Type model/gltf+json*
+		}
+	}
+
+	# Everything (UI, /api, /model with Range + long cache + glTF MIME types, CORS) is handled by the app.
+	reverse_proxy app:8080
+
+	header {
+		-Server
+		X-Content-Type-Options nosniff
+	}
+}
