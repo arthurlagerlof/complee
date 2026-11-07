@@ -22,7 +22,7 @@ The local dev site opens on the evidence intake workflow. It accepts document, d
 | `/landing` | This Complee landing page (`/` redirects here). |
 | `/inspection/` | ShipCheck from `shipcheck/`: evidence intake, then the checker with the real RCRV 3D model at `/inspection/index.html`. |
 
-ShipCheck needs its own dependencies and, for the 3D viewer, the APS keys in `shipcheck/3D_Since_AI/.env` (not in Git):
+ShipCheck needs its own dependencies. The default local viewer uses files in `shipcheck/model/`; APS keys are only needed for the optional `?viewer=aps` fallback:
 
 ```sh
 cd shipcheck && npm install && cd ..
@@ -31,6 +31,16 @@ npm run dev
 
 `/inspection/` only exists on the dev server (ShipCheck runs as Node middleware); `npm run build` builds the landing page only.
 ShipCheck can still run on its own: `cd shipcheck && npm start` (port 8080).
+
+On Windows, start or recover both pages without keeping a terminal open:
+
+```powershell
+.\scripts\start-dev.ps1
+# Restart this project server: .\scripts\start-dev.ps1 -Restart
+# Stop it: .\scripts\start-dev.ps1 -Stop
+```
+
+The helper uses port 5173, checks the inspection health endpoint, and preserves startup logs in the gitignored `.run/` directory. It reuses a running project server and refuses to stop unrelated applications. Model files are served by the same app in local development unless `MODEL_BASE_URL` explicitly selects a separate model host. `npm run dev` remains available for a foreground terminal session; stopping that session stops the app.
 
 Create a production build with `npm run build`.
 
