@@ -20,11 +20,14 @@ export function viewportAspect(width, height, previous = 1) {
  * box.min/max accept [x,y,z] or {x,y,z}. fov is the effective VERTICAL field of view in degrees.
  * direction points FROM target TO camera; up is the camera's reference up vector.
  * margin >= 1 reserves screen space: margin 1.1 puts every corner within +/-1/1.1 NDC.
+ * points (optional): world points of the actual geometry inside the box (e.g. the corners of many small tile boxes).
+ * Then those points are framed and centred instead of the 8 box corners, so a long, slim ship seen at an angle is
+ * not shrunk and pushed off-centre by the empty corners of its overall bounding box.
  * Returns plain arrays position/target/up plus aspect, near/far, distance and camera basis.
  * No input is mutated. Invalid/empty bounds throw RangeError; invalid view options use defaults.
  */
 export function fitPerspectiveBox(box, {
-  fov = 40, aspect = 1, direction = [0, 0, 1], up = [0, 1, 0], margin = 1.08,
+  fov = 40, aspect = 1, direction = [0, 0, 1], up = [0, 1, 0], margin = 1.08, points = null,
 } = {}) {
   const min = vector(box?.min), max = vector(box?.max);
   if (!valid(min) || !valid(max) || min.some((x, i) => x > max[i])) {
@@ -48,7 +51,9 @@ export function fitPerspectiveBox(box, {
   const right = normalize(cross(referenceUp, back), [1, 0, 0]);
   const screenUp = cross(back, right);
   const corners = [];
-  for (const x of [-half[0], half[0]]) for (const y of [-half[1], half[1]]) for (const z of [-half[2], half[2]]) {
+  const rel = Array.isArray(points) ? points.map((q) => vector(q)).filter(valid).map((q) => q.map((x, i) => x - center[i])) : [];
+  if (rel.length) for (const p of rel) corners.push([dot(p, right), dot(p, screenUp), dot(p, back)]);
+  else for (const x of [-half[0], half[0]]) for (const y of [-half[1], half[1]]) for (const z of [-half[2], half[2]]) {
     const p = [x, y, z];
     corners.push([dot(p, right), dot(p, screenUp), dot(p, back)]);
   }
@@ -58,11 +63,15 @@ export function fitPerspectiveBox(box, {
   const limits = [tanV * aspect / margin, tanV / margin];
   let distance = Math.max(...corners.map((p) => p[2])) + clearance;
   // For each axis, the allowed intervals for the lateral camera center must intersect:
-  // max(x_i - k*(D-z_i)) <= min(x_j + k*(D-z_j)). Solve all pairs for D.
+  // max(x_i - k*(D-z_i)) <= min(x_j + k*(D-z_j)). Over all pairs this needs
+  // D >= max_a(x_a/2k + z_a/2) + max_b(-x_b/2k + z_b/2): the two maxima separate (linear in the point count).
   for (let axis = 0; axis < 2; axis++) {
-    for (const a of corners) for (const b of corners) {
-      distance = Math.max(distance, (a[axis] - b[axis]) / (2 * limits[axis]) + (a[2] + b[2]) / 2);
+    let pa = -Infinity, pb = -Infinity;
+    for (const p of corners) {
+      pa = Math.max(pa, p[axis] / (2 * limits[axis]) + p[2] / 2);
+      pb = Math.max(pb, -p[axis] / (2 * limits[axis]) + p[2] / 2);
     }
+    distance = Math.max(distance, pa + pb);
   }
   distance += Math.max(distance, scale, 1) * 1e-12;
   const depths = corners.map((p) => distance - p[2]);
@@ -70,10 +79,17 @@ export function fitPerspectiveBox(box, {
   for (let axis = 0; axis < 2; axis++) {
     // At this distance, find the smallest symmetric projected interval. Its center is
     // generally NOT the world-space box center when corners have different depths.
-    let radius = 0;
-    for (let i = 0; i < corners.length; i++) for (let j = 0; j < corners.length; j++) {
-      radius = Math.max(radius, (corners[i][axis] - corners[j][axis]) / (depths[i] + depths[j]));
-    }
+    // radius = max_ij (x_i - x_j) / (d_i + d_j), i.e. the smallest r with max_i(x_i - r d_i) <= min_j(x_j + r d_j):
+    // monotone in r, so bisection finds it in linear time per step (exact to floating point).
+    const feasible = (r) => {
+      let lo = -Infinity, hi = Infinity;
+      for (let i = 0; i < corners.length; i++) { lo = Math.max(lo, corners[i][axis] - r * depths[i]); hi = Math.min(hi, corners[i][axis] + r * depths[i]); }
+      return lo <= hi;
+    };
+    let a = 0, b = Math.max(limits[axis], 1e-12);
+    while (!feasible(b)) b *= 2;
+    for (let k = 0; k < 200 && b - a > Math.max(b, 1e-300) * 1e-15; k++) { const m = (a + b) / 2; if (feasible(m)) b = m; else a = m; }
+    const radius = b;
     const lo = Math.max(...corners.map((p, i) => p[axis] - radius * depths[i]));
     const hi = Math.min(...corners.map((p, i) => p[axis] + radius * depths[i]));
     offset[axis] = (lo + hi) / 2;

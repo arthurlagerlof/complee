@@ -149,6 +149,11 @@ export async function createLocalViewer(
     loaded = null,
     resolveFirst = null,
     rejectFirst = null;
+  // Screen margins (1 = edge to edge): the whole ship in the overview, a part with room around it in the component
+  // view (outline and label inside the view, the part still large), all parts of a rule in the rule view.
+  const MARGIN = { overview: 1.12, component: 1.8, rule: 1.15 };
+  const cornersOf = (b) => { const out = []; for (const x of [b.min[0], b.max[0]]) for (const y of [b.min[1], b.max[1]]) for (const z of [b.min[2], b.max[2]]) out.push([x, y, z]); return out; };
+  let framedPoints = null;
   let framedBox = null,
     frameMargin = 1.1,
     viewRevision = 0,
@@ -242,7 +247,7 @@ export async function createLocalViewer(
     renderer.setSize(w, h, false);
     camera.aspect = viewportAspect(w, h, camera.aspect);
     camera.updateProjectionMatrix();
-    if (framedBox) fitBox(framedBox, frameMargin);
+    if (framedBox) fitBox(framedBox, frameMargin, framedPoints);
     invalidate();
     schedule();
   }
@@ -295,10 +300,12 @@ export async function createLocalViewer(
     labelEl.style.left = `${((p.x + 1) / 2) * container.clientWidth}px`;
     labelEl.style.top = `${((1 - p.y) / 2) * container.clientHeight}px`;
   }
-  function fitBox(box, k = 1.1) {
+  // points: corners of the real geometry (tile boxes), so the ship itself is centred, not its overall bounding box.
+  function fitBox(box, k = 1.1, points = null) {
     if (!box || box.isEmpty()) return;
     framedBox = box.clone();
     frameMargin = k;
+    framedPoints = points;
     const direction = camera.position.clone().sub(controls.target);
     const frame = fitPerspectiveBox(box, {
       fov: camera.getEffectiveFOV(),
@@ -310,6 +317,7 @@ export async function createLocalViewer(
       direction,
       up: camera.up,
       margin: k,
+      points,
     });
     const damping = controls.enableDamping,
       auto = controls.autoRotate;
@@ -328,13 +336,14 @@ export async function createLocalViewer(
   }
   const allBounds = new THREE.Box3();
   for (const c of allInfos) allBounds.union(boxOf(c.bounds_mm));
+  function overviewItems() {
+    return fullModel && overviewInfos.length
+      ? overviewInfos
+      : manifest.chunks.filter((c) => c.group === "context");
+  }
   function overviewBounds() {
     const b = new THREE.Box3();
-    const items =
-      fullModel && overviewInfos.length
-        ? overviewInfos
-        : manifest.chunks.filter((c) => c.group === "context");
-    for (const c of items) b.union(boxOf(c.bounds_mm));
+    for (const c of overviewItems()) b.union(boxOf(c.bounds_mm));
     return b.isEmpty() ? allBounds : b;
   }
   function resetCut() {
@@ -352,7 +361,7 @@ export async function createLocalViewer(
     const center = overviewBounds().getCenter(new THREE.Vector3());
     controls.target.copy(center);
     camera.position.copy(center).add(new THREE.Vector3(-0.75, 0.45, 0.85));
-    fitBox(overviewBounds());
+    fitBox(overviewBounds(), MARGIN.overview, overviewItems().flatMap((c) => cornersOf(c.bounds_mm)));
   }
 
   function summary() {
@@ -383,16 +392,21 @@ export async function createLocalViewer(
   }
   function recolor(c, ids) {
     const only = ids && new Set(ids.map((id) => idToDb.get(id)));
+    let seeThrough = !!c.glass;
     for (let v = 0; v < c.dbids.length; v++) {
       const db = c.dbids[v];
       if (only && !only.has(db)) continue;
       const id = dbToId.get(db),
         st = override?.get(id) ?? results?.elements[id]?.worst;
+      // Rule view: only the rule's parts carry a status colour; the hull around them is neutral context, so the
+      // result of that rule is what stands out (the parts' own results of other rules are not mixed in).
+      const ruleContext = override && !override.has(id);
       const col = linear(
         COLORS[
           c.info.group === "rest"
             ? "none"
-            : simple && context.has(db) && (!st || st === "compliant")
+            : ruleContext ||
+                (simple && context.has(db) && (!st || st === "compliant"))
               ? "context"
               : st || "none"
         ],
@@ -402,8 +416,23 @@ export async function createLocalViewer(
       c.state[o + 1] = Math.round(col[1] * 255);
       c.state[o + 2] = Math.round(col[2] * 255);
       const shown = colorState(db, c.info.group === "rest");
-      c.state[o + 3] =
+      let alpha =
         shown && c.opacity && c.opacity[v] < 255 ? c.opacity[v] : shown;
+      // Rule view: the hull around the rule's parts is a light see-through ghost, so parts inside the ship show.
+      if (ruleContext && alpha) alpha = Math.min(alpha, 40);
+      c.state[o + 3] = alpha;
+      if (alpha > 0 && alpha < 255) seeThrough = true;
+    }
+    // See-through pass for this tile, created the first time it has see-through vertices (shares the geometry).
+    if (seeThrough && !c.glass) {
+      const glass = new THREE.Mesh(c.geom, glassMaterial);
+      glass.raycast = () => {};
+      glass.renderOrder = 2;
+      glass.matrixAutoUpdate = false;
+      c.mesh.updateMatrix();
+      glass.matrix.copy(c.mesh.matrix);
+      c.mesh.parent.add(glass);
+      c.glass = glass;
     }
     c.geom.attributes.color.needsUpdate = true;
     invalidate();
@@ -497,15 +526,6 @@ export async function createLocalViewer(
     mesh.material = info.group === "overview" ? overviewMaterial : material;
     mesh.raycast = () => {};
     mesh.frustumCulled = true;
-    if (opacity) {
-      const glass = new THREE.Mesh(geom, glassMaterial);
-      glass.raycast = () => {};
-      glass.renderOrder = 2;
-      glass.matrixAutoUpdate = false;
-      mesh.updateMatrix();
-      glass.matrix.copy(mesh.matrix);
-      mesh.parent.add(glass);
-    }
     root.add(gltf.scene);
     mesh.updateWorldMatrix(true, false);
     let resolveReady;
@@ -906,7 +926,7 @@ export async function createLocalViewer(
         summary();
         return;
       }
-      if (fly && b) fitBox(b, 1.05);
+      if (fly && b) fitBox(b, MARGIN.component);
       showBox(b, label, status);
     },
     setLabel(id, html, status) {
@@ -967,12 +987,14 @@ export async function createLocalViewer(
     highlight(status) {
       override = new Map(Object.entries(status));
       clearSelection();
-      const b = new THREE.Box3();
+      const b = new THREE.Box3(), points = [];
       for (const id of override.keys())
-        for (const c of byDb.get(idToDb.get(id)) || [])
+        for (const c of byDb.get(idToDb.get(id)) || []) {
           b.union(boxOf(c.bounds_mm));
+          points.push(...cornersOf(c.bounds_mm));
+        }
       recompute();
-      fitBox(b, 1.05);
+      fitBox(b, MARGIN.rule, points);
     },
     clearHighlight() {
       override = null;

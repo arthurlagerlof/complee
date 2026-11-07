@@ -36,7 +36,7 @@ export function createViewer(container, { onPick } = {}) {
   scene.add(root);
   const deckGroups = {}, meshes = {}, deckIndex = {};
   let mode = 'all', selectedId = null, filterIds = null, flight = null;
-  let framedBox = null, viewportWidth = 0, viewportHeight = 0;
+  let framedBox = null, framedMargin = 1.1, viewportWidth = 0, viewportHeight = 0;
   const selBox = new THREE.Box3Helper(new THREE.Box3(), 0x1f6feb);
   selBox.visible = false;
   scene.add(selBox);
@@ -58,7 +58,7 @@ export function createViewer(container, { onPick } = {}) {
     persp.aspect = viewportAspect(w, h, persp.aspect);
     persp.updateProjectionMatrix();
     fitOrtho();
-    if (changed && framedBox) frameBox(framedBox);
+    if (changed && framedBox) frameBox(framedBox, 0, framedMargin);
   }
   new ResizeObserver(resize).observe(container);
 
@@ -199,8 +199,11 @@ export function createViewer(container, { onPick } = {}) {
     return direction.lengthSq() > 1e-12 ? direction : new THREE.Vector3(-0.3, 0.6, 1);
   }
 
-  function frameBox(box, ms = 0) {
+  // margin: 1.1 for the deck overview; 2.6 for one element, so its neighbours (corridor, stair, doors) stay in view.
+  // direction: view direction (target -> camera); default keeps the current one.
+  function frameBox(box, ms = 0, margin = 1.1, direction = null) {
     framedBox = box.clone();
+    framedMargin = margin;
     const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
     const aspect = viewportAspect(container.clientWidth, container.clientHeight, persp.aspect);
     if (plan) {
@@ -217,7 +220,7 @@ export function createViewer(container, { onPick } = {}) {
       return Promise.resolve();
     }
     const frame = fitPerspectiveBox(box, {
-      aspect, fov: persp.getEffectiveFOV(), direction: currentDirection(), up: persp.up, margin: 1.1,
+      aspect, fov: persp.getEffectiveFOV(), direction: direction ?? currentDirection(), up: persp.up, margin,
     });
     persp.aspect = frame.aspect;
     // Keep the previous camera position renderable during a flight; tighten at its endpoint.
@@ -266,7 +269,9 @@ export function createViewer(container, { onPick } = {}) {
     if (!o) return Promise.resolve();
     o.updateWorldMatrix(true, false);
     const box = new THREE.Box3().setFromObject(o).expandByScalar(0.08);
-    return frameBox(box, ms);
+    // One element on a deck: look down at it from above at an angle, so other elements on the same deck
+    // (corridors, walls) cannot stand between the camera and the element.
+    return frameBox(box, ms, 2.6, new THREE.Vector3(-0.35, 1, 0.55));
   }
 
   function select(id, { fly = true } = {}) {
