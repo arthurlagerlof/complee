@@ -7,19 +7,22 @@
 //
 // Each chunk is one merged mesh; every vertex carries the dbId of its part (COLOR_0 bytes = parts.json objectid).
 // Colours, isolation and ghosting are per-vertex states, so a chunk is drawn in one call (two when ghosting).
-// Picking uses three-mesh-bvh. Nothing is generated: the geometry is the model's own.
+// Nothing is generated: the geometry is the model's own.
+//
+// Full model: after the 6 main chunks, the rest of the model (parts no rule looks at, manifest group "rest") loads in
+// the background, drawn in neutral grey, shown in the overview when no findings filter, rule view or component view is
+// active ("Full model" toggle). It never changes a compliance colour or count.
+// Off the main thread: meshopt decoding (decoder workers) and the picking index (pick-worker.js, a BVH per chunk).
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
-import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
 
-THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
-THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
-THREE.Mesh.prototype.raycast = acceleratedRaycast;
+MeshoptDecoder.useWorkers?.(Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 2)));
 
 // Same colours as the APS viewer (viewer-aps.js).
 const COLORS = { non_compliant: [0.84, 0.27, 0.27], not_enough_info: [0.85, 0.6, 0.12], compliant: [0.18, 0.62, 0.36], context: [0.86, 0.88, 0.91], none: [0.72, 0.75, 0.79] };
+const lin = (c) => c.map((x) => Math.pow(x, 2.2)); // sRGB UI colour -> linear (as the vertex colours)
 const CONTEXT_GROUPS = new Set(['110', '130']);
 const HIDDEN = 0, GHOST = 128, VISIBLE = 255; // vertex state (alpha byte)
 const HEADROOM_MM = 2300; // deck cut: keep 2.3 m above the deck plating
@@ -36,10 +39,12 @@ function makeMaterials(clipPlanes) {
     sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', 'if (vColor.a < 0.3 || vColor.a > 0.7) discard;\n diffuseColor.rgb = vec3(0.55, 0.6, 0.66);');
   };
   ghost.customProgramCacheKey = () => 'sc-ghost';
-  return { opaque, ghost };
+  // Rest of the model (not checked by any rule): one neutral grey, no per-vertex state.
+  const rest = new THREE.MeshLambertMaterial({ color: new THREE.Color(...lin(COLORS.none)), side: THREE.DoubleSide, clippingPlanes: clipPlanes });
+  return { opaque, ghost, rest };
 }
 
-export async function createLocalViewer(container, { onPick, base = '' } = {}) {
+export async function createLocalViewer(container, { onPick, onPickRest, base = '' } = {}) {
   const manifest = await fetch(`${base}model/manifest.json`, { cache: 'no-store' }).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`model/manifest.json: ${r.status}`))));
   if (!manifest?.chunks?.length) throw new Error('model/manifest.json has no chunks');
 
@@ -105,6 +110,7 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
     dirty = false;
     frames++;
     renderer.render(scene, camera);
+    afterRender();
     placeLabel();
   });
 
@@ -115,8 +121,14 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
   let loaded = null, results = null;
   let idToDb = new Map(), dbToId = new Map(), elementsById = new Map(), checked = new Set(), context = new Set();
   let simple = true, override = null, filterDbs = null, selectedId = null, labelAnchor = null, mode = 'all', ghosting = false;
-  const stats = { started: performance.now(), firstPicture: null, loaded: null, bytes: 0 };
+  const stats = { started: performance.now(), firstPicture: null, loaded: null, bytes: 0, restLoaded: null, restBytes: 0, restTriangles: 0, restErrors: [], pickReady: null };
   window.localViewer.stats = stats;
+  // Rest of the model ("Full model"): { info, mesh, ids, units, uploaded, sent, ready }
+  const restInfos = manifest.chunks.filter((c) => c.group === 'rest');
+  const rest = [];
+  const restDb = new Map(); // dbId -> rest chunk index
+  let fullModel = true, selectedRest = null;
+  window.localViewer.rest = rest;
 
   function indexChunk(ci) {
     const ch = chunks[ci];
@@ -142,7 +154,7 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
     const gltf = await loader.loadAsync(url);
     let mesh = null;
     gltf.scene.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
-    if (!mesh) return;
+    if (!mesh) throw new Error(`${info.file}: no mesh found`);
     const geom = mesh.geometry;
     const col = geom.attributes.color;
     const n = geom.attributes.position.count;
@@ -156,8 +168,9 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
     }
     const state = new Uint8Array(n * 4);
     geom.setAttribute('color', new THREE.BufferAttribute(state, 4, true));
-    // The picking index (BVH) is built after the whole model is shown (see buildBvhLater).
+    // The picking index is built in pick-worker.js once the geometry is on the GPU (see afterRender).
     mesh.material = mats.opaque;
+    mesh.raycast = () => {};
     mesh.frustumCulled = false;
     const ghostMesh = new THREE.Mesh(geom, mats.ghost);
     ghostMesh.matrixAutoUpdate = false;
@@ -169,9 +182,96 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
     ghostMesh.matrix.copy(mesh.matrix);
     mesh.parent.add(ghostMesh);
     root.add(gltf.scene);
-    chunks[ci] = { name: info.name, mesh, ghostMesh, geom, state, dbids };
+    chunks[ci] = { name: info.name, mesh, ghostMesh, geom, state, dbids, key: `m${ci}` };
     indexChunk(ci);
+    trackUpload(chunks[ci], [geom.attributes.position, geom.attributes.normal, geom.index]);
     stats.bytes += info.bytes || 0;
+  }
+
+  // Rest chunk: grey, no per-vertex state; the dbIds only go to the picking worker.
+  async function loadRestChunk(ri, loader, info) {
+    const gltf = await loader.loadAsync(`${base}model/${info.file}`);
+    let mesh = null;
+    gltf.scene.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
+    if (!mesh) throw new Error(`${info.file}: no mesh found`);
+    const geom = mesh.geometry, col = geom.attributes.color, n = geom.attributes.position.count;
+    const ids = new Uint32Array(n);
+    const raw = col.array;
+    if (raw instanceof Uint8Array && col.itemSize === 4 && !col.isInterleavedBufferAttribute) {
+      for (let v = 0; v < n; v++) ids[v] = (raw[4 * v] | (raw[4 * v + 1] << 8) | (raw[4 * v + 2] << 16) | (raw[4 * v + 3] << 24)) >>> 0;
+    } else {
+      for (let v = 0; v < n; v++) ids[v] = Math.round(col.getX(v) * 255) | (Math.round(col.getY(v) * 255) << 8) | (Math.round(col.getZ(v) * 255) << 16) | (Math.round(col.getW(v) * 255) << 24);
+    }
+    geom.deleteAttribute('color');
+    for (let v = 0, prev = -1; v < n; v++) if (ids[v] !== prev) { prev = ids[v]; restDb.set(prev, ri); }
+    if (!geom.boundingSphere) geom.computeBoundingSphere();
+    mesh.material = mats.rest;
+    mesh.raycast = () => {};
+    mesh.frustumCulled = true; // a rest chunk is one slice of the ship: skipped when outside the view
+    root.add(gltf.scene);
+    const r = { info, mesh, geom, ids, key: `r${ri}` };
+    rest[ri] = r;
+    trackUpload(r, [geom.attributes.position, geom.attributes.normal, geom.index]);
+    mesh.visible = restShown();
+    stats.restBytes += info.bytes || 0;
+    stats.restTriangles += info.triangles || 0;
+  }
+
+  // ---------- GPU upload, then hand the geometry to the picking worker ----------
+  // Once a chunk's position / normal / index buffers are on the GPU, the page does not need its own copy: the arrays
+  // move (zero-copy) to pick-worker.js, which builds the picking index there.
+  const picker = new Worker(new URL('./pick-worker.js', import.meta.url));
+  const pending = new Map();
+  let qid = 0, pickTodo = 0;
+  picker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'ready') {
+      const c = m.id[0] === 'm' ? chunks[+m.id.slice(1)] : rest[+m.id.slice(1)];
+      if (c) c.ready = true;
+      if (--pickTodo === 0 && stats.loaded && (stats.restLoaded || !restInfos.length)) stats.pickReady = performance.now() - stats.started;
+      return;
+    }
+    pending.get(m.qid)?.(m);
+    pending.delete(m.qid);
+  };
+  const ask = (msg) => new Promise((res) => { const q = ++qid; pending.set(q, res); picker.postMessage({ ...msg, qid: q }); });
+  function trackUpload(c, attrs) {
+    c.units = new Set(); c.uploaded = new Set();
+    for (const a of attrs) {
+      if (!a) continue;
+      const u = a.isInterleavedBufferAttribute ? a.data : a;
+      c.units.add(u);
+      u.onUpload(() => c.uploaded.add(u));
+    }
+  }
+  const desc = (arr, extra = {}) => ({ buffer: arr.buffer, byteOffset: arr.byteOffset, length: arr.length, ctor: arr.constructor.name, ...extra });
+  function sendToPicker(c, ids) {
+    const pa = c.geom.attributes.position, ia = c.geom.index;
+    const parr = pa.isInterleavedBufferAttribute ? pa.data.array : pa.array;
+    const stride = pa.isInterleavedBufferAttribute ? pa.data.stride : pa.itemSize;
+    const offset = pa.isInterleavedBufferAttribute ? pa.offset : 0;
+    const scale = !pa.normalized ? 1 : parr instanceof Uint16Array ? 1 / 65535 : parr instanceof Int16Array ? 1 / 32767 : parr instanceof Uint8Array ? 1 / 255 : parr instanceof Int8Array ? 1 / 127 : 1;
+    const transfer = [...new Set([parr.buffer, ia.array.buffer, ids.buffer])];
+    picker.postMessage({ type: 'chunk', id: c.key, pos: desc(parr, { stride, offset, scale }), index: desc(ia.array), ids: desc(ids) }, transfer);
+    for (const u of c.units) u.array = null; // moved to the worker; the GPU keeps its copy
+    c.sent = true;
+    pickTodo++;
+  }
+  function afterRender() {
+    for (const c of chunks) if (c && !c.sent && c.uploaded.size === c.units.size) sendToPicker(c, c.dbids.slice());
+    for (const r of rest) if (r && !r.sent && r.uploaded.size === r.units.size) { sendToPicker(r, r.ids); r.ids = null; }
+  }
+  // Puts one chunk on the GPU right away (a 1x1 off-screen render), so its picking index is built in the background
+  // and nothing is uploaded later in the middle of a rotation.
+  const uploadTarget = new THREE.WebGLRenderTarget(1, 1);
+  function preUpload(mesh) {
+    const vis = mesh.visible, fc = mesh.frustumCulled;
+    mesh.visible = true; mesh.frustumCulled = false;
+    renderer.setRenderTarget(uploadTarget);
+    renderer.render(mesh, camera);
+    renderer.setRenderTarget(null);
+    mesh.visible = vis; mesh.frustumCulled = fc;
+    afterRender();
   }
 
   function load() {
@@ -179,7 +279,7 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
     loaded = (async () => {
       const loader = new GLTFLoader();
       loader.setMeshoptDecoder(MeshoptDecoder);
-      const eager = manifest.chunks.filter((c) => c.load !== 'on-demand');
+      const eager = manifest.chunks.filter((c) => c.group !== 'rest' && c.load !== 'on-demand');
       let done = 0, mb = 0;
       const total = eager.reduce((s, c) => s + (c.bytes || 0), 0) / 1e6;
       for (const info of eager) {
@@ -193,34 +293,40 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
           // throttled tab may not deliver).
           frameHull();
           renderer.render(scene, camera);
+          afterRender();
           stats.firstPicture = performance.now() - stats.started;
-        }
+        } else preUpload(chunks[chunks.length - 1].mesh);
         await new Promise((r) => setTimeout(r, 0)); // let the page update between chunks
       }
       stats.loaded = performance.now() - stats.started;
-      buildBvhLater();
       badge.textContent = 'Local 3D viewer · real RCRV model';
+      loadRest(loader); // background: load() resolves now, the full model follows
     })();
     return loaded;
   }
 
-  // Picking index (three-mesh-bvh), built one chunk at a time after loading so the model appears sooner.
-  // Until a chunk has its index, a click on it uses Three.js's normal (slower) raycast.
-  function buildBvh(ch) {
-    if (!ch || ch.geom.boundsTree) return;
-    const posAttr = ch.geom.attributes.position, n = posAttr.count;
-    // gltfpack quantizes positions (integers + node scale). The BVH reads raw arrays, so give it floats.
-    if (!(posAttr.array instanceof Float32Array) || posAttr.normalized) {
-      const f = new Float32Array(n * 3);
-      for (let v = 0; v < n; v++) { f[3 * v] = posAttr.getX(v); f[3 * v + 1] = posAttr.getY(v); f[3 * v + 2] = posAttr.getZ(v); }
-      ch.geom.setAttribute('position', new THREE.BufferAttribute(f, 3));
+  async function loadRest(loader) {
+    if (!restInfos.length) return;
+    const total = restInfos.reduce((s, c) => s + (c.bytes || 0), 0) / 1e6;
+    let mb = 0;
+    for (const [ri, info] of restInfos.entries()) {
+      badge.textContent = `Local 3D viewer · real RCRV model · full model ${mb.toFixed(0)} / ${total.toFixed(0)} MB`;
+      try {
+        await loadRestChunk(ri, loader, info);
+        if (rest[ri]) preUpload(rest[ri].mesh);
+      } catch (e) {
+        stats.restErrors.push(info.file);
+        console.warn(`Full model: ${info.file} not loaded:`, e.message);
+      }
+      mb += (info.bytes || 0) / 1e6;
+      invalidate();
+      await new Promise((r) => setTimeout(r, 0));
     }
-    ch.geom.computeBoundsTree();
-  }
-  function buildBvhLater() {
-    const todo = chunks.filter(Boolean);
-    const next = () => { const ch = todo.shift(); if (!ch) { stats.bvhReady = performance.now() - stats.started; return; } buildBvh(ch); setTimeout(next, 0); };
-    setTimeout(next, 50);
+    stats.restFinished = performance.now() - stats.started;
+    if (!stats.restErrors.length) stats.restLoaded = stats.restFinished;
+    badge.textContent = stats.restErrors.length
+      ? `Full model incomplete: ${stats.restErrors.join(', ')} not loaded; reload to retry`
+      : 'Local 3D viewer · real RCRV model';
   }
 
   // ---------- state per part: colour + visible / ghost / hidden ----------
@@ -234,6 +340,7 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
     const id = dbToId.get(db);
     if (selectedId != null && focusOnly) return id === selectedId ? VISIBLE : HIDDEN;
     if (override) return (id && (override.has(id) || context.has(id))) ? VISIBLE : (ghosting ? GHOST : HIDDEN);
+    if (fullModel && !filterDbs && !focusOnly) return VISIBLE;
     const inBase = id && (filterDbs ? filterDbs.has(db) : results?.elements[id]?.worst);
     if (simple) return (inBase || (id && context.has(id))) ? VISIBLE : HIDDEN;
     return inBase ? VISIBLE : GHOST;
@@ -249,8 +356,15 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
       for (let i = 0; i < v.length; i++) { const o = v[i] * 4; s[o] = r; s[o + 1] = g; s[o + 2] = b; s[o + 3] = st; }
     }
   }
+  // Rest parts are shown in the overview only: not with a findings filter, the rule view or the component view.
+  const restShown = () => fullModel && !filterDbs && !override && !focusOnly;
+  function updateRest() {
+    const on = restShown();
+    for (const r of rest) if (r) r.mesh.visible = on;
+  }
   function flush() {
     ghosting = false;
+    updateRest();
     for (const ch of chunks) if (ch) { ch.geom.attributes.color.needsUpdate = true; }
     // Ghost pass only when some vertex is ghosted.
     for (const ch of chunks) if (ch) { let any = false; const s = ch.state; for (let i = 3; i < s.length; i += 4) if (s[i] === GHOST) { any = true; break; } ch.ghostMesh.visible = any; }
@@ -265,7 +379,9 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
     const c = box.getCenter(new THREE.Vector3()), r = Math.max(box.getBoundingSphere(new THREE.Sphere()).radius, 300) * k;
     const dir = camera.position.clone().sub(controls.target).normalize();
     if (!Number.isFinite(dir.x) || dir.lengthSq() < 0.5) dir.set(-0.6, 0.45, 0.65).normalize();
-    const dist = r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2));
+    const vfov = THREE.MathUtils.degToRad(camera.fov / 2);
+    const hfov = Math.atan(Math.tan(vfov) * camera.aspect);
+    const dist = r / Math.sin(Math.min(vfov, hfov));
     controls.target.copy(c);
     camera.position.copy(c).addScaledVector(dir, dist);
     camera.near = Math.max(dist / 1000, 5);
@@ -278,7 +394,11 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
   const hullDbs = () => [...context].map((id) => idToDb.get(id)).filter((d) => d != null);
   function frameHull() {
     const hull = hullDbs();
-    fitBox(hull.length ? unionOf(hull) : unionOf(partBox.keys()), 0.75);
+    if (fullModel && !filterDbs && !override) {
+      const all = new THREE.Box3();
+      for (const ch of manifest.chunks) if (ch.bounds_mm) all.union(new THREE.Box3(new THREE.Vector3(...ch.bounds_mm.min), new THREE.Vector3(...ch.bounds_mm.max)));
+      fitBox(all, 1.05);
+    } else fitBox(hull.length ? unionOf(hull) : unionOf(partBox.keys()), 1.05);
   }
 
   // ---------- overlays: label and box outline ----------
@@ -304,24 +424,49 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
     invalidate();
   }
 
-  // ---------- picking (three-mesh-bvh) ----------
+  // ---------- picking (pick-worker.js) ----------
   const ray = new THREE.Raycaster();
   let down = null;
+  // Every hit along the ray in the visible chunks, nearest first, in world coordinates.
+  async function hitsAlong(r) {
+    const targets = [...chunks.filter((c) => c?.sent), ...rest.filter((c) => c?.sent && c.mesh.visible)];
+    if (!targets.length) return [];
+    const byKey = new Map(targets.map((c) => [c.key, c]));
+    const rays = targets.map((c) => {
+      c.mesh.updateMatrixWorld();
+      const inv = c.mesh.matrixWorld.clone().invert();
+      const o = r.origin.clone().applyMatrix4(inv), d = r.direction.clone().applyMatrix3(new THREE.Matrix3().setFromMatrix4(inv));
+      return { id: c.key, o: o.toArray(), d: d.toArray() };
+    });
+    const res = await ask({ type: 'ray', rays });
+    return res.hits.map((h) => {
+      const c = byKey.get(h.id);
+      const p = new THREE.Vector3(...h.p).applyMatrix4(c.mesh.matrixWorld);
+      return { ...h, c, rest: h.id[0] === 'r', p, dist: p.distanceTo(r.origin) };
+    }).sort((a, b) => a.dist - b.dist);
+  }
   renderer.domElement.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
-  renderer.domElement.addEventListener('pointerup', (e) => {
+  renderer.domElement.addEventListener('pointerup', async (e) => {
     if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4) return;
     const r = renderer.domElement.getBoundingClientRect();
     ray.setFromCamera(new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1), camera);
-    const meshes = chunks.filter(Boolean).map((c) => c.mesh);
-    for (const hit of ray.intersectObjects(meshes, false)) {
-      const ch = chunks.find((c) => c && c.mesh === hit.object);
-      const v = hit.face.a;
-      if (ch.state[v * 4 + 3] !== VISIBLE) continue;
-      if (hit.point && clip[0] && clip[0].distanceToPoint(hit.point) < 0) continue;
-      const id = dbToId.get(ch.dbids[v]);
+    for (const hit of await hitsAlong(ray.ray.clone())) {
+      if (clip[0] && clip[0].distanceToPoint(hit.p) < 0) continue;
+      if (!hit.rest && hit.c.state[hit.v * 4 + 3] !== VISIBLE) continue;
+      if (hit.rest) { onPickRest?.(hit.db); return; }
+      const id = dbToId.get(hit.db);
       if (id) { onPick?.(id); return; }
     }
   });
+  // Box (world) of a rest part, from the picking worker.
+  async function restBox(db) {
+    const ri = restDb.get(db), r = rest[ri];
+    if (!r?.sent) return null;
+    const m = await ask({ type: 'box', id: r.key, db });
+    if (!m.min) return null;
+    r.mesh.updateMatrixWorld();
+    return new THREE.Box3(new THREE.Vector3(...m.min), new THREE.Vector3(...m.max)).applyMatrix4(r.mesh.matrixWorld);
+  }
 
   // ---------- deck levels from the deck plating (same method as the APS viewer) ----------
   let levels = null;
@@ -378,17 +523,37 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
     // Component view: only the part, framed tightly; outline and label as overlays.
     select(id, { fly = true, label = null, status = null } = {}) {
       selectedId = id;
+      selectedRest = null;
       const db = idToDb.get(id), box = db != null ? partBox.get(db) : null;
+      if (!box && restDb.has(db)) {
+        // Part without a rule, in the full model: outline and label (no isolation: it is part of the grey rest).
+        restBox(db).then((b) => { if (selectedId !== id || !b) return; if (fly) fitBox(b, 0.8); showOutline(b); showLabel(b, label, status); });
+        showOutline(null); showLabel(null);
+        return;
+      }
       if (fly && box) { focusOnly = true; recomputeAll(); fitBox(box, 0.8); }
       showOutline(box);
       showLabel(box, label, status);
     },
     setLabel(id, label, status) { if (id === selectedId) showLabel(partBox.get(idToDb.get(id)), label, status); },
-    clearSelection() { const had = selectedId != null; selectedId = null; focusOnly = false; showOutline(null); showLabel(null); return had; },
+    clearSelection() { const had = selectedId != null || selectedRest != null; selectedId = null; selectedRest = null; focusOnly = false; showOutline(null); showLabel(null); return had; },
+    // A clicked rest part (not checked by any rule): outline and label only.
+    async selectRest(db, { label = null } = {}) {
+      selectedId = null; selectedRest = db;
+      if (focusOnly) { focusOnly = false; recomputeAll(); }
+      const box = await restBox(db);
+      if (selectedRest !== db) return;
+      showOutline(box);
+      showLabel(box, label, 'none');
+    },
+    setFullModel(on) { fullModel = !!on; recomputeAll(); },
+    get fullModel() { return fullModel; },
+    get hasRest() { return restInfos.length > 0; },
     flyToElement(id) { this.select(id); },
     setFilter(set) {
       filterDbs = set ? new Set([...set].map((id) => idToDb.get(id)).filter((d) => d != null)) : null;
       if (!override && selectedId == null) recomputeAll();
+      else { updateRest(); invalidate(); }
     },
     highlight(statusById) {
       override = new Map(Object.entries(statusById));
@@ -413,14 +578,14 @@ export async function createLocalViewer(container, { onPick, base = '' } = {}) {
         camera.updateProjectionMatrix();
         controls.update();
       }
-      mats.opaque.needsUpdate = true; mats.ghost.needsUpdate = true;
+      mats.opaque.needsUpdate = true; mats.ghost.needsUpdate = true; mats.rest.needsUpdate = true;
       invalidate();
       return lv;
     },
     overview() { this.clearSelection(); recomputeAll(); frameHull(); },
     setMode(m) { mode = m; },
     setPlan() {},
-    screenshot() { renderer.render(scene, camera); return Promise.resolve(renderer.domElement.toDataURL('image/png')); },
+    screenshot() { renderer.render(scene, camera); afterRender(); return Promise.resolve(renderer.domElement.toDataURL('image/png')); },
     get mode() { return mode; },
     get plan() { return false; },
   };
