@@ -147,6 +147,56 @@ def test_assessment_finding_and_engineer_review(api_client):
     assert api_client.get("/api/v1/assessments").json()[0]["id"] == assessment["id"]
 
 
+def test_finding_categories_remain_distinct_through_engineer_review(api_client):
+    _, _, revision = create_design(api_client)
+    assessment = api_client.post(
+        "/api/v1/assessments",
+        json={"revision_id": revision["id"]},
+    ).json()
+    finding_ids = {}
+    for finding_type in (
+        "potential_issue",
+        "missing_information",
+        "needs_engineering_review",
+        "evidence_found",
+    ):
+        response = api_client.post(
+            f"/api/v1/assessments/{assessment['id']}/findings",
+            json={
+                "assessment_id": assessment["id"],
+                "requirement_id": str(api_client.requirement_id),
+                "finding_type": finding_type,
+                "description": f"Category check: {finding_type}",
+            },
+        )
+        assert response.status_code == 201, response.text
+        finding_ids[finding_type] = response.json()["id"]
+        assert response.json()["finding_type"] == finding_type
+
+    verified = api_client.patch(
+        f"/api/v1/findings/{finding_ids['potential_issue']}",
+        json={
+            "finding_type": "verified_by_engineer",
+            "status": "accepted",
+            "reviewed_by": "Category test reviewer",
+            "review_notes": "Verified through the review endpoint.",
+        },
+    )
+    assert verified.status_code == 200
+    assert verified.json()["finding_type"] == "verified_by_engineer"
+    assert verified.json()["reviewed_by"] == "Category test reviewer"
+    assert verified.json()["reviewed_at"] is not None
+
+    findings = api_client.get(f"/api/v1/assessments/{assessment['id']}/findings")
+    assert findings.status_code == 200
+    assert {finding["finding_type"] for finding in findings.json()} == {
+        "verified_by_engineer",
+        "missing_information",
+        "needs_engineering_review",
+        "evidence_found",
+    }
+
+
 def test_validation_and_conflict_responses(api_client):
     _, vessel, _ = create_design(api_client)
     duplicate = api_client.post(
@@ -293,6 +343,26 @@ def test_calculation_tools_are_independently_callable(api_client):
     assert geometry.json()["status"] == "calculated"
     assert geometry.json()["result"] == {"distance": 5.0, "unit": "m"}
 
+    clearance = api_client.post(
+        "/api/v1/calculations/geometry",
+        json={
+            "inputs": {
+                "operation": "clearance",
+                "first": {"min": [0, 0, 0], "max": [1, 1, 1], "unit": "m"},
+                "second": {"min": [2, 0, 0], "max": [3, 1, 1], "unit": "m"},
+            }
+        },
+    )
+    assert clearance.status_code == 200
+    assert clearance.json()["result"] == {"distance": 1.0, "unit": "m"}
+
+    volume = api_client.post(
+        "/api/v1/calculations/geometry",
+        json={"inputs": {"operation": "volume", "first": {"dimensions": [2, 3, 4], "unit": "m"}}},
+    )
+    assert volume.status_code == 200
+    assert volume.json()["result"] == {"value": 24.0, "unit": "m^3"}
+
     missing_geometry = api_client.post(
         "/api/v1/calculations/geometry",
         json={"inputs": {"operation": "volume"}},
@@ -300,9 +370,43 @@ def test_calculation_tools_are_independently_callable(api_client):
     assert missing_geometry.status_code == 200
     assert missing_geometry.json()["status"] == "needs_information"
 
+    documents = api_client.post(
+        "/api/v1/calculations/documents",
+        json={
+            "inputs": {
+                "required_documents": ["Fire plan", "Stability booklet"],
+                "available_documents": ["fire plan"],
+            }
+        },
+    )
+    assert documents.status_code == 200
+    assert documents.json()["status"] == "missing_information"
+    assert documents.json()["missing_information"] == ["Stability booklet"]
+
+    documents_complete = api_client.post(
+        "/api/v1/calculations/documents",
+        json={
+            "inputs": {
+                "required_documents": ["Fire plan"],
+                "available_documents": ["fire plan"],
+            }
+        },
+    )
+    assert documents_complete.status_code == 200
+    assert documents_complete.json()["status"] == "evidence_found"
+    assert "adequacy was not evaluated" in documents_complete.json()["explanation"]
+
     fluid = api_client.post("/api/v1/calculations/fluid", json={"inputs": {}})
     assert fluid.status_code == 200
     assert fluid.json()["status"] == "needs_information"
+    assert "not implemented" in fluid.json()["explanation"]
+    assert fluid.json()["result"] == {}
+
+    structural = api_client.post("/api/v1/calculations/structural", json={"inputs": {}})
+    assert structural.status_code == 200
+    assert structural.json()["status"] == "needs_information"
+    assert "not implemented" in structural.json()["explanation"]
+    assert structural.json()["result"] == {}
 
 
 def test_legacy_regulatory_and_design_context_remain_read_only(api_client):
