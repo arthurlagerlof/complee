@@ -28,7 +28,8 @@ New-Item -ItemType Directory -Force $Tmp | Out-Null
 try {
   git -C $Sc archive --format=tar.gz -o (Join-Path $Tmp 'app.tgz') HEAD:shipcheck
   if ($LASTEXITCODE -ne 0) { throw 'git archive failed' }
-  tar -cf (Join-Path $Tmp 'model.tar') -C $Sc model
+  # diagnostic audit reports (hundreds of MB) are not served: left out of the upload
+  tar -cf (Join-Path $Tmp 'model.tar') --exclude=model/source-coverage.json --exclude=model/tile-integrity.json -C $Sc model
   if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
   Set-Content -Encoding ascii -Path (Join-Path $Tmp 'server.env') -Value @("DOMAIN=$($cfg['DOMAIN'])", "ALLOWED_ORIGINS=$($cfg['ALLOWED_ORIGINS'])")
   $appMB = [math]::Round((Get-Item (Join-Path $Tmp 'app.tgz')).Length / 1MB, 1)
