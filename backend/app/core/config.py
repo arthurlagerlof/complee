@@ -18,16 +18,12 @@ class Settings(BaseSettings):
     debug: bool = False
     database_url: str | None = None
     frontend_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
-    regulatory_schema: str = "public"
-    regulatory_table: str = "provisions"
-    regulatory_id_column: str = "id"
-    regulatory_text_column: str = "body"
-    regulatory_embedding_column: str = "embedding"
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_model_revision: str = "5617a9f61b028005a4858fdac845db406aefb181"
+    embedding_device: str = "cpu"
+    embedding_cache_folder: str | None = None
     regulatory_vector_dimension: int = 1024
     pgvector_schema: str = "extensions"
-    embedding_api_url: str | None = None
-    embedding_api_key: str | None = None
-    embedding_model: str = "BAAI/bge-m3"
     db_pool_size: int = Field(default=5, ge=1, le=50)
     db_max_overflow: int = Field(default=10, ge=0, le=100)
 

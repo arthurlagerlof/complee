@@ -10,10 +10,15 @@ from app.schemas.design import (
     DesignComponentCreate,
     DesignComponentOut,
     DesignComponentUpdate,
+    DesignFactCreate,
+    DesignFactOut,
+    DesignFactUpdate,
+    DesignRevisionDetail,
     DesignRevisionCreate,
     DesignRevisionOut,
     ProjectCreate,
     ProjectOut,
+    RetrievalContextOut,
     VesselCreate,
     VesselOut,
 )
@@ -42,6 +47,16 @@ def create_vessel(payload: VesselCreate, db: Session = Depends(get_db)):
     return service.create_vessel(db, payload)
 
 
+@router.get("/vessels", response_model=list[VesselOut])
+def list_vessels(
+    project_id: uuid.UUID | None = None,
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    return service.list_vessels(db, project_id, limit, offset)
+
+
 @router.get("/vessels/{vessel_id}", response_model=VesselOut)
 def get_vessel(vessel_id: uuid.UUID, db: Session = Depends(get_db)):
     return service.get_vessel(db, vessel_id)
@@ -65,6 +80,19 @@ def list_design_revisions(
 @router.get("/design-revisions/{revision_id}", response_model=DesignRevisionOut)
 def get_design_revision(revision_id: uuid.UUID, db: Session = Depends(get_db)):
     return service.get_revision(db, revision_id)
+
+
+@router.get("/design-revisions/{revision_id}/understand", response_model=DesignRevisionDetail)
+def understand_design_revision(revision_id: uuid.UUID, db: Session = Depends(get_db)):
+    return service.get_revision_detail(db, revision_id)
+
+
+@router.get("/design-revisions/{revision_id}/retrieval-context", response_model=RetrievalContextOut)
+def get_retrieval_context(revision_id: uuid.UUID, db: Session = Depends(get_db)):
+    return {
+        "revision_id": revision_id,
+        "description": service.build_retrieval_context(db, revision_id),
+    }
 
 
 @router.post("/components", response_model=DesignComponentOut, status_code=status.HTTP_201_CREATED)
@@ -113,3 +141,30 @@ def list_relationships(
     db: Session = Depends(get_db),
 ):
     return service.list_relationships(db, revision_id, limit, offset)
+
+
+@router.post("/design-facts", response_model=DesignFactOut, status_code=status.HTTP_201_CREATED)
+def create_design_fact(payload: DesignFactCreate, db: Session = Depends(get_db)):
+    return service.create_fact(db, payload)
+
+
+@router.get("/design-revisions/{revision_id}/facts", response_model=list[DesignFactOut])
+def list_design_facts(
+    revision_id: uuid.UUID,
+    limit: int = Query(default=100, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    return service.list_facts(db, revision_id, limit, offset)
+
+
+@router.get("/design-facts/{fact_id}", response_model=DesignFactOut)
+def get_design_fact(fact_id: uuid.UUID, db: Session = Depends(get_db)):
+    return service.get_fact(db, fact_id)
+
+
+@router.patch("/design-facts/{fact_id}", response_model=DesignFactOut)
+def update_design_fact(
+    fact_id: uuid.UUID, payload: DesignFactUpdate, db: Session = Depends(get_db)
+):
+    return service.update_fact(db, fact_id, payload)

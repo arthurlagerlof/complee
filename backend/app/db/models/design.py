@@ -2,7 +2,19 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, JSON, String, UniqueConstraint, Uuid, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
+    JSON,
+    String,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -63,6 +75,7 @@ class DesignRevision(Base):
     relationships: Mapped[list["ComponentRelationship"]] = relationship(
         back_populates="revision", cascade="all, delete-orphan"
     )
+    facts: Mapped[list["DesignFact"]] = relationship(back_populates="revision", cascade="all, delete-orphan")
     assessments: Mapped[list["Assessment"]] = relationship(
         back_populates="revision", cascade="all, delete-orphan"
     )
@@ -70,6 +83,7 @@ class DesignRevision(Base):
 
 class DesignComponent(Base):
     __tablename__ = "sc_design_components"
+    __table_args__ = (UniqueConstraint("revision_id", "id", name="uq_sc_component_revision_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     revision_id: Mapped[uuid.UUID] = mapped_column(
@@ -96,18 +110,59 @@ class ComponentRelationship(Base):
             "revision_id", "source_component_id", "target_component_id", "relationship_type",
             name="uq_sc_component_relationship",
         ),
+        ForeignKeyConstraint(
+            ["revision_id", "source_component_id"],
+            ["sc_design_components.revision_id", "sc_design_components.id"],
+            name="fk_sc_relationship_source_same_revision",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["revision_id", "target_component_id"],
+            ["sc_design_components.revision_id", "sc_design_components.id"],
+            name="fk_sc_relationship_target_same_revision",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "source_component_id <> target_component_id",
+            name="relationship_components_differ",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
     revision_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("sc_design_revisions.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    source_component_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("sc_design_components.id", ondelete="CASCADE"), nullable=False
-    )
-    target_component_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("sc_design_components.id", ondelete="CASCADE"), nullable=False
-    )
+    source_component_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    target_component_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     relationship_type: Mapped[str] = mapped_column(String(100), nullable=False)
     properties: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)
     revision: Mapped[DesignRevision] = relationship(back_populates="relationships")
+
+
+class DesignFact(Base):
+    __tablename__ = "sc_design_facts"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["revision_id", "component_id"],
+            ["sc_design_components.revision_id", "sc_design_components.id"],
+            name="fk_sc_design_fact_component_same_revision",
+            ondelete="CASCADE",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    revision_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("sc_design_revisions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    component_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True, index=True)
+    fact_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    statement: Mapped[str] = mapped_column(String, nullable=False)
+    value: Mapped[Any | None] = mapped_column(JSON_DOCUMENT, nullable=True)
+    source_reference: Mapped[dict[str, Any]] = mapped_column(JSON_DOCUMENT, nullable=False, default=dict)
+    confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    review_status: Mapped[str] = mapped_column(String(40), nullable=False, default="unreviewed")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    revision: Mapped[DesignRevision] = relationship(back_populates="facts", foreign_keys=[revision_id])

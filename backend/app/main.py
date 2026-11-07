@@ -2,9 +2,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 
-from app.api.routes import assessments, design, regulations
+from app.api.routes import assessments, calculations, design, regulations
 from app.core.config import settings
 from app.db.database import engine
 from app.services.common import ConflictError, EntityNotFound, InvalidReference
@@ -31,6 +32,7 @@ app.add_middleware(
 app.include_router(design.router, prefix="/api/v1")
 app.include_router(assessments.router, prefix="/api/v1")
 app.include_router(regulations.router, prefix="/api/v1")
+app.include_router(calculations.router, prefix="/api/v1")
 
 
 def _error(code: str, message: str, status_code: int) -> JSONResponse:
@@ -59,7 +61,9 @@ async def conflict_handler(_request: Request, exc: ConflictError):
 async def validation_error_handler(_request: Request, exc: RequestValidationError):
     return JSONResponse(
         status_code=422,
-        content={"error": {"code": "validation_error", "message": "Request validation failed.", "details": exc.errors()}},
+        content=jsonable_encoder(
+            {"error": {"code": "validation_error", "message": "Request validation failed.", "details": exc.errors()}}
+        ),
     )
 
 

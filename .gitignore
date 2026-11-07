@@ -6,3 +6,5 @@ dist/
 !.env.example
 integrations/sinceai/data/*.jsonl
 npm-debug.log*
+
+*.pyc
