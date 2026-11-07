@@ -62,7 +62,12 @@ export async function createApsViewer(container, { onPick } = {}) {
   badge.textContent = 'Starting the Autodesk APS viewer…';
   const viewer = new AV.GuiViewer3D(host);
   viewer.start();
-  viewer.setGhosting(true);
+  // Light rendering for a 330,000-object model on a laptop GPU: no ghosting (it draws the whole ship
+  // semi-transparent every frame), no ambient occlusion or antialiasing, simplified navigation rendering.
+  viewer.setGhosting(false);
+  viewer.setQualityLevel?.(false, false);
+  viewer.setOptimizeNavigation?.(true);
+  viewer.setProgressiveRendering?.(true);
   // Plain background: no environment map (its bright sky distracts from the colours).
   viewer.setEnvMapBackground?.(false);
   viewer.setGroundShadow?.(false);
@@ -72,7 +77,7 @@ export async function createApsViewer(container, { onPick } = {}) {
 
   let loaded = null;
   let idToDb = new Map(), dbToId = new Map(), results = null, checked = [], context = new Set();
-  let mode = 'all', simple = false, override = null, cut = null, selectedId = null, labelAnchor = null;
+  let mode = 'all', simple = true, override = null, cut = null, selectedId = null, labelAnchor = null;
 
   // The viewer keeps a local model cache (OPFS "otg_cache"). In testing, every load that read from it stalled
   // (the viewer's cache writer fails with "truncate ... outside the range"), while a fresh download takes about
@@ -85,17 +90,31 @@ export async function createApsViewer(container, { onPick } = {}) {
   }
   const setFlag = (on) => { try { on ? localStorage.setItem(FLAG, '1') : localStorage.removeItem(FLAG); } catch { /* ignore */ } };
 
+  // Ready only when ALL geometry has arrived. Starting earlier (while ~300,000 fragments still stream in) made
+  // the demo stutter and crash the browser. The badge shows the progress meanwhile. (Selective loading with the
+  // `ids` option was tried: the loader accepts it, but this SVF2 model still streams nearly every fragment.)
+  let onGeometryDone = null;
   function load() {
     if (loaded) return loaded;
     badge.textContent = 'Loading the RCRV model from Autodesk APS…';
-    loaded = clearStaleCache().then(() => { setFlag(true); return withTimeout(new Promise((res, rej) => {
-      AV.Document.load(`urn:${status.urn}`, (doc) => {
-        const node = doc.getRoot().getDefaultGeometry();
-        viewer.addEventListener(AV.GEOMETRY_LOADED_EVENT, () => res(), { once: true });
-        viewer.loadDocumentNode(doc, node).catch(rej);
-      }, (code, msg) => rej(new Error(`APS model load failed (${code}): ${msg}`)));
-    }), LOAD_TIMEOUT_MS, 'Loading the APS model'); }).then(async () => {
+    const progress = (e) => {
+      const pct = Math.round(e.percent ?? 0);
+      if (pct > 0 && pct < 100) badge.textContent = `Loading the RCRV model from Autodesk APS… ${pct} %`;
+    };
+    viewer.addEventListener(AV.PROGRESS_UPDATE_EVENT, progress);
+    loaded = clearStaleCache().then(() => {
+      setFlag(true);
+      return withTimeout(new Promise((res, rej) => {
+        AV.Document.load(`urn:${status.urn}`, (doc) => {
+          const node = doc.getRoot().getDefaultGeometry();
+          viewer.addEventListener(AV.GEOMETRY_LOADED_EVENT, () => res(), { once: true });
+          viewer.loadDocumentNode(doc, node).catch(rej);
+        }, (code, msg) => rej(new Error(`APS model load failed (${code}): ${msg}`)));
+      }), LOAD_TIMEOUT_MS, 'Loading the APS model');
+    }).then(async () => {
+      viewer.removeEventListener(AV.PROGRESS_UPDATE_EVENT, progress);
       setFlag(false);
+      onGeometryDone?.();
       badge.textContent = 'Autodesk APS viewer · real RCRV model';
       await viewer.loadExtension('Autodesk.Section').catch(() => null); // section tool in the toolbar; our deck cut uses its cut planes
     });
@@ -124,13 +143,12 @@ export async function createApsViewer(container, { onPick } = {}) {
     return box.isEmpty() ? null : box;
   }
 
-  // fitToView frames a small part so tightly that the camera ends up inside the hull. Frame the part's
-  // bounds enlarged (at least ~5 m across) so the surrounding structure gives context.
+  // Component view: only the part is shown, so it can be framed tightly and fills most of the view.
   function focus(db) {
     const box = boxOf(db);
     if (!box) return viewer.fitToView([db]);
     const c = box.getCenter(new (T().Vector3)()), s = box.getSize(new (T().Vector3)());
-    const half = Math.max(s.x, s.y, s.z) * 1.5 + 60; // model unit: inch (about 1.5 m of context around the part)
+    const half = Math.max(Math.max(s.x, s.y, s.z) * 0.75, 12); // model unit: inch; at least 2 ft across
     viewer.navigation.fitBounds(false, new (T().Box3)(c.clone().subScalar(half), c.clone().addScalar(half)));
   }
 
@@ -175,7 +193,7 @@ export async function createApsViewer(container, { onPick } = {}) {
   const vec = (st) => { const c = COLORS[st]; return c ? new (T().Vector4)(c[0], c[1], c[2], 1) : null; };
 
   function colourOf(id) {
-    if (override) return override.get(id) ?? null;
+    if (override) return override.get(id) ?? (context.has(id) ? 'context' : null);
     const st = results?.elements[id]?.worst;
     if (simple && context.has(id) && (st === 'compliant' || !st)) return 'context';
     return st ?? null;
@@ -190,18 +208,32 @@ export async function createApsViewer(container, { onPick } = {}) {
     }
   }
   function repaint() { viewer.clearThemingColors(viewer.model); paint(); }
+  // Isolation and colours are set by dbId; geometry that streams in later gets them re-applied in one pass.
+  let lastIsolate = null, filterDbs = null;
+  function isolate(dbs) { lastIsolate = dbs; viewer.isolate(dbs); }
+  onGeometryDone = () => {
+    levels = null;
+    if (!results) return;
+    repaint();
+    if (lastIsolate) viewer.isolate(lastIsolate);
+    viewer.impl.invalidate(true, true, true);
+  };
+  const hullDbs = () => [...context].map((id) => idToDb.get(id)).filter((d) => d != null);
   function visibleDbs() {
-    if (override) return [...override.keys()].map((id) => idToDb.get(id)).filter((d) => d != null);
-    if (simple) return [...new Set([...checked, ...[...context].map((id) => idToDb.get(id))])];
-    return checked;
+    // Rule view: the rule's parts on the light-grey hull, so their positions on the ship are readable.
+    if (override) return [...new Set([...[...override.keys()].map((id) => idToDb.get(id)).filter((d) => d != null), ...hullDbs()])];
+    const base = filterDbs?.length ? filterDbs : checked;
+    if (simple) return [...new Set([...base, ...hullDbs()])];
+    return base;
   }
-  // Normal view: checked parts, the rest of the ship ghosted. Simple view: context + checked parts, the rest hidden.
+  // Simple view (default): hull + checked parts, everything else hidden. Full model: checked parts with the
+  // rest of the ship ghosted (heavier to draw). Rule view: always the light version.
   function applyVisibility(fit = false) {
-    viewer.setGhosting(!simple || !!override);
+    viewer.setGhosting(!simple && !override);
     const dbs = visibleDbs();
-    viewer.isolate(dbs);
-    // Frame the hull (context) rather than every part: a few outfitting items far from the ship would zoom out too far.
-    const hull = override ? dbs : [...context].map((id) => idToDb.get(id)).filter((d) => d != null);
+    isolate(dbs);
+    // Frame the hull rather than every part: a few outfitting items far from the ship would zoom out too far.
+    const hull = hullDbs();
     if (fit) viewer.fitToView(hull.length ? hull : dbs);
   }
 
@@ -258,6 +290,8 @@ export async function createApsViewer(container, { onPick } = {}) {
       checked = [...idToDb].filter(([id]) => r.elements[id]?.worst).map(([, db]) => db);
       levels = null;
       override = null;
+      filterDbs = null;
+      selectedId = null;
       repaint();
       applyVisibility(true);
     },
@@ -273,22 +307,21 @@ export async function createApsViewer(container, { onPick } = {}) {
       if (db == null) { clearOutline(); showLabel(null); return; }
       const box = boxOf(db);
       if (fly) {
-        viewer.setGhosting(true);
-        viewer.isolate([db]);
+        viewer.setGhosting(false);
+        isolate([db]);
         focus(db);
       }
       drawOutline(box);
       showLabel(box, label, status);
     },
     setLabel(id, label, status) { if (id === selectedId) showLabel(boxOf(idToDb.get(id)), label, status); },
-    clearSelection() { selectedId = null; clearOutline(); showLabel(null); },
+    clearSelection() { const had = selectedId != null; selectedId = null; clearOutline(); showLabel(null); return had; },
     flyToElement(id) { this.select(id); },
+    // Findings-list filter: remembered, and applied only while no part is open in the component view
+    // (otherwise every list refresh, e.g. after a what-if edit, would replace the isolated part).
     setFilter(set) {
-      if (override) return;
-      if (!set) { applyVisibility(); return; }
-      const dbs = [...set].map((id) => idToDb.get(id)).filter((d) => d != null);
-      viewer.setGhosting(true);
-      viewer.isolate(dbs.length ? dbs : checked);
+      filterDbs = set ? [...set].map((id) => idToDb.get(id)).filter((d) => d != null) : null;
+      if (!override && selectedId == null) applyVisibility();
     },
     // Rule view: only the parts a rule applies to, coloured by that rule's result.
     highlight(statusById) {

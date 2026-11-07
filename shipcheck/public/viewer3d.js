@@ -305,6 +305,7 @@ export function createViewer(container, { onPick } = {}) {
   }
 
   renderer.setAnimationLoop((now) => {
+    if (!container.offsetParent) return; // hidden (the real model is shown): do not draw frames
     if (flight) flight(now);
     controls.update();
     if (selectedId && meshes[selectedId]) selBox.box.setFromObject(meshes[selectedId]).expandByScalar(0.08);
