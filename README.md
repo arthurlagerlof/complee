@@ -87,12 +87,6 @@ VERIFY.md                  unverified values, interpretations, mentor questions
 | Means of escape, accessibility, Load Line, IGF, MARPOL, class | 15 layout rules (SOLAS/FSS, ADA/PVAG, ICLL, IGF Code, MARPOL, DNV) | cruise deck, layout fixture in tests |
 | Draft | minimum plate thickness per structural group: listed, never run (no official value yet) | - |
 
-## Document-review evidence provider
-
-The evidence intake page can search the SinceAI SOLAS Chapter II-2 extracted provision corpus through a removable adapter. The integration lives in `integrations/sinceai/` and is accessed only through `src/evidence-provider.mjs`; the deterministic model checker does not depend on it. The current adapter performs local, deterministic lexical matching and returns provision text with source file, hash, page, edition and applicability metadata. It does not generate vectors, use an LLM, decide rule applicability, or produce compliance verdicts.
-
-Set `EVIDENCE_PROVIDER=none` to turn off the source adapter. A future retrieval implementation can replace the adapter by implementing `search(query, filters) -> { provider, results }` without changing the checker. The copied JSONL corpus is ignored by Git; it is staged locally from the SinceAI workspace and should be treated as reference material until its edition, extraction quality, and applicability are verified.
-
 ## How to add a rule
 
 1. Add an entry to `rules.json` (`id`, `source`, `clause`, `text`, `text_status`, `check`, parameters, `applies_to`, `verified: false`).
