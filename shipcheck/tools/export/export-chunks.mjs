@@ -89,7 +89,19 @@ export async function ensureSvf() {
   // Full-model re-exports use the retained local cache without contacting Autodesk or reading any keys.
   const cached = find(dir);
   if (cached) return cached;
-  throw new Error('No cached SVF in tools/export/work/svf. Restore the one-time export cache before rebuilding; this script does not request credentials or download a replacement.');
+  if (!process.argv.includes('--download-svf')) throw new Error('No cached SVF in tools/export/work/svf. Restore the retained cache, or explicitly use --download-svf for a one-time authenticated download.');
+  // Preserve the original one-time download path, but never request credentials during normal cached rebuilds.
+  const { readKeys, token, manifest: getManifest, svfDerivative, SVF_URN_FILE } = await import('./request-svf.mjs');
+  if (!fs.existsSync(SVF_URN_FILE)) throw new Error('No SVF copy yet: run node request-svf.mjs first');
+  const urn = fs.readFileSync(SVF_URN_FILE, 'utf8').trim();
+  const tok = await token('data:read viewables:read');
+  if (svfDerivative(await getManifest(tok, urn))?.status !== 'success') throw new Error('No finished SVF derivative yet');
+  const { SVFDownloader, TwoLeggedAuthenticationProvider } = require('svf-utils');
+  const { APS_CLIENT_ID, APS_CLIENT_SECRET } = readKeys();
+  await new SVFDownloader(new TwoLeggedAuthenticationProvider(APS_CLIENT_ID, APS_CLIENT_SECRET)).download(urn, { outputDir: dir, log: () => {}, region: 'US' });
+  const downloaded = find(dir);
+  if (!downloaded) throw new Error('SVF download produced no output.svf');
+  return downloaded;
 }
 
 // Parts, checker results, and leaf node -> checked part (geometry often sits on child nodes).
