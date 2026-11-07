@@ -23,7 +23,7 @@ Read this before modifying anything. There is substantial UNCOMMITTED work that 
 ## Workspace and non-negotiable constraints
 
 - Workspace: `C:\Users\Philipp\Downloads\planb_code`; Windows 11 ARM, PowerShell, Node 20.18. Use `npm.cmd` if PowerShell's npm wrapper misbehaves.
-- Git branch: `dev`; remote: `complee` (`https://github.com/arthurlagerlof/complee.git`). Never push main or force-push. Fetch/merge remote dev before pushing. Stop and show conflicts in teammates' code before resolving them.
+- Git branch: `main` ONLY (Philipp's instruction, 7 Nov evening: commit and push to main, not dev); remote: `complee` (`https://github.com/arthurlagerlof/complee.git`). Never force-push. Fetch/merge remote main before pushing. Stop and show conflicts in teammates' code before resolving them.
 - Never print/log/commit actual `.env`, `deploy.env`, credentials, server addresses or SSH secrets. Do not delete existing files or `shipcheck/tools/export/work/svf`.
 - Preserve UI design and teammates' work. Rules/checker/thresholds must remain deterministic and unchanged; no LLM pass/fail, no invented rule values, no verified=true changes.
 - No Python/Navisworks/Blender requirement. No cloud deployment, new account/service, AI orchestrator or FreeCAD work. A teammate's AI updates were merged intact; do not remove or develop that work as part of this task.
