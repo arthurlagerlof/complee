@@ -55,6 +55,80 @@ Use **Add evidence** in the top bar to attach files to the selected scenario. Th
 short-lived read-only token (`/api/aps/token`, scope `viewables:read`, localhost only). The model URN is in `3D_Since_AI/urn.txt`.
 Without keys or internet, the app shows saved screenshots (`public/fallback/`) next to the locally computed findings. `?noaps` forces that fallback.
 
+### Local 3D viewer (default) and the APS fallback
+
+The real RCRV model is shown by ShipCheck's own Three.js viewer from glTF chunks on our server (`model/`), with the same
+colours, component card, rule view, labels, deck cut and what-if as before. `?viewer=aps` switches to the Autodesk viewer,
+`?noaps` to the saved screenshots. If `model/manifest.json` is missing the app falls back to APS automatically.
+
+The chunks are exported once from the Autodesk model (needs the APS keys; the files are gitignored, about 10-100 MB):
+
+```bash
+cd tools/export && npm install
+```
+```bash
+node request-svf.mjs
+```
+```bash
+node --max-old-space-size=12288 export-chunks.mjs
+```
+
+`request-svf.mjs` copies the source file inside our APS bucket and translates the copy to SVF (svf-utils 8 reads SVF only;
+the original model keeps its SVF2 for the APS viewer). `export-chunks.mjs` merges each chunk (context, openings, structure with
+findings, piping, stairs/ladders, other structure, rest) into one mesh with the part's dbId on every vertex, compresses it with
+gltfpack (meshopt) and writes `model/manifest.json`.
+
+## Deploy to Vultr
+
+One small Linux server runs everything: the app (UI, `/api`, model chunks) in Docker behind Caddy (HTTPS, gzip/zstd).
+No Autodesk keys are needed on the server.
+
+**Server:** Ubuntu 24.04, 1 vCPU, 2 GB RAM, 25 GB+ disk is enough (the app needs about 0.5 GB RAM; the model chunks
+are tens of MB). **Firewall:** allow TCP 22 (SSH), 80 (HTTP) and 443 (HTTPS, plus UDP 443 for HTTP/3); nothing else.
+
+1. On the server, once (as root):
+   ```bash
+   curl -fsSL https://get.docker.com | sh
+   ```
+   ```bash
+   ufw allow 22/tcp && ufw allow 80/tcp && ufw allow 443 && ufw --force enable
+   ```
+2. Optional: point a domain's DNS A record at the server; Caddy then gets an HTTPS certificate automatically.
+3. On your laptop: copy `deploy/deploy.env.example` to `deploy/deploy.env` (gitignored) and fill in `SERVER_HOST`,
+   `SERVER_USER`, optionally `DOMAIN` and `ALLOWED_ORIGINS` (sites allowed to call the API from a browser).
+4. Commit your changes (the scripts upload the last commit of `shipcheck/` plus `model/`), then deploy:
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File deploydeploy.ps1
+   ```
+   or on Linux/macOS:
+   ```bash
+   bash deploy/deploy.sh
+   ```
+
+**Check it works** (replace the host):
+
+```bash
+curl -s https://shipcheck.example.com/api/health
+```
+should print `{"status":"ok","version":"…","model_manifest":true,"chunks":7,"parts_loaded":true,…}`.
+
+```bash
+curl -sI https://shipcheck.example.com/model/context.glb
+```
+should show `content-type: model/gltf-binary`, `cache-control: public, max-age=31536000, immutable` and `accept-ranges: bytes`.
+
+CORS: an allowed origin gets `access-control-allow-origin`, any other origin does not, and its preflight gets 403:
+
+```bash
+curl -si -X OPTIONS -H "Origin: https://allowed.example" -H "Access-Control-Request-Method: GET" https://shipcheck.example.com/api/health
+```
+```bash
+curl -si -X OPTIONS -H "Origin: https://not-allowed.example" -H "Access-Control-Request-Method: GET" https://shipcheck.example.com/api/health
+```
+
+Logs and restart on the server: `cd /opt/shipcheck && docker compose -f deploy/docker-compose.yml logs -f` /
+`… up -d --build`. The app also runs without Docker: `npm ci --omit=dev && MODEL_DIR=/path/to/model node server.mjs`.
+
 ## Project structure
 
 ```

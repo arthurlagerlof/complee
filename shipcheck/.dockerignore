@@ -1,0 +1,10 @@
+node_modules
+model
+3D_Since_AI
+tools
+reports
+results.json
+*.log
+deploy/deploy.env
+.env
+**/.env

@@ -1,0 +1,33 @@
+# ShipCheck on one Linux server: the Node app behind Caddy (HTTPS, compression).
+# On the server (in REMOTE_DIR):  docker compose -f deploy/docker-compose.yml up -d --build
+# Settings come from deploy/server.env (written by deploy.sh / deploy.ps1): DOMAIN, ALLOWED_ORIGINS.
+services:
+  app:
+    build: ..
+    restart: unless-stopped
+    environment:
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      EVIDENCE_PROVIDER: ${EVIDENCE_PROVIDER:-sinceai}
+    volumes:
+      - ../model:/app/model:ro
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
