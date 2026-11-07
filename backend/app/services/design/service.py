@@ -26,7 +26,7 @@ from app.schemas.design import (
 from app.services.common import ConflictError, EntityNotFound, InvalidReference, commit_changes, save_and_refresh
 
 
-def _ensure_revision_editable(session: Session, revision_id: uuid.UUID) -> None:
+def ensure_revision_editable(session: Session, revision_id: uuid.UUID) -> None:
     has_completed_assessment = session.scalar(
         select(Assessment.id)
         .where(
@@ -94,7 +94,7 @@ def get_revision(session: Session, revision_id: uuid.UUID) -> DesignRevision:
 def create_component(session: Session, payload: DesignComponentCreate) -> DesignComponent:
     if session.get(DesignRevision, payload.revision_id) is None:
         raise EntityNotFound("Design revision not found.")
-    _ensure_revision_editable(session, payload.revision_id)
+    ensure_revision_editable(session, payload.revision_id)
     return save_and_refresh(session, DesignComponent(**payload.model_dump()))
 
 
@@ -122,7 +122,7 @@ def update_component(
     session: Session, component_id: uuid.UUID, payload: DesignComponentUpdate
 ) -> DesignComponent:
     component = get_component(session, component_id)
-    _ensure_revision_editable(session, component.revision_id)
+    ensure_revision_editable(session, component.revision_id)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(component, field, value)
     commit_changes(session)
@@ -132,7 +132,7 @@ def update_component(
 
 def delete_component(session: Session, component_id: uuid.UUID) -> None:
     component = get_component(session, component_id)
-    _ensure_revision_editable(session, component.revision_id)
+    ensure_revision_editable(session, component.revision_id)
     session.delete(component)
     commit_changes(session)
 
@@ -142,7 +142,7 @@ def create_relationship(
 ) -> ComponentRelationship:
     if session.get(DesignRevision, payload.revision_id) is None:
         raise EntityNotFound("Design revision not found.")
-    _ensure_revision_editable(session, payload.revision_id)
+    ensure_revision_editable(session, payload.revision_id)
     components = session.scalars(
         select(DesignComponent).where(
             DesignComponent.id.in_([payload.source_component_id, payload.target_component_id])
@@ -171,7 +171,7 @@ def list_relationships(
 def create_fact(session: Session, payload: DesignFactCreate) -> DesignFact:
     if session.get(DesignRevision, payload.revision_id) is None:
         raise EntityNotFound("Design revision not found.")
-    _ensure_revision_editable(session, payload.revision_id)
+    ensure_revision_editable(session, payload.revision_id)
     if payload.component_id is not None:
         component = session.get(DesignComponent, payload.component_id)
         if component is None or component.revision_id != payload.revision_id:
@@ -201,7 +201,7 @@ def get_fact(session: Session, fact_id: uuid.UUID) -> DesignFact:
 
 def update_fact(session: Session, fact_id: uuid.UUID, payload: DesignFactUpdate) -> DesignFact:
     fact = get_fact(session, fact_id)
-    _ensure_revision_editable(session, fact.revision_id)
+    ensure_revision_editable(session, fact.revision_id)
     updates = payload.model_dump(exclude_unset=True)
     if updates.get("component_id") is not None:
         component = session.get(DesignComponent, updates["component_id"])

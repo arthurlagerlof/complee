@@ -21,6 +21,7 @@ The local dev site opens on the evidence intake workflow. It accepts document, d
 | --- | --- |
 | `/landing` | This Complee landing page (`/` redirects here). |
 | `/inspection/` | ShipCheck from `shipcheck/`: evidence intake, then the checker with the real RCRV 3D model at `/inspection/index.html`. |
+| `/#ai-settings` | Backend-backed AI provider configuration, model routing, provider testing and text extraction review. Requires the FastAPI setup described in `backend/README.md`. |
 
 ShipCheck needs its own dependencies. The default local viewer uses files in `shipcheck/model/`; APS keys are only needed for the optional `?viewer=aps` fallback:
 

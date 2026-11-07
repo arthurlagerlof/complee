@@ -21,6 +21,11 @@ def test_application_and_legacy_models_use_separate_metadata():
         "sc_assessments",
         "sc_findings",
         "sc_finding_components",
+        "sc_ai_providers",
+        "sc_ai_model_configs",
+        "sc_ai_task_configurations",
+        "sc_ai_extractions",
+        "sc_ai_executions",
     }
     assert legacy_tables == {
         "public.instruments",
