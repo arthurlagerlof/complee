@@ -9,6 +9,7 @@ import { runCheck, loadRules, loadScenarios } from './src/load.mjs';
 import { parseAllowedOrigins, corsHeaders } from './src/cors.mjs';
 import { createEvidenceProvider } from './src/evidence-provider.mjs';
 import { reviewDocumentEvidence } from './src/document-review.mjs';
+import { s3ConfigFrom, createS3ModelSource } from './src/model-source-s3.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8080);
@@ -28,7 +29,14 @@ export function streamManifest(modelDir = MODEL_DIR) {
   return 'stream/manifest.json';
 }
 
+// MODEL_SOURCE=vultr: the viewer's /model/ files come from the Vultr Object Storage bucket (VULTR_S3_* in the
+// environment or in shipcheck/.env) instead of the local folder; see src/model-source-s3.mjs. The .env file is a
+// developer convenience and is not read under the test runner (NODE_TEST_CONTEXT), so tests stay offline.
+const s3Config = s3ConfigFrom(process.env, process.env.NODE_TEST_CONTEXT ? null : path.join(ROOT, '.env'));
+const s3Model = s3Config ? createS3ModelSource(s3Config, { cacheDir: path.resolve(ROOT, process.env.MODEL_CACHE_DIR || '.cache/model-s3') }) : null;
+
 function health() {
+  if (s3Model) return { status: 'ok', version: VERSION, model_source: 'vultr', viewer: 'local', model_requests: s3Model.stats };
   let chunks = 0, restChunks = 0, manifest = false, parts = false;
   try {
     const m = JSON.parse(fs.readFileSync(path.join(MODEL_DIR, 'manifest.json'), 'utf8'));
@@ -147,7 +155,9 @@ function serveStatic(p, res, req) {
 
 const routes = {
   'GET /api/health': () => health(),
-  'GET /api/model/config': () => ({ base_url: process.env.MODEL_BASE_URL || 'model/', manifest: streamManifest(), legacy_manifest: 'manifest.json' }),
+  'GET /api/model/config': async () => (s3Model
+    ? { base_url: process.env.MODEL_BASE_URL || 'model/', manifest: await s3Model.streamManifest(), legacy_manifest: 'manifest.json', source: 'vultr' }
+    : { base_url: process.env.MODEL_BASE_URL || 'model/', manifest: streamManifest(), legacy_manifest: 'manifest.json' }),
   'GET /api/scenarios': () => loadScenarios(),
   'GET /api/rules': () => ({ rules: loadRules() }),
   'GET /api/check': (q) => runCheck(q.get('scenario') || 'rcrv-3d'),
@@ -207,6 +217,7 @@ export async function handleRequest(req, res) {
     }
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') return sendJSON(res, 405, { error: 'Method not allowed' });
+  if (s3Model && p.startsWith('/model/')) return s3Model.serve(p.slice('/model/'.length), req, res);
   serveStatic(p === '/' ? '/evidence.html' : p, res, req);
 }
 

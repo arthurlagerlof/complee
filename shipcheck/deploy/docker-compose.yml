@@ -1,6 +1,7 @@
 # ShipCheck on one Linux server: the Node app behind Caddy (HTTPS, compression).
 # On the server (in REMOTE_DIR):  docker compose -f deploy/docker-compose.yml up -d --build
-# Settings come from deploy/server.env (written by deploy.sh / deploy.ps1): DOMAIN, ALLOWED_ORIGINS.
+# Settings come from deploy/server.env (written by deploy.sh / deploy.ps1): DOMAIN, ALLOWED_ORIGINS and, for
+# MODEL_SOURCE=vultr (model tiles streamed from Vultr Object Storage instead of ../model), VULTR_S3_*.
 services:
   app:
     build: ..
@@ -9,8 +10,15 @@ services:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       EVIDENCE_PROVIDER: ${EVIDENCE_PROVIDER:-sinceai}
       MODEL_BASE_URL: ${MODEL_BASE_URL:-model/}
+      MODEL_SOURCE: ${MODEL_SOURCE:-local}
+      VULTR_S3_ENDPOINT: ${VULTR_S3_ENDPOINT:-}
+      VULTR_S3_BUCKET: ${VULTR_S3_BUCKET:-}
+      VULTR_S3_ACCESS_KEY: ${VULTR_S3_ACCESS_KEY:-}
+      VULTR_S3_SECRET_KEY: ${VULTR_S3_SECRET_KEY:-}
+      VULTR_S3_REGION: ${VULTR_S3_REGION:-}
     volumes:
       - ../model:/app/model:ro
+      - model_cache:/app/.cache
     expose:
       - "8080"
 
@@ -30,5 +38,6 @@ services:
       - caddy_config:/config
 
 volumes:
+  model_cache:
   caddy_data:
   caddy_config:

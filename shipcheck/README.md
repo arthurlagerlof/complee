@@ -228,4 +228,18 @@ the ship is cut open 1.5 m above the deck, the camera dives in, and only the fou
 
 Model files can live on a different host: see [separate model server](docs/model-serving.md) for `MODEL_BASE_URL`, CORS and read-only server commands. The original merged viewer code and APS/screenshot fallbacks remain in the repository.
 
+**Model from Vultr Object Storage.** `MODEL_SOURCE=vultr` plus `VULTR_S3_ENDPOINT`, `VULTR_S3_BUCKET`, `VULTR_S3_ACCESS_KEY`,
+`VULTR_S3_SECRET_KEY` (optional `VULTR_S3_REGION`, `VULTR_S3_PREFIX`; in the environment or in the gitignored
+`shipcheck/.env`) make the server answer `/model/...` from the private bucket, which holds the exported `model/` folder
+(`src/model-source-s3.mjs`). The browser keeps using the same paths, so the bucket needs no public access or CORS. Each
+request is signed on the server (AWS Signature V4); only viewer files are reachable (the tile manifest, `stream-hp/`
+tiles, the overview tiles in `stream/`, `props/` and the main chunk GLBs), never the source `.nwd`, screenshots or
+check reports. The viewer still loads only what the view needs: the 706 coarse overview tiles (29.5 MB) for the whole
+ship, which the server pre-fetches in parallel once the manifest is requested, and detail tiles on demand when you zoom
+or open a component. For remote storage the viewer may run 6 requests at once instead of 2. Content-addressed tiles are
+cached on disk (`.cache/model-s3`, `MODEL_CACHE_DIR`). Measured on 8 Nov 2026 with an empty cache: whole ship in about
+5.5 s, a tile 70 to 200 ms from the bucket and 15 to 35 ms from the cache. The bucket's `stream-hp/` matched the local
+audited tiles byte for byte (853/853). `deploy.sh` / `deploy.ps1` with `MODEL_SOURCE=vultr` in `deploy.env` skip the
+model upload.
+
 [Viewport architecture, measured request sizes and screenshots](docs/viewport/README.md).

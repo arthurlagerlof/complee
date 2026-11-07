@@ -39,3 +39,6 @@ tools/export/node_modules/
 tools/export/work/
 # Server deploy settings (host, user)
 deploy.env
+
+# Disk cache of model tiles fetched from object storage (MODEL_SOURCE=vultr)
+.cache/

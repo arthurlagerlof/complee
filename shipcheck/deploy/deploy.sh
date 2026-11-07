@@ -21,16 +21,29 @@ TARGET="$SERVER_USER@$SERVER_HOST"
 if [ -n "$(git -C "$SC" status --porcelain -- . | grep -v '^??' || true)" ]; then
   echo "Note: uncommitted changes in shipcheck/ are NOT deployed (the archive uses the last commit)."
 fi
-[ -f "$SC/model/manifest.json" ] || { echo "Missing $SC/model/manifest.json (run tools/export first)"; exit 1; }
+if [ "${MODEL_SOURCE:-}" = "vultr" ]; then
+  for v in VULTR_S3_ENDPOINT VULTR_S3_BUCKET VULTR_S3_ACCESS_KEY VULTR_S3_SECRET_KEY; do
+    [ -n "${!v:-}" ] || { echo "MODEL_SOURCE=vultr needs $v in deploy.env"; exit 1; }
+  done
+else
+  [ -f "$SC/model/manifest.json" ] || { echo "Missing $SC/model/manifest.json (run tools/export first)"; exit 1; }
+fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 git -C "$SC" archive --format=tar.gz -o "$TMP/app.tgz" HEAD:shipcheck 2>/dev/null || git -C "$SC" archive --format=tar.gz -o "$TMP/app.tgz" HEAD
 # diagnostic audit reports (hundreds of MB) are not served: left out of the upload
-tar -cf "$TMP/model.tar" --exclude=model/source-coverage.json --exclude=model/tile-integrity.json -C "$SC" model
-printf 'DOMAIN=%s\nALLOWED_ORIGINS=%s\n' "${DOMAIN:-}" "${ALLOWED_ORIGINS:-}" > "$TMP/server.env"
+if [ "${MODEL_SOURCE:-}" = "vultr" ]; then
+  # model tiles are streamed from the bucket: upload an empty model/ folder
+  mkdir -p "$TMP/empty/model" && tar -cf "$TMP/model.tar" -C "$TMP/empty" model
+else
+  tar -cf "$TMP/model.tar" --exclude=model/source-coverage.json --exclude=model/tile-integrity.json -C "$SC" model
+fi
+printf 'DOMAIN=%s\nALLOWED_ORIGINS=%s\nMODEL_SOURCE=%s\nVULTR_S3_ENDPOINT=%s\nVULTR_S3_BUCKET=%s\nVULTR_S3_ACCESS_KEY=%s\nVULTR_S3_SECRET_KEY=%s\nVULTR_S3_REGION=%s\n' \
+  "${DOMAIN:-}" "${ALLOWED_ORIGINS:-}" "${MODEL_SOURCE:-local}" "${VULTR_S3_ENDPOINT:-}" "${VULTR_S3_BUCKET:-}" \
+  "${VULTR_S3_ACCESS_KEY:-}" "${VULTR_S3_SECRET_KEY:-}" "${VULTR_S3_REGION:-}" > "$TMP/server.env"
 # model/ = the 6 main chunks, the rest sub-chunks (rest-NN.glb, Full model), manifest.json and props/ (rest part data)
-echo "Model: $(ls "$SC"/model/*.glb | wc -l | tr -d ' ') chunk files ($(ls "$SC"/model/rest-*.glb 2>/dev/null | wc -l | tr -d ' ') rest sub-chunks), $(ls "$SC"/model/props 2>/dev/null | wc -l | tr -d ' ') property files"
+[ "${MODEL_SOURCE:-}" = "vultr" ] && echo "Model: streamed from bucket ${VULTR_S3_BUCKET} (not uploaded)" || echo "Model: $(ls "$SC"/model/*.glb | wc -l | tr -d ' ') chunk files ($(ls "$SC"/model/rest-*.glb 2>/dev/null | wc -l | tr -d ' ') rest sub-chunks), $(ls "$SC"/model/props 2>/dev/null | wc -l | tr -d ' ') property files"
 echo "Archive: app $(du -h "$TMP/app.tgz" | cut -f1), model $(du -h "$TMP/model.tar" | cut -f1)"
 echo "Total upload: $(( ( $(wc -c < "$TMP/app.tgz") + $(wc -c < "$TMP/model.tar") ) / 1000000 )) MB"
 
