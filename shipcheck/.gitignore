@@ -7,6 +7,9 @@ node_modules/
 **/.env
 **/.env.*
 
+# Evidence source corpus (local, large)
+integrations/sinceai/data/*.jsonl
+
 # APS model folder: the source model and the large extracted JSON stay local
 # (regenerate parts.json with: npm run prepare-model)
 3D_Since_AI/*.nwd

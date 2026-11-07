@@ -11,8 +11,9 @@ for every part, which rules apply, whether it passes, **why**, and where every v
   ([VERIFY.md](VERIFY.md)); interpretations are labelled.
 - **Ground truth.** `npm test` checks every planted and hand-checked finding; the top bar shows the score, e.g. *✓ 7/7 expected findings, 0 false alarms*.
 
-> This is the **core** branch (`shipcheck`). The bonus features (scripted demo run-through, optional AI rule drafting, HTML/CSV report export,
-> viewer role, the estimated RCRV deck-layout scenario) are on the branch **`shipcheck-full`**.
+> ShipCheck lives in the `shipcheck/` folder of the `dev` branch, next to the Complee site at the repository root (which links here).
+> Included: the checker, the real RCRV model, the cruise deck, the evidence intake, the demo run-through ([DEMO_SCRIPT.md](DEMO_SCRIPT.md)) and the HTML/CSV report.
+> The optional AI rule drafting and the viewer role switch remain on the branch `shipcheck-full`.
 
 ## Run (Node 20+)
 
@@ -24,11 +25,13 @@ npm install
 npm start
 ```
 
-Open http://localhost:8080. Run the tests:
+Run these commands inside `shipcheck/`. Open http://localhost:8080 (the evidence intake; the checker is at http://localhost:8080/index.html). Run the tests:
 
 ```bash
 npm test
 ```
+
+Use **Add evidence** in the top bar to attach files to the selected scenario. The intake accepts documents, drawings, and model files for session-level review organization; DOCX is the document format with text extraction enabled in this demo. The review retrieves candidate SOLAS II-2 passages through a replaceable provider adapter. It does not decide applicability or compliance. The SinceAI JSONL corpus is local and ignored by Git; provide it at `integrations/sinceai/data/solas_ii2_revised_mca.jsonl`, or set `EVIDENCE_PROVIDER=none` to disable source retrieval. The `src/evidence-provider.mjs` interface can be replaced without changing the checker.
 
 | Command | What it does |
 | --- | --- |
@@ -36,6 +39,7 @@ npm test
 | `npm test` | All tests (checker, real-model ground truth, unit parsing, server whitelist). |
 | `npm run check` | Checks every scenario in the terminal. `node scripts/check.mjs rcrv-3d` also writes `results.json`. |
 | `npm run prepare-model` | Streams `3D_Since_AI/model-properties.json` (150 MB, never loaded whole) into `ships/rcrv/parts.json`. Needs the local APS export. |
+| `npm run report` | Writes `reports/<scenario>.html` and `.csv`, the same as the Report and CSV buttons. |
 | `npm run precompute` | Rewrites `ships/rcrv/results-3d.json` (offline results). Run it after changing rules or parts; `npm test` fails if it is stale. |
 
 ### 3D viewer (Autodesk APS)

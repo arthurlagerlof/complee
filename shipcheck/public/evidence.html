@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ShipCheck - add evidence</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body class="evidence-page">
+<header class="top evidence-top">
+  <a class="brand" href="/evidence.html"><b>ShipCheck</b><span>class &amp; regulatory compliance</span></a>
+  <nav class="workflow-steps" aria-label="Review workflow"><b><span>1</span> Add evidence</b><i></i><a href="/index.html?scenario=rcrv-3d"><span>2</span> Review design</a><i></i><a href="/index.html?scenario=rcrv-3d#manage"><span>3</span> Manage findings</a></nav>
+</header>
+<main class="evidence-main">
+  <div class="evidence-heading"><div><div class="eyebrow">DESIGN REVIEW / EVIDENCE INTAKE</div><h1>Add vessel design evidence</h1><p class="muted">Start with the documents, drawings, and model for your vessel. Review the design in ShipCheck next.</p></div><div class="evidence-vessel-pill"><span class="status-dot"></span> OSU Regional Class Research Vessel</div></div>
+  <div class="evidence-grid">
+    <section class="evidence-primary">
+      <label id="evidenceDrop" class="evidence-drop" for="evidenceFiles" tabindex="0"><span class="evidence-upload-icon">↑</span><strong>Drop evidence files here</strong><span class="muted">or <span class="upload-link">browse files</span> from your computer</span><small>Documents · drawings · 3D models</small><input id="evidenceFiles" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.dwg,.dxf,.ifc,.step,.stp,.iges,.igs,.nwd,.nwc,.rvt,.3dm,.obj,.stl"></label>
+      <section class="evidence-card"><div class="evidence-card-head"><div><h2>Selected evidence</h2><span class="muted" id="evidenceCount">No files selected</span></div><button id="clearEvidence" disabled>Clear all</button></div><div id="evidenceFilesList"><div class="evidence-empty">Your selected documents, drawings, and models will appear here.</div></div></section>
+      <section id="documentReview" class="evidence-card review-card" hidden><div class="eyebrow">DOCUMENT REVIEW</div><div id="documentReviewContent"></div></section>
+    </section>
+    <aside class="evidence-side">
+      <section class="evidence-card vessel-card"><div class="eyebrow">VESSEL PROFILE</div><h2>OSU Regional Class Research Vessel</h2><p class="muted">Research vessel · ShipConstructor 3D model available in ShipCheck.</p><div class="vessel-fact"><span>Review status</span><b><i class="status-dot"></i> Particulars need confirmation</b></div><div class="vessel-fact"><span>Current model</span><b>RCRV · 3D</b></div><p class="evidence-note">This demo opens with the RCRV model already loaded in the design review.</p></section>
+      <section class="evidence-card"><div class="eyebrow">REGULATORY SOURCE</div><h2>Find related SOLAS II-2 provisions</h2><div id="evidenceSourceStatus" class="source-provider">Connecting to local source…</div><div class="evidence-search"><input id="evidenceQuery" type="search" placeholder="Try: oil fuel pipe material approval"><button id="evidenceSearch">Search</button></div><div id="evidenceSourceResults" class="evidence-source-results"><div class="evidence-empty">Source matches are passages for review, not compliance decisions.</div></div></section>
+    </aside>
+  </div>
+  <footer class="evidence-footer"><span class="muted">DOCX review sends text only to the local ShipCheck server. Other file types are listed as evidence but need format-specific review support.</span><div><button id="reviewEvidence" disabled>Review selected DOCX</button><a class="button-link primary" href="/index.html?scenario=rcrv-3d">Continue to 3D design review →</a></div></footer>
+</main>
+<script type="module" src="evidence.js"></script>
+</body>
+</html>

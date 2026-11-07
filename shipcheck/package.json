@@ -12,7 +12,8 @@
     "test": "node --test tests/",
     "check": "node scripts/check.mjs",
     "prepare-model": "node scripts/prepare-model.mjs",
-    "precompute": "node scripts/check.mjs --precompute"
+    "precompute": "node scripts/check.mjs --precompute",
+    "report": "node scripts/check.mjs --report"
   },
   "dependencies": {
     "three": "0.160.0"
