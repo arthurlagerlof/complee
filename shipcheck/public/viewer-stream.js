@@ -1,6 +1,7 @@
 ﻿// Viewport-driven local viewer. Only requested spatial tiles are resident; old merged GLBs remain untouched.
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { createSceneOverlay } from "./viewer-scene.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import {
@@ -114,6 +115,33 @@ export async function createLocalViewer(
   };
   glassMaterial.customProgramCacheKey = () => "viewport-glass";
   const PICK_MIN_ALPHA = 26; // parts below 10 % opacity are practically invisible in the original: not clickable
+  // Scenario scene inside the real ship (elements with geom3d, e.g. ships/rcrv/inside.json): the real ship is neutral
+  // context, cut just above the scene's deck, and the scene's few components carry the status colours.
+  const sceneOverlay = createSceneOverlay(scene, COLORS);
+  let sceneMode = false,
+    sceneSelected = null,
+    sceneDeckY = 0;
+  const SCENE_VIEW = new THREE.Vector3(0.5, 1.05, -0.8); // from above, aft and to the side of the corridor
+  // Camera flights (scene entry, component view): eased over ms, run by the render loop; instant when not visible.
+  let flight = null;
+  function flyTo(target, position, ms = 1200, onStep = null) {
+    const from = { t: controls.target.clone(), p: camera.position.clone() };
+    const done = (k) => {
+      controls.target.lerpVectors(from.t, target, k);
+      camera.position.lerpVectors(from.p, position, k);
+      onStep?.(k);
+    };
+    if (!ms || !container.offsetParent) {
+      flight = null;
+      done(1);
+      controls.update();
+      invalidate();
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      flight = { t0: performance.now(), ms, done, resolve };
+    });
+  }
   const outline = new THREE.Box3Helper(new THREE.Box3(), 0x1f6feb);
   outline.material.depthTest = false;
   outline.renderOrder = 10;
@@ -271,6 +299,21 @@ export async function createLocalViewer(
   });
   renderer.setAnimationLoop(() => {
     if (!active || gpuLost || !container.offsetParent) return;
+    if (flight) {
+      const k = Math.min(1, (performance.now() - flight.t0) / flight.ms),
+        e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+      const damping = controls.enableDamping;
+      controls.enableDamping = false;
+      flight.done(e);
+      controls.update();
+      controls.enableDamping = damping;
+      invalidate();
+      if (k >= 1) {
+        const f = flight;
+        flight = null;
+        f.resolve();
+      }
+    }
     controls.update();
     if (dirty) {
       dirty = false;
@@ -400,12 +443,13 @@ export async function createLocalViewer(
         st = override?.get(id) ?? results?.elements[id]?.worst;
       // Rule view: only the rule's parts carry a status colour; the hull around them is neutral context, so the
       // result of that rule is what stands out (the parts' own results of other rules are not mixed in).
-      const ruleContext = override && !override.has(id);
+      const ruleContext = override && !override.has(id) && !sceneMode;
       const col = linear(
         COLORS[
           c.info.group === "rest"
             ? "none"
-            : ruleContext ||
+            : sceneMode ||
+                ruleContext ||
                 (simple && context.has(db) && (!st || st === "compliant"))
               ? "context"
               : st || "none"
@@ -415,7 +459,11 @@ export async function createLocalViewer(
       c.state[o] = Math.round(col[0] * 255);
       c.state[o + 1] = Math.round(col[1] * 255);
       c.state[o + 2] = Math.round(col[2] * 255);
-      const shown = colorState(db, c.info.group === "rest");
+      const shown = sceneMode
+        ? c.info.group === "rest" && !fullModel
+          ? 0
+          : 255
+        : colorState(db, c.info.group === "rest");
       let alpha =
         shown && c.opacity && c.opacity[v] < 255 ? c.opacity[v] : shown;
       // Rule view: the hull around the rule's parts is a light see-through ghost, so parts inside the ship show.
@@ -439,6 +487,59 @@ export async function createLocalViewer(
   }
   function recompute(ids) {
     for (const c of cache.values()) recolor(c, ids);
+    if (sceneMode) colourScene(ids);
+    schedule();
+  }
+  function colourScene(ids) {
+    for (const id of ids || sceneOverlay.ids()) {
+      if (!sceneOverlay.has(id)) continue;
+      sceneOverlay.setStatus(
+        id,
+        override
+          ? override.get(id) || "context"
+          : results?.elements[id]?.worst || "none",
+      );
+    }
+    sceneOverlay.focus(sceneSelected);
+    invalidate();
+  }
+  function setCut(y) {
+    clipping.length = 0;
+    if (y != null) clipping.push(new THREE.Plane(new THREE.Vector3(0, -1, 0), y));
+    material.needsUpdate = true;
+    overviewMaterial.needsUpdate = true;
+    glassMaterial.needsUpdate = true;
+    invalidate();
+  }
+  // Scene view: cut 1.5 m above the scene's deck (below the real ceilings), camera from above at an angle.
+  function sceneFrame(box, margin) {
+    return fitPerspectiveBox(box, {
+      fov: camera.getEffectiveFOV(),
+      aspect: viewportAspect(container.clientWidth, container.clientHeight, camera.aspect),
+      direction: SCENE_VIEW,
+      up: [0, 1, 0],
+      margin,
+    });
+  }
+  async function frameScene(ms = 2400) {
+    const box = sceneOverlay.bounds();
+    if (box.isEmpty()) return;
+    const f = sceneFrame(box, 1.2);
+    framedBox = box.clone();
+    frameMargin = 1.2;
+    framedPoints = null;
+    const top = allBounds.max.y + 500,
+      cut = sceneDeckY + 1500;
+    // Entering: first the ship is cut open from the top down to the deck (camera still), then the camera dives in.
+    if (!clipping.length) setCut(top);
+    const startCut = clipping[0].constant;
+    if (ms && startCut > cut + 1) {
+      await flyTo(controls.target.clone(), camera.position.clone(), ms * 0.45, (k) => {
+        clipping[0].constant = startCut + (cut - startCut) * k;
+      });
+    }
+    setCut(cut);
+    await flyTo(new THREE.Vector3(...f.target), new THREE.Vector3(...f.position), ms * 0.55);
     schedule();
   }
   const desc = (a, more = {}) => ({
@@ -747,6 +848,13 @@ export async function createLocalViewer(
       ),
       camera,
     );
+    if (sceneMode) {
+      const sid = sceneOverlay.pick(ray);
+      if (sid) {
+        onPick?.(sid);
+        return;
+      }
+    }
     const revision = viewRevision;
     const origin = ray.ray.origin.clone();
     const targets = [...cache.values()].filter((c) => c.ready),
@@ -789,11 +897,14 @@ export async function createLocalViewer(
     selectedId = null;
     selectedDb = null;
     selectedRest = null;
+    const hadScene = sceneSelected !== null;
+    sceneSelected = null;
+    sceneOverlay.focus(null);
     selectionVersion++;
     viewRevision++;
     geometryNotice = "";
     showBox(null, null);
-    return had;
+    return had || hadScene;
   }
   renderer.domElement.addEventListener("webglcontextlost", (event) => {
     event.preventDefault();
@@ -882,16 +993,33 @@ export async function createLocalViewer(
       override = null;
       filterDbs = null;
       clearSelection();
-      resetCut();
       active = true;
+      const sceneEls = norm.elements.filter((e) => e.geom3d);
+      const wasScene = sceneMode;
+      sceneMode = sceneEls.length > 0;
+      sceneOverlay.build(sceneEls);
+      if (sceneMode) {
+        const floor = sceneEls.find((e) => e.type === "corridor") || sceneEls[0];
+        sceneDeckY = floor.geom3d.min[1];
+        recompute();
+        // Entering: fly in. Rebuilt while the flight runs (the app builds twice on a switch): let it finish.
+        if (!wasScene) frameScene(3000);
+        else if (!flight) frameScene(0);
+        return;
+      }
+      resetCut();
       recompute();
       frameOverview();
+    },
+    get sceneMode() {
+      return sceneMode;
     },
     update(r, ids) {
       results = r;
       recompute(ids);
     },
     paintNeutral() {
+      for (const id of sceneOverlay.ids()) sceneOverlay.setStatus(id, "none");
       for (const c of cache.values()) {
         for (let v = 0; v < c.state.length; v += 4) {
           c.state[v] = 184;
@@ -903,6 +1031,21 @@ export async function createLocalViewer(
       invalidate();
     },
     async select(id, { fly = true, label = null, status = null } = {}) {
+      if (sceneMode && sceneOverlay.has(id)) {
+        selectionVersion++;
+        sceneSelected = id;
+        sceneOverlay.focus(id);
+        const b = sceneOverlay.box(id);
+        if (fly) {
+          const f = sceneFrame(b, 2.4);
+          framedBox = b.clone();
+          frameMargin = 2.4;
+          framedPoints = null;
+          flyTo(new THREE.Vector3(...f.target), new THREE.Vector3(...f.position), 1100);
+        }
+        showBox(b, label, status);
+        return;
+      }
       const db = idToDb.get(id);
       if (db == null) return;
       resetCut();
@@ -1036,6 +1179,10 @@ export async function createLocalViewer(
     overview() {
       clearSelection();
       recompute();
+      if (sceneMode) {
+        frameScene(1100);
+        return;
+      }
       frameOverview();
     },
     setMode(m) {

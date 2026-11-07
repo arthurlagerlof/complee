@@ -15,6 +15,14 @@
       ]
     },
     {
+      "id": "rcrv-inside",
+      "name": "RCRV: corridor inside the real ship (example)",
+      "model": "ships/rcrv/inside.json",
+      "expected": "tests/expected/rcrv-inside.json",
+      "viewer": "aps",
+      "scene": true
+    },
+    {
       "id": "cruise",
       "name": "Cruise passenger deck (fictional)",
       "model": "ships/cruise/deck.json",

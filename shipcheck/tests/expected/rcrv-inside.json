@@ -1,0 +1,41 @@
+{
+ "scenario": "rcrv-inside",
+ "note": "Ground truth for the corridor example inside the real RCRV model (ships/rcrv/inside.json). Every finding the checker reports must be listed here.",
+ "findings": [
+  {
+   "element": "C1",
+   "rule": "FSS-13-CORRIDOR",
+   "status": "non_compliant",
+   "why": "Corridor 850 mm < 900 mm escape width"
+  },
+  {
+   "element": "GR1",
+   "rule": "LL-REG25-GUARDRAIL",
+   "status": "non_compliant",
+   "why": "Rail 37.4 in = 950 mm < 1000 mm (unit conversion)"
+  },
+  {
+   "element": "GR1",
+   "rule": "DNV-GUARDRAIL",
+   "status": "non_compliant",
+   "why": "Same rail also fails the overlapping class rule"
+  }
+ ],
+ "compliant": [
+  {
+   "element": "C1",
+   "rule": "SOLAS-II-2-13-DEADEND-CARGO",
+   "why": "No dead end"
+  },
+  {
+   "element": "D1",
+   "rule": "LL-REG12-SILL",
+   "why": "600 mm sill >= 380 mm"
+  },
+  {
+   "element": "ST1",
+   "rule": "FSS-13-STAIR",
+   "why": "Boundary: exactly 900 mm passes"
+  }
+ ]
+}

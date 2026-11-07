@@ -2,9 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadScenarios, loadModel, readJSON, runCheck } from '../src/load.mjs';
 
-test('all three scenarios are available, including the simplified Three.js example', () => {
+test('all scenarios are available, including the simplified Three.js example and the scene inside the real ship', () => {
   const scenarios = loadScenarios();
-  assert.deepEqual(scenarios.map((s) => s.id).sort(), ['cruise', 'rcrv-3d', 'rcrv-layout']);
+  assert.deepEqual(scenarios.map((s) => s.id).sort(), ['cruise', 'rcrv-3d', 'rcrv-inside', 'rcrv-layout']);
+  const inside = scenarios.find((s) => s.id === 'rcrv-inside');
+  assert.equal(inside.viewer, 'aps', 'shown in the real-model viewer');
+  assert.equal(inside.scene, true);
+  for (const e of loadModel(inside).elements) assert.ok(e.geom3d?.min?.length === 3 && e.geom3d?.max?.length === 3, `${e.id} has a position in the real model`);
   const simplified = scenarios.find((s) => s.id === 'rcrv-layout');
   assert.equal(simplified.name, 'Simplified research vessel (example)');
   assert.equal(simplified.model, 'ships/rcrv/layout.json');
