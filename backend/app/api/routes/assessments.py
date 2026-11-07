@@ -1,12 +1,13 @@
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.schemas.assessment import AssessmentCreate, AssessmentOut, FindingCreate, FindingOut, FindingUpdate
 from app.schemas.assessment import AssessmentRunRequest
-from app.services.assessment import service
+from app.services.assessment import checks, service
 from app.services.assessment.orchestrator import run_assessment
 from app.services.common import InvalidReference
 from app.services.retrieval.service import EmbeddingProviderError, VectorSearchUnavailable
@@ -30,6 +31,33 @@ def assess_design(payload: AssessmentRunRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class EngineeringCheckRunRequest(BaseModel):
+    revision_id: uuid.UUID
+    check_ids: list[str] | None = Field(default=None, max_length=50)
+
+
+@router.get("/engineering-checks")
+def list_engineering_checks():
+    """Structured requirements the engine can check, each tied to a provision in the regulation database."""
+    return checks.check_catalogue()
+
+
+@router.post("/engineering-checks/run", status_code=status.HTTP_201_CREATED)
+def run_engineering_checks(payload: EngineeringCheckRunRequest, db: Session = Depends(get_db)):
+    """Completeness, consistency and deterministic requirement checks for a design revision. Every finding is
+    stored open for engineer review; nothing declares compliance."""
+    outcome = checks.run_engineering_checks(db, payload.revision_id, payload.check_ids)
+    findings = [FindingOut.model_validate(service.get_finding(db, finding_id)) for finding_id in outcome["finding_ids"]]
+    return {"assessment_id": outcome["assessment_id"], "summary": outcome["summary"],
+            "skipped_checks": outcome["skipped_checks"], "findings": findings}
+
+
+@router.get("/design-revisions/{revision_id}/completeness")
+def revision_completeness(revision_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Which key engineering properties (knowledge catalogue) each component has, and where sources disagree."""
+    return checks.completeness_report(db, revision_id)
 
 
 @router.get("/assessments", response_model=list[AssessmentOut])

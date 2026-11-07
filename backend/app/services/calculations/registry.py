@@ -50,6 +50,7 @@ class GeometryInput(BaseModel):
 
 
 def build_registry() -> ToolRegistry:
+    from app.services.calculations.comparison import RequirementComparisonTool
     from app.services.calculations.documents import DocumentEvidenceTool
     from app.services.calculations.fluid import FluidCalculationTool
     from app.services.calculations.geometry import GeometryCalculationTool
@@ -61,6 +62,7 @@ def build_registry() -> ToolRegistry:
         DocumentEvidenceTool(),
         FluidCalculationTool(),
         StructuralCalculationTool(),
+        RequirementComparisonTool(),
     ):
         registry.register(tool)
     return registry
