@@ -220,6 +220,12 @@ layer `ENV_` is 96 % transparent. The viewer draws them in a see-through pass wi
 clickable); the audit checks the opacity of every part against the source. Browser regressions:
 `cd tools/export && node --test --test-concurrency=1 browser-regressions.cjs` (app running).
 
+**Corridor scene inside the real ship.** Scenario `rcrv-inside` (`ships/rcrv/inside.json`) places a simplified, estimated
+example (one corridor, its door, a stair, a guard rail; fictional values, ground truth in `tests/expected/rcrv-inside.json`)
+at its real position in the deckhouse (deck level 4, located from the real geometry). It opens in the real-model viewer:
+the ship is cut open 1.5 m above the deck, the camera dives in, and only the four components carry status colours
+(`public/viewer-scene.js`). The demo shows the whole real ship first, then this scene.
+
 Model files can live on a different host: see [separate model server](docs/model-serving.md) for `MODEL_BASE_URL`, CORS and read-only server commands. The original merged viewer code and APS/screenshot fallbacks remain in the repository.
 
 [Viewport architecture, measured request sizes and screenshots](docs/viewport/README.md).

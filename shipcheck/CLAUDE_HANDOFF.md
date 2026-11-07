@@ -25,6 +25,11 @@
   component views with room around the part (margin 1.8), rule view: hull as a 15 % ghost + neutral, only the rule's parts
   coloured; cruise element framed from above (margin 2.6); demo ends on the deck overview. Frame capture:
   `tools/export/work/demo-frames.cjs` (ignored). Video backup needs Playwright ffmpeg (not installed; user to record).
+- Scene inside the real ship (7 Nov, night): scenario `rcrv-inside` = 4 example components with `geom3d` in the stream
+  manifest frame (corridor x -19..-7 m, z -3.4..-2.6 m at deck level 4, y -1.5 m; door, stair up, guard rail on the bow
+  deck). viewer-stream scene mode: real ship neutral, cut at deck+1.5 m (below the real ceilings), two-phase entry (cut,
+  then fly), overlay shapes from `public/viewer-scene.js`, picking/select/what-if; Simple/Full/cut controls hidden. Demo:
+  real ship (overview, check, P1770, 22-hatch rule view) -> scene (corridor fail -> what-if green, guard rail inch).
 - Known layout limit: below ~800 px width the fixed 330 px + 420 px side columns leave no room for the 3D pane (existing design).
 - `tests/tile-audit.test.mjs` no longer needs the export tools installed (tile-model.mjs loads meshoptimizer lazily). npm test: 91/91.
 

@@ -130,6 +130,8 @@ function useViewer(sc) {
     $('#simpleBtn').hidden = $('#cutSel').hidden = false;
     $('#fullBtn').hidden = !viewer.hasRest;
     $('#fullBtn').classList.toggle('on', !!viewer.fullModel);
+    // A scene inside the real ship (corridor example) has its own fixed cut-away view.
+    if (sc.scene) $('#simpleBtn').hidden = $('#cutSel').hidden = $('#fullBtn').hidden = true;
     $('#cutSel').innerHTML = '<option value="">No deck cut</option>';
     clearCutControl();
   };
@@ -934,7 +936,7 @@ async function runDemo() {
   document.body.classList.add('demo-running');
   $('#demoBtn').textContent = '■ Stop demo';
   const real = S.scenarios.find((s) => s.kind === 'parts');
-  const cruise = S.scenarios.find((s) => s.id === 'cruise');
+  const inside = S.scenarios.find((s) => s.scene);
   try {
     if (views.three.plan) { views.three.setPlan(false); $('#planBtn').classList.remove('on'); }
     // 1. Open the real RCRV model (reuse it if it is already open and unedited).
@@ -969,68 +971,76 @@ async function runDemo() {
         await beat(4800);
       }
 
-      // 3b. Component view and rule view on a hatch (about 20 s). The model has no failing hatch: this one's
-      // size is not in the model (amber); the what-if value is shown as such and never written to the model.
+      // 3b. Rule view on the real model: every hatch the opening rule applies to, coloured by that rule.
       const h = d.hatch;
-      if (h && S.results.elements[h.focus]) {
-        select(h.focus);
-        const hr = S.results.elements[h.focus].results.find((x) => x.rule_id === h.rule);
-        caption(`Component view: ${elById(h.focus).name.split(' · ')[0]}`,
-          hr.status === 'not_enough_info' ? `${LABEL[hr.status]}: ${hr.parameter.replace(/_/g, ' ')} not in the model (no size in the name) · required ${hr.required}` : `${LABEL[hr.status]}: ${hr.measured} · required ${hr.required}`);
-        await beat(3800);
-        caption(`The card shows the rule, its source and review status`, `${hr.source.split(';')[0]} · ${hr.review_status ?? ''}`);
-        const card = document.querySelector(`#dResults .res[data-rule="${CSS.escape(h.rule)}"]`);
-        card?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        if (card) pulse(card);
-        await beat(3800);
+      if (h && ruleById(h.rule)) {
         showRule(h.rule);
-        caption(`Rule view: ${countLine(ruleHits(h.rule))}`, 'Every part the rule applies to, coloured by that rule');
+        caption(`Rule view: ${countLine(ruleHits(h.rule))}`, 'Every part the rule applies to, coloured by that rule, in the real ship');
         pulse('#ruleCount');
         await beat(4200);
-        select(h.focus);
-        caption(`What-if: ${h.fix.prop.replace(/_/g, ' ')} = ${h.fix.value} ${h.fix.unit}`, 'Labelled "what-if, not in model"; re-checked and recoloured instantly');
-        await step(800);
-        if (await demoTypeFix(step, h.focus, h.fix)) {
-          await step(500);
-          const now = S.results.elements[h.focus].worst;
-          caption(`${h.focus} is now ${LABEL[now].toLowerCase()} (what-if, not in model)`, 'Reset restores the model value; the model itself is never changed');
-          pulse('#dStatus');
-          await beat(3200);
+      }
+    }
+
+    // 4. Into the ship: one corridor with a few components, placed in the real deckhouse (simplified example).
+    if (inside) {
+      caption('Inside the ship: one corridor on deck level 4', 'Simplified example placed in the real deckhouse · the ship is cut open just above the deck');
+      await loadScenario(inside.id);
+      await S.viewerReady;
+      await step(3300); // the ship is cut open above the deck, then the camera flies in
+      const d = S.model.demo || {};
+      const s2 = S.results.summary;
+      caption(`${S.norm.elements.length} components checked: ${s2.non_compliant} non-compliant, ${s2.compliant} compliant`,
+        S.baseline ? `Ground truth: ${S.baseline.line ?? scoreLine(S.baseline)}` : 'Deterministic checker: same input, same result');
+      pulse('#pills'); pulse('#scorebox');
+      await beat(3400);
+
+      // 5. The corridor is too narrow: component view, rule quote, rule card.
+      const focus = d.focus;
+      if (focus && S.results.elements[focus]) {
+        select(focus);
+        const fe = S.results.elements[focus];
+        const bad = fe.results.find((r) => r.status === 'non_compliant');
+        if (bad) {
+          caption(`${elById(focus).name}: ${bad.parameter.replace(/_/g, ' ')} ${bad.measured}, required ${bad.required}`,
+            `“${ruleQuote(bad)}” (${bad.source.split(':')[0]})`);
+          document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
+          await beat(4600);
+          caption('The card shows the rule, its source and review status', `${bad.source.split(';')[0]} · ${bad.review_status ?? ''}`);
+          const card = document.querySelector(`#dResults .res[data-rule="${CSS.escape(bad.rule_id)}"]`);
+          card?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          if (card) pulse(card);
+          await beat(3600);
+        }
+        // 6. What-if: the engineer widens the corridor; re-checked and recoloured instantly.
+        const fix = d.fix;
+        if (fix) {
+          caption(`What-if: ${fix.prop.replace(/_/g, ' ')} = ${fix.value} ${fix.unit || 'mm'}`, 'Labelled "what-if, not in model"; re-checked and recoloured instantly');
+          await step(800);
+          if (await demoTypeFix(step, focus, fix)) {
+            await step(500);
+            const now = S.results.elements[focus].worst;
+            caption(`${focus} is now ${LABEL[now].toLowerCase()} (what-if, not in model)`, `Re-checked in ${S.lastCheckMs.toFixed(1)} ms · reset restores the model value; the model itself is never changed`);
+            $('#detail').scrollTo({ top: 0, behavior: 'smooth' });
+            pulse('#dStatus');
+            await beat(3400);
+          }
+        }
+      }
+
+      // 7. A second finding: the guard rail, drawn in inches, fails two overlapping rules.
+      if (d.second && S.results.elements[d.second]) {
+        select(d.second);
+        const fe = S.results.elements[d.second];
+        const bad = fe.results.filter((r) => r.status === 'non_compliant');
+        if (bad.length) {
+          caption(`${elById(d.second).name}: ${bad[0].measured} fails ${bad.length} overlapping rule${bad.length > 1 ? 's' : ''}`,
+            `${bad.map((r) => `${r.rule_id} (${r.required})`).join(' + ')} · inch values converted to mm`);
+          document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
+          await beat(4400);
         }
       }
     }
-
-    // 4. Switch to the cruise deck: C2 fails two overlapping rules.
-    if (cruise) {
-      caption('Cruise passenger deck: same checker, passenger rules', 'SOLAS/FSS means of escape + ADA/PVAG accessibility');
-      await loadScenario(cruise.id);
-      await step(1600);
-      const d = S.model.demo || {};
-      const focus = d.focus;
-      select(focus);
-      const fe = S.results.elements[focus];
-      const bad = fe.results.filter((r) => r.status === 'non_compliant');
-      const gov = fe.governing[d.fix?.prop];
-      caption(`${focus} fails ${bad.length} overlapping rules: ${bad.map((r) => `${r.rule_id} (${r.required})`).join(' + ')}`,
-        gov ? `The strictest governs: ${gov.required} (${gov.rule_id}). Measured: ${bad[0]?.measured}` : '');
-      document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
-      pulse('#dResults .gov');
-      await beat(4200);
-
-      // 5. Fix it live and watch it turn green.
-      const fix = d.fix || {};
-      caption(`Engineer sets ${fix.prop} to ${fix.value} ${fix.unit || 'mm'}`, 'Every edit is re-checked instantly by the deterministic checker');
-      if (await demoTypeFix(step, focus, fix)) {
-        await step(500);
-        const now = S.results.elements[focus].worst;
-        caption(now === 'compliant' ? `${focus} is now compliant with both rules` : `${focus}: ${LABEL[now]}`,
-          `Re-checked in ${S.lastCheckMs.toFixed(1)} ms · logged as a session edit for the class submission report`);
-        $('#detail').scrollTo({ top: 0, behavior: 'smooth' });
-        pulse('#dStatus');
-        await beat(3000);
-      }
-    }
-    showOverview(); // end on the whole deck with every result coloured
+    showOverview(); // end on the whole scene with every result coloured
     caption('Export the findings: HTML report and CSV', 'Rule references, measured vs required, value provenance, inch → mm conversions');
     pulse('#reportBtn'); pulse('#csvBtn');
     await beat(2600);

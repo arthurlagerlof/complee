@@ -196,6 +196,39 @@ test('?viewer=aps loads the Autodesk viewer or falls back cleanly', { timeout: 3
   if (mode === 'fallback') assert.equal(await page.locator('#fallbackView').isVisible(), true);
 }));
 
+test('inside the real ship: corridor scene in the cut-open deckhouse, component view and what-if', { timeout: 300000 }, () => withPage(async (page) => {
+  await openReal(page);
+  await page.selectOption('#scenario', 'rcrv-inside');
+  await committed(page, 'rcrv-inside');
+  assert.equal(await page.evaluate(() => window.__shipcheck.viewerReady), 'local', 'same real-model viewer');
+  await page.waitForTimeout(3500); // cut slides down, camera flies in
+  const st = await page.evaluate(() => ({
+    scene: window.__shipcheckViewer.sceneMode,
+    parts: window.localViewer.scene.getObjectByName('scenario-scene').children.length,
+    cut: window.localViewer.scene.children.length >= 0 && (() => { let y = null; window.localViewer.scene.traverse((o) => { for (const m of [].concat(o.material || [])) if (m.clippingPlanes?.length) y = m.clippingPlanes[0].constant; }); return y; })(),
+    hidden: ['#simpleBtn', '#fullBtn', '#cutSel'].map((s) => document.querySelector(s).hidden),
+  }));
+  assert.equal(st.scene, true);
+  assert.equal(st.parts, 4, 'corridor, door, stair and guard rail');
+  assert.ok(Math.abs(st.cut - 0) < 1, `ship cut 1.5 m above deck level 4 (plane at ${st.cut})`);
+  assert.deepEqual(st.hidden, [true, true, true], 'no Simple / Full / cut controls in the scene');
+  await settled(page);
+  await shot(page, 'inside-overview');
+  await page.locator('#list .item[data-id="C1"]').click();
+  await page.waitForFunction(() => { const l = document.querySelector('#localView .aps-label'); return l && !l.hidden && /850 mm/.test(l.textContent); }, null, { timeout: 15000 });
+  assert.match(await page.locator('#dStatus').innerText(), /non-compliant/i);
+  const input = page.locator('#dEditor input[data-key="clear_width"]');
+  await input.fill('1000');
+  await input.dispatchEvent('change');
+  await page.waitForFunction(() => window.__shipcheck.results.elements.C1.worst === 'compliant', null, { timeout: 15000 });
+  await page.waitForTimeout(1500);
+  await shot(page, 'inside-corridor-fixed');
+  await page.selectOption('#scenario', 'rcrv-3d');
+  await committed(page, 'rcrv-3d');
+  await page.waitForTimeout(1000);
+  assert.equal(await page.evaluate(() => window.__shipcheckViewer.sceneMode), false, 'back to the full ship');
+}));
+
 test('presenter mode: the demo waits for → / Space at every step, Esc stops it', { timeout: 300000 }, () => withPage(async (page) => {
   await page.goto(`${BASE}?scenario=rcrv-3d&demo&present`);
   await committed(page, 'rcrv-3d');
