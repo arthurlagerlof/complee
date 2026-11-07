@@ -1,6 +1,7 @@
 // One-time export: RCRV model (Autodesk SVF derivative) -> glTF chunks for ShipCheck's local viewer.
 // Usage (from shipcheck/tools/export, after request-svf.mjs):
-//   node --max-old-space-size=12288 export-chunks.mjs [--rest]
+//   node --max-old-space-size=12288 export-chunks.mjs
+// The rest of the model (parts no rule looks at) comes from export-rest.mjs, in sub-chunks.
 // Output: shipcheck/model/<chunk>.glb + shipcheck/model/manifest.json (gitignored; deployed with deploy.sh/.ps1)
 //
 // Each chunk is ONE merged triangle mesh (one draw call in the browser) with:
@@ -14,10 +15,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readKeys, token, manifest as getManifest, svfDerivative, SVF_URN_FILE } from './request-svf.mjs';
 import { partsToModel } from '../../src/parts-model.mjs';
 import { checkModel } from '../../src/checker.mjs';
+import { loadIdMap } from './map-ids.mjs';
+import { readTree } from './read-tree.mjs';
 
 const require = createRequire(import.meta.url);
 const { SVFReader, SVFDownloader, TwoLeggedAuthenticationProvider } = require('svf-utils');
@@ -40,12 +43,10 @@ const CHUNKS = [
   { name: 'piping', title: 'Oil fuel piping and items with a design status', load: 'eager' },
   { name: 'access', title: 'Stairs and ladders', load: 'eager' },
   { name: 'structure', title: 'Other hull structure (SWBS 1xx)', load: 'eager' },
-  { name: 'rest', title: 'Everything else (not checked)', load: 'on-demand' },
-].filter((c) => c.name !== 'rest' || process.argv.includes('--rest'));
-// 'rest' (about 2 GB raw: every part no rule looks at) is only built with --rest: it is optional and needs a lot of
-// memory and temporary disk space.
+];
+// Everything else ('rest': every part no rule looks at) is built separately, in sub-chunks, by export-rest.mjs.
 
-function chunkOf(el, worst) {
+export function chunkOf(el, worst) {
   const g = el.props?.swbs_group?.value, src = el.source || '';
   if (['110', '130'].includes(g) && el.type !== 'hatch' && el.type !== 'manhole' && el.type !== 'door') return 'context';
   if (['hatch', 'manhole', 'door'].includes(el.type)) return 'openings';
@@ -59,7 +60,7 @@ function chunkOf(el, worst) {
 }
 
 // ---------- growable buffers ----------
-class Grow {
+export class Grow {
   constructor(Type, n = 1 << 20) { this.Type = Type; this.a = new Type(n); this.len = 0; }
   reserve(k) {
     if (this.len + k <= this.a.length) return;
@@ -69,7 +70,7 @@ class Grow {
   view() { return this.a.subarray(0, this.len); }
 }
 
-function matrixOf(t) {
+export function matrixOf(t) {
   if (!t) return null;
   if (t.kind === IMF.TransformKind.Matrix) return t.elements; // column-major 4x4
   const q = t.rotation || { x: 0, y: 0, z: 0, w: 1 }, s = t.scale || { x: 1, y: 1, z: 1 }, p = t.translation || { x: 0, y: 0, z: 0 };
@@ -83,7 +84,7 @@ function matrixOf(t) {
   ];
 }
 
-async function ensureSvf() {
+export async function ensureSvf() {
   if (!fs.existsSync(SVF_URN_FILE)) throw new Error('No SVF copy yet: run node request-svf.mjs first');
   const urn = fs.readFileSync(SVF_URN_FILE, 'utf8').trim();
   const tok = await token('data:read viewables:read');
@@ -102,15 +103,11 @@ async function ensureSvf() {
   return file;
 }
 
-async function main() {
-  const t0 = Date.now();
-  fs.mkdirSync(WORK, { recursive: true });
-  fs.mkdirSync(OUT, { recursive: true });
-
-  // Parts, checker results, and leaf node -> checked part (geometry often sits on child nodes).
+// Parts, checker results, and leaf node -> checked part (geometry often sits on child nodes).
+export async function mapParts() {
   const model = partsToModel(readJSON('ships/rcrv/parts.json'), readJSON('ships/rcrv/rcrv-3d.meta.json'));
   const results = checkModel(model, readJSON('rules.json').rules);
-  const tree = readJSON('3D_Since_AI/model-tree.json');
+  const tree = await readTree(path.join(SC, '3D_Since_AI/model-tree.json'));
   const nodeById = new Map();
   (function walk(nodes) { for (const n of nodes || []) { nodeById.set(n.objectid, n); walk(n.objects); } })(tree.data.objects);
   const partOfLeaf = new Map(), chunkOfPart = new Map();
@@ -126,7 +123,30 @@ async function main() {
     }
   }
   log(`Parts: ${model.elements.length.toLocaleString('en')}; nodes mapped to a checked part: ${partOfLeaf.size.toLocaleString('en')}`);
+  return { model, results, nodeById, partOfLeaf, chunkOfPart, resolve: makeResolver(partOfLeaf) };
+}
 
+// The SVF copy numbers its nodes differently from the APS model (SVF2), which parts.json and model-properties.json
+// use. resolve(svfNodeId) -> { part, own, near }:
+//   own  = the node's own SVF2 objectid (null if map-ids.mjs could not match the node)
+//   near = SVF2 objectid of the nearest matched node (the node itself or its closest matched ancestor)
+//   part = the parts.json objectid that node belongs to (null: no checked part)
+export function makeResolver(partOfLeaf) {
+  const { toSvf2, parent } = loadIdMap();
+  const cache = new Map();
+  return (svfId) => {
+    let r = cache.get(svfId);
+    if (r) return r;
+    let near = null;
+    for (let a = svfId, guard = 0; a && guard < 64; a = parent[a], guard++) if (toSvf2[a]) { near = toSvf2[a]; break; }
+    r = { own: toSvf2[svfId] || null, near, part: near != null ? partOfLeaf.get(near) ?? null : null };
+    cache.set(svfId, r);
+    return r;
+  };
+}
+
+// Reads the SVF and returns the scene plus the output frame (mm, glTF Y up, centred on the model's bounding box).
+export async function openScene() {
   const svfFile = await ensureSvf();
   log('Reading the SVF into memory…');
   const reader = await SVFReader.FromFileSystem(svfFile);
@@ -142,11 +162,106 @@ async function main() {
   const toOut = (x, y, z) => [left[0] * x + left[1] * y + left[2] * z, up[0] * x + up[1] * y + up[2] * z, front[0] * x + front[1] * y + front[2] * z];
   const offset = toOut(...c).map((v) => v * scaleMM);
   log(`Unit: ${unit} (x ${scaleMM} -> mm); up ${up.join(',')}; front ${front.join(',')}`);
+  return { scene, unit, scaleMM, toOut, offset };
+}
 
-  const buf = Object.fromEntries(CHUNKS.map((ch) => [ch.name, {
-    pos: new Grow(Float32Array), nrm: new Grow(Float32Array), id: new Grow(Uint8Array), idx: new Grow(Uint32Array),
-    verts: 0, parts: new Set(), min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity],
-  }]));
+export const newBuffer = () => ({
+  pos: new Grow(Float32Array), nrm: new Grow(Float32Array), id: new Grow(Uint8Array), idx: new Grow(Uint32Array),
+  verts: 0, parts: new Set(), min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity],
+});
+
+// Appends one SVF mesh fragment (transformed to the output frame) with its dbId to a chunk buffer.
+// Returns the vertex base of the fragment in the buffer.
+export function appendFragment(b, node, geom, dbid, frame) {
+  const { toOut, scaleMM, offset } = frame;
+  const V = geom.getVertices(), I = geom.getIndices(), N = geom.getNormals?.();
+  b.parts.add(dbid);
+  const M = matrixOf(node.transform);
+  const nv = V.length / 3;
+  b.pos.reserve(nv * 3); b.nrm.reserve(nv * 3); b.id.reserve(nv * 4); b.idx.reserve(I.length);
+  const base = b.verts;
+  for (let v = 0; v < nv; v++) {
+    let x = V[3 * v], y = V[3 * v + 1], z = V[3 * v + 2];
+    if (M) { const X = M[0] * x + M[4] * y + M[8] * z + M[12], Y = M[1] * x + M[5] * y + M[9] * z + M[13], Z = M[2] * x + M[6] * y + M[10] * z + M[14]; x = X; y = Y; z = Z; }
+    const o = toOut(x, y, z);
+    for (let k = 0; k < 3; k++) {
+      const val = o[k] * scaleMM - offset[k];
+      b.pos.a[b.pos.len++] = val;
+      if (val < b.min[k]) b.min[k] = val;
+      if (val > b.max[k]) b.max[k] = val;
+    }
+    let nx = 0, ny = 0, nz = 1;
+    if (N?.length) {
+      nx = N[3 * v]; ny = N[3 * v + 1]; nz = N[3 * v + 2];
+      if (M) { const X = M[0] * nx + M[4] * ny + M[8] * nz, Y = M[1] * nx + M[5] * ny + M[9] * nz, Z = M[2] * nx + M[6] * ny + M[10] * nz; nx = X; ny = Y; nz = Z; }
+    }
+    const on = toOut(nx, ny, nz), l = Math.hypot(...on) || 1;
+    b.nrm.a[b.nrm.len++] = on[0] / l; b.nrm.a[b.nrm.len++] = on[1] / l; b.nrm.a[b.nrm.len++] = on[2] / l;
+    b.id.a[b.id.len++] = dbid & 255; b.id.a[b.id.len++] = (dbid >>> 8) & 255; b.id.a[b.id.len++] = (dbid >>> 16) & 255; b.id.a[b.id.len++] = (dbid >>> 24) & 255;
+  }
+  for (let k = 0; k < I.length; k++) b.idx.a[b.idx.len++] = base + I[k];
+  b.verts += nv;
+  return base;
+}
+
+const GLTFPACK = path.join(HERE, 'node_modules', '.bin', process.platform === 'win32' ? 'gltfpack.cmd' : 'gltfpack');
+export const freeBytes = (dir) => { const s = fs.statfsSync(dir); return s.bavail * s.bsize; };
+
+// Writes a chunk buffer as raw glTF (temporary) and compresses it with gltfpack into <outDir>/<name>.glb.
+// Returns { bytes, raw_bytes, triangles } or null when the disk is too full for the temporary file.
+export function packChunk(name, b, outDir, { minFree = 0 } = {}) {
+  const rawDir = path.join(WORK, 'raw');
+  fs.mkdirSync(rawDir, { recursive: true });
+  const pos = b.pos.view(), nrm = b.nrm.view(), ids = b.id.view(), idx = b.idx.view();
+  const parts = [pos, nrm, ids, idx].map((a) => Buffer.from(a.buffer, a.byteOffset, a.byteLength));
+  const offs = []; let off = 0;
+  for (const p of parts) { offs.push(off); off += p.length + ((4 - (p.length % 4)) % 4); }
+  const bin = Buffer.alloc(off);
+  parts.forEach((p, i) => p.copy(bin, offs[i]));
+  const binName = `${name}.bin`;
+  // Disk space: the raw file is temporary (deleted after gltfpack); skip a chunk that would not fit.
+  const free = freeBytes(rawDir);
+  if (bin.length * 1.2 + 50e6 + minFree > free) {
+    log(`  ${name}: SKIPPED, not enough free disk space including the reserved minimum (needs about ${Math.round(bin.length * 1.5 / 1e6)} MB, free ${Math.round(free / 1e6)} MB)`);
+    return null;
+  }
+  fs.writeFileSync(path.join(rawDir, binName), bin);
+  const gltf = {
+    asset: { version: '2.0', generator: 'ShipCheck export-chunks.mjs (svf-utils reader)' },
+    scene: 0, scenes: [{ nodes: [0] }], nodes: [{ name, mesh: 0 }],
+    meshes: [{ name, primitives: [{ attributes: { POSITION: 0, NORMAL: 1, COLOR_0: 2 }, indices: 3, material: 0 }] }],
+    materials: [{ name: 'part', pbrMetallicRoughness: { baseColorFactor: [0.8, 0.82, 0.85, 1], metallicFactor: 0, roughnessFactor: 0.8 } }],
+    buffers: [{ uri: binName, byteLength: bin.length }],
+    bufferViews: parts.map((p, i) => ({ buffer: 0, byteOffset: offs[i], byteLength: p.length, ...(i < 3 ? { target: 34962 } : { target: 34963 }) })),
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: b.verts, type: 'VEC3', min: b.min, max: b.max },
+      { bufferView: 1, componentType: 5126, count: b.verts, type: 'VEC3' },
+      { bufferView: 2, componentType: 5121, normalized: true, count: b.verts, type: 'VEC4' },
+      { bufferView: 3, componentType: 5125, count: idx.length, type: 'SCALAR' },
+    ],
+  };
+  const raw = path.join(rawDir, `${name}.gltf`);
+  fs.writeFileSync(raw, JSON.stringify(gltf));
+  const glb = path.join(outDir, `${name}.glb`);
+  // -cc meshopt compression (+ quantization), -kv keep COLOR_0 (dbIds), -vp 16 positions to ~1 mm, -vc 8 keeps the id bytes exact.
+  // No -si: nothing is simplified.
+  try {
+    execFileSync(GLTFPACK, ['-i', raw, '-o', glb, '-cc', '-kv', '-vp', '16', '-vc', '8'], { stdio: 'pipe', shell: process.platform === 'win32' });
+  } finally {
+    fs.rmSync(raw, { force: true }); fs.rmSync(path.join(rawDir, binName), { force: true }); // temporary files
+  }
+  return { bytes: fs.statSync(glb).size, raw_bytes: bin.length, triangles: idx.length / 3 };
+}
+
+async function main() {
+  const t0 = Date.now();
+  fs.mkdirSync(WORK, { recursive: true });
+  fs.mkdirSync(OUT, { recursive: true });
+  const { chunkOfPart, resolve } = await mapParts();
+  const frame = await openScene();
+  const { scene, unit, offset } = frame;
+
+  const buf = Object.fromEntries(CHUNKS.map((ch) => [ch.name, newBuffer()]));
 
   // Deck levels from the geometry: area of horizontal triangles of the hull structure per 100 mm of height.
   const DECK_CHUNKS = new Set(['context', 'structure', 'structure-findings']);
@@ -157,38 +272,15 @@ async function main() {
     if (node.kind !== IMF.NodeKind.Object) continue;
     const geom = scene.getGeometry(node.geometry);
     if (geom.kind !== IMF.GeometryKind.Mesh) { skipped++; continue; }
-    const V = geom.getVertices(), I = geom.getIndices(), N = geom.getNormals?.();
+    const V = geom.getVertices(), I = geom.getIndices();
     if (!V?.length || !I?.length) { skipped++; continue; }
-    const part = partOfLeaf.get(node.dbid);
-    const dbid = part ?? node.dbid;
-    const chunk = part != null ? chunkOfPart.get(part) : 'rest';
+    const { part } = resolve(node.dbid); // SVF node -> checked part (parts.json objectid = APS dbId)
+    if (part == null) continue; // not a checked part: built by export-rest.mjs
+    const dbid = part;
+    const chunk = chunkOfPart.get(part);
     const b = buf[chunk];
-    if (!b) continue; // chunk not built (e.g. rest without --rest)
-    b.parts.add(dbid);
-    const M = matrixOf(node.transform);
-    const nv = V.length / 3;
-    b.pos.reserve(nv * 3); b.nrm.reserve(nv * 3); b.id.reserve(nv * 4); b.idx.reserve(I.length);
-    const base = b.verts;
-    for (let v = 0; v < nv; v++) {
-      let x = V[3 * v], y = V[3 * v + 1], z = V[3 * v + 2];
-      if (M) { const X = M[0] * x + M[4] * y + M[8] * z + M[12], Y = M[1] * x + M[5] * y + M[9] * z + M[13], Z = M[2] * x + M[6] * y + M[10] * z + M[14]; x = X; y = Y; z = Z; }
-      const o = toOut(x, y, z);
-      for (let k = 0; k < 3; k++) {
-        const val = o[k] * scaleMM - offset[k];
-        b.pos.a[b.pos.len++] = val;
-        if (val < b.min[k]) b.min[k] = val;
-        if (val > b.max[k]) b.max[k] = val;
-      }
-      let nx = 0, ny = 0, nz = 1;
-      if (N?.length) {
-        nx = N[3 * v]; ny = N[3 * v + 1]; nz = N[3 * v + 2];
-        if (M) { const X = M[0] * nx + M[4] * ny + M[8] * nz, Y = M[1] * nx + M[5] * ny + M[9] * nz, Z = M[2] * nx + M[6] * ny + M[10] * nz; nx = X; ny = Y; nz = Z; }
-      }
-      const on = toOut(nx, ny, nz), l = Math.hypot(...on) || 1;
-      b.nrm.a[b.nrm.len++] = on[0] / l; b.nrm.a[b.nrm.len++] = on[1] / l; b.nrm.a[b.nrm.len++] = on[2] / l;
-      b.id.a[b.id.len++] = dbid & 255; b.id.a[b.id.len++] = (dbid >>> 8) & 255; b.id.a[b.id.len++] = (dbid >>> 16) & 255; b.id.a[b.id.len++] = (dbid >>> 24) & 255;
-    }
-    for (let k = 0; k < I.length; k++) b.idx.a[b.idx.len++] = base + I[k];
+    if (!b) continue; // chunk not built (the rest is built with export-rest.mjs)
+    const base = appendFragment(b, node, geom, dbid, frame);
     if (DECK_CHUNKS.has(chunk)) {
       const P = b.pos.a;
       for (let k = 0; k + 2 < I.length; k += 3) {
@@ -202,56 +294,19 @@ async function main() {
         horiz.set(bin, (horiz.get(bin) || 0) + len / 2 / 1e6); // m2
       }
     }
-    b.verts += nv;
     frags++;
   }
   log(`Fragments merged: ${frags.toLocaleString('en')} (skipped ${skipped.toLocaleString('en')} lines/points/empty)`);
 
   // ---------- write raw glTF, then compress with gltfpack ----------
-  const rawDir = path.join(WORK, 'raw');
-  fs.mkdirSync(rawDir, { recursive: true });
-  const gltfpack = path.join(HERE, 'node_modules', '.bin', process.platform === 'win32' ? 'gltfpack.cmd' : 'gltfpack');
   const out = [];
   for (const ch of CHUNKS) {
     const b = buf[ch.name];
     if (!b.verts) { log(`  ${ch.name}: empty, skipped`); continue; }
-    const pos = b.pos.view(), nrm = b.nrm.view(), ids = b.id.view(), idx = b.idx.view();
-    const parts = [pos, nrm, ids, idx].map((a) => Buffer.from(a.buffer, a.byteOffset, a.byteLength));
-    const offs = []; let off = 0;
-    for (const p of parts) { offs.push(off); off += p.length + ((4 - (p.length % 4)) % 4); }
-    const bin = Buffer.alloc(off);
-    parts.forEach((p, i) => p.copy(bin, offs[i]));
-    const binName = `${ch.name}.bin`;
-    // Disk space: the raw file is temporary (deleted after gltfpack); skip a chunk that would not fit.
-    const free = fs.statfsSync(rawDir).bavail * fs.statfsSync(rawDir).bsize;
-    if (bin.length * 1.2 + 50e6 > free) {
-      log(`  ${ch.name}: SKIPPED, not enough free disk space (needs about ${Math.round(bin.length * 1.5 / 1e6)} MB, free ${Math.round(free / 1e6)} MB)`);
-      buf[ch.name] = null;
-      continue;
-    }
-    fs.writeFileSync(path.join(rawDir, binName), bin);
-    const gltf = {
-      asset: { version: '2.0', generator: 'ShipCheck export-chunks.mjs (svf-utils reader)' },
-      scene: 0, scenes: [{ nodes: [0] }], nodes: [{ name: ch.name, mesh: 0 }],
-      meshes: [{ name: ch.name, primitives: [{ attributes: { POSITION: 0, NORMAL: 1, COLOR_0: 2 }, indices: 3, material: 0 }] }],
-      materials: [{ name: 'part', pbrMetallicRoughness: { baseColorFactor: [0.8, 0.82, 0.85, 1], metallicFactor: 0, roughnessFactor: 0.8 } }],
-      buffers: [{ uri: binName, byteLength: bin.length }],
-      bufferViews: parts.map((p, i) => ({ buffer: 0, byteOffset: offs[i], byteLength: p.length, ...(i < 3 ? { target: 34962 } : { target: 34963 }) })),
-      accessors: [
-        { bufferView: 0, componentType: 5126, count: b.verts, type: 'VEC3', min: b.min, max: b.max },
-        { bufferView: 1, componentType: 5126, count: b.verts, type: 'VEC3' },
-        { bufferView: 2, componentType: 5121, normalized: true, count: b.verts, type: 'VEC4' },
-        { bufferView: 3, componentType: 5125, count: idx.length, type: 'SCALAR' },
-      ],
-    };
-    const raw = path.join(rawDir, `${ch.name}.gltf`);
-    fs.writeFileSync(raw, JSON.stringify(gltf));
+    const packed = packChunk(ch.name, b, OUT);
+    if (!packed) { buf[ch.name] = null; continue; }
     const glb = path.join(OUT, `${ch.name}.glb`);
-    // -cc meshopt compression (+ quantization), -kv keep COLOR_0 (dbIds), -vp 16 positions to ~1 mm, -vc 8 keeps the id bytes exact
-    const args = ['-i', raw, '-o', glb, '-cc', '-kv', '-vp', '16', '-vc', '8'];
-    if (ch.simplify) args.push('-si', String(ch.simplify), '-se', '0.002');
-    execFileSync(gltfpack, args, { stdio: 'pipe', shell: process.platform === 'win32' });
-    fs.rmSync(raw); fs.rmSync(path.join(rawDir, binName)); // temporary files
+    const bin = { length: packed.raw_bytes }, idx = { length: packed.triangles * 3 };
     out.push({
       name: ch.name, file: `${ch.name}.glb`, title: ch.title, load: ch.load, simplified: ch.simplify ? `gltfpack -si ${ch.simplify}` : null,
       bytes: fs.statSync(glb).size, raw_bytes: bin.length, vertices: b.verts, triangles: idx.length / 3,
@@ -285,8 +340,8 @@ async function main() {
     offset_mm: offset.map((v) => Math.round(v * 1000) / 1000),
     deck_levels: deckLevels,
     deck_levels_note: 'Heights (y, mm, same frame as the chunks) where the hull structure has the most horizontal triangle area.',
-    dbid_encoding: 'COLOR_0 RGBA bytes = little-endian 32-bit dbId of the checked part (parts.json objectid); geometry outside checked parts keeps its own node dbId',
-    chunks: out,
+    dbid_encoding: 'COLOR_0 RGBA bytes = little-endian 32-bit dbId of the checked part (parts.json objectid = APS model dbId); SVF copy node ids are translated with tools/export/map-ids.mjs',
+    chunks: [...out, ...keepRest()],
   };
   fs.writeFileSync(path.join(OUT, 'manifest.json'), JSON.stringify(manifestOut));
   log(`\nWrote ${path.relative(SC, OUT)}/manifest.json in ${Math.round((Date.now() - t0) / 1000)} s\n`);
@@ -296,4 +351,13 @@ async function main() {
   log(`total ${(total / 1e6).toFixed(1)} MB; loaded by default (without rest) ${(eager / 1e6).toFixed(1)} MB`);
 }
 
-main().catch((e) => { console.error(e.stack || e.message); process.exit(1); });
+// Rest sub-chunks (rest-01.glb …, built by export-rest.mjs) stay in the manifest when the main chunks are re-exported.
+function keepRest() {
+  try { return JSON.parse(fs.readFileSync(path.join(OUT, 'manifest.json'), 'utf8')).chunks.filter((c) => c.group === 'rest'); } catch { return []; }
+}
+
+export { OUT, WORK, SC, HERE, readJSON, log };
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((e) => { console.error(e.stack || e.message); process.exit(1); });
+}
