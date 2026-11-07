@@ -54,6 +54,23 @@ def run_engineering_checks(payload: EngineeringCheckRunRequest, db: Session = De
             "skipped_checks": outcome["skipped_checks"], "findings": findings}
 
 
+class AIReviewRequest(BaseModel):
+    revision_id: uuid.UUID
+    requirement_ids: list[uuid.UUID] = Field(min_length=1, max_length=10)
+    component_ids: list[uuid.UUID] | None = Field(default=None, max_length=200)
+
+
+@router.post("/engineering-checks/ai-review", status_code=status.HTTP_201_CREATED)
+def ai_review(payload: AIReviewRequest, db: Session = Depends(get_db)):
+    """AI-assisted comparison of retrieved provisions with the revision's design data. The AI maps evidence and
+    missing information; quoted quantitative conditions are calculated deterministically. Findings stay open."""
+    from app.services.assessment.ai_review import review_requirements
+
+    outcome = review_requirements(db, payload.revision_id, payload.requirement_ids, payload.component_ids)
+    findings = [FindingOut.model_validate(service.get_finding(db, finding_id)) for finding_id in outcome["finding_ids"]]
+    return {"assessment_id": outcome["assessment_id"], "findings": findings}
+
+
 @router.get("/design-revisions/{revision_id}/completeness")
 def revision_completeness(revision_id: uuid.UUID, db: Session = Depends(get_db)):
     """Which key engineering properties (knowledge catalogue) each component has, and where sources disagree."""

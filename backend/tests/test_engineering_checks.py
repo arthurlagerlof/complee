@@ -136,3 +136,53 @@ def test_applicability_and_completeness_report(api_client):
     assert tank["missing_key_properties"] == ["tank_id", "fuel_type", "location"] and tank["complete"] is False
     assert report["unclassified_components"][0]["name"] == "Unknown thing"
     assert report["summary"]["classified"] == 2
+
+
+def test_ai_review_calculates_only_verbatim_quoted_conditions_with_design_values(api_client, monkeypatch):
+    from app.core.config import settings
+    from app.services import ai
+
+    _seed_check_provisions(api_client)
+    revision = _revision(api_client)
+    door = _component(api_client, revision, "door", "D-7", {"clear_width": {"value": 30, "unit": "in"}})
+    monkeypatch.setattr(settings, "gemini_api_key", "test-key")
+    monkeypatch.setattr(settings, "gemini_model", "gemini-test")
+    seen = {}
+
+    def fake_generate(session, request, _schema, **versions):
+        from app.db.models import AIExecution
+
+        seen["prompt"], seen["versions"] = request.prompt, versions
+        execution_id = uuid.uuid4()
+        session.add(AIExecution(id=execution_id, provider_id=request.provider_id, model_id=request.model_id, task_name="engineering_assistance",
+                                processing_status="completed", execution_duration_ms=1, token_usage={}, validation_outcome="valid"))
+        session.commit()
+        parsed = {
+            "requirement_summary": "Door openings need 815 mm clear width.", "condition_type": "numeric_limit",
+            "relevant_evidence": [{"component_name": "D-7", "property": "clear_width"}],
+            "missing_information": [], "applicability_questions": ["Is D-7 on an accessible route?"],
+            "conditions": [
+                {"component_name": "D-7", "property": "clear_width", "comparison": "min", "required_value": "815", "required_unit": "mm",
+                 "required_value_quote": "Door openings shall provide a clear width of 32 inches (815 mm) minimum."},
+                {"component_name": "D-7", "property": "clear_width", "comparison": "min", "required_value": "900", "required_unit": "mm",
+                 "required_value_quote": "doors must be at least 900 mm wide"},
+            ],
+            "observations": ["Width from the GA drawing only."], "confidence": 0.8,
+        }
+        return {"provider_id": request.provider_id, "model_id": request.model_id, "execution_id": execution_id, "duration_ms": 1,
+                "token_usage": {}, "parsed": parsed, "validation_errors": []}
+
+    monkeypatch.setattr(ai, "generate", fake_generate)
+    provision = next(c.provision_id for c in CHECKS if c.clause == "ADA 404.2.3")
+    response = api_client.post("/api/v1/engineering-checks/ai-review", json={"revision_id": revision, "requirement_ids": [str(provision)]})
+    assert response.status_code == 201, response.text
+    finding = response.json()["findings"][0]
+    assert "PROVISION (ADA 404.2.3" in seen["prompt"] and '"D-7"' in seen["prompt"] and "ENGINEERING REFERENCE CONTEXT" in seen["prompt"]
+    assert seen["versions"]["prompt_template_version"] == "requirement-design-review.v1"
+    assert finding["finding_type"] == "needs_engineering_review" and finding["status"] == "open" and finding["component_ids"] == [door]
+    calc = finding["calculation_results"]["calculations"]
+    assert len(calc) == 1 and calc[0]["result"]["measured"] == 762.0 and calc[0]["result"]["satisfied"] is False
+    assert calc[0]["design_value"]["value"] == 30, "design value comes from the database, not the AI"
+    assert "not verbatim" in finding["calculation_results"]["conditions_not_calculated"][0]["skipped"]
+    assert finding["assumptions"]["applicability_questions"] == ["Is D-7 on an accessible route?"]
+    assert finding["assumptions"]["compliance_decision_made"] is False
