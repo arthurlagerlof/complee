@@ -8,6 +8,7 @@ import { traceMatrix, traceCSV, cellLabel } from './src/trace.mjs';
 import { createViewer } from './viewer3d.js';
 import { createApsViewer, createFallbackViewer } from './viewer-aps.js';
 import { createLocalViewer } from './viewer-stream.js';
+import { loadOfficialText } from './regulation-text.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -665,6 +666,7 @@ function renderRuleView(ruleId) {
     <div class="tags">${rule.verified ? '<span class="tag blue">Value verified</span>' : '<span class="tag">Rule value not yet verified against official text</span>'}
       ${rule.review_status ? `<span class="tag review">${esc(rule.review_status)}</span>` : ''}
       ${rule.basis && rule.basis !== 'explicit' ? `<span class="tag grey" title="${esc(rule.basis_note || '')}">basis: ${esc(rule.basis)}</span>` : ''}</div>
+    <div id="ruleOfficial"></div>
     <div class="rulecount" id="ruleCount">${esc(countLine(hits))}</div>
     <div class="row" style="display:flex;gap:6px;margin:6px 0"><button id="ruleBack">Back to all findings</button></div>
     <div id="ruleParts">${shown.map((h) => `<div class="item" data-id="${esc(h.id)}"><span class="dot st-${h.status}"></span>
@@ -673,6 +675,7 @@ function renderRuleView(ruleId) {
   $('#ruleBack').onclick = () => { S.ruleView = null; viewer.clearHighlight?.(); showOverview(); renderRules(); renderList();
     $('#detail').innerHTML = '<p class="muted">Click a part, a finding or a rule.</p>'; };
   $('#ruleParts').querySelectorAll('.item').forEach((n) => (n.onclick = () => select(n.dataset.id)));
+  loadOfficialText($('#ruleOfficial'), ruleId);
 }
 
 function renderResults(id) {
