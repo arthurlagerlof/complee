@@ -8,3 +8,6 @@ integrations/sinceai/data/*.jsonl
 npm-debug.log*
 
 *.pyc
+.venv/
+__pycache__/
+.pytest_cache/
