@@ -89,7 +89,7 @@ function useViewer(sc) {
       if (S.sc !== sc) return 'stale';
       viewer = views.aps;
       viewer.build(S.norm, S.results);
-      if (viewer.simple) viewer.setSimple(false);
+      $('#simpleBtn').classList.toggle('on', !!viewer.simple); // Simple view is the default: light and readable
       $('#simpleBtn').hidden = $('#cutSel').hidden = false;
       $('#cutSel').innerHTML = '<option value="">No deck cut</option>';
       renderList();
@@ -371,6 +371,7 @@ function renderDetail(id) {
     <h1>${esc(id)} · ${esc(el.name)}</h1>
     <div class="muted">${esc(el.type)} · ${esc(deckName(el.deck))}${el.objectid != null ? ` · viewer dbId ${el.objectid}` : ''} · source: ${prov(el.source || S.model.source || 'not stated')}</div>
     <div id="dStatus" style="margin-top:6px"></div>
+    ${S.sc.viewer === 'aps' ? '<button id="backOverview" class="tiny" style="margin-top:6px">← Back to the whole ship</button>' : ''}
     ${el.note ? `<div class="note"><b>Model note:</b> ${esc(el.note)}</div>` : ''}
     <div id="dComponent"></div>
     <div id="dResults"></div>
@@ -379,6 +380,12 @@ function renderDetail(id) {
   renderComponent(id);
   renderResults(id);
   renderEditor(id);
+  if ($('#backOverview')) $('#backOverview').onclick = () => {
+    S.selected = null;
+    viewer.overview();
+    renderList();
+    $('#detail').innerHTML = '<p class="muted">Click a part, a finding or a rule.</p>';
+  };
 }
 
 // ---------- component view: part -> requirements ----------
