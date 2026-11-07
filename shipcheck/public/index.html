@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ShipCheck - compliance viewer</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="style.css" />
+<script type="importmap">
+  { "imports": {
+      "three": "./node_modules/three/build/three.module.js",
+      "three/addons/": "./node_modules/three/examples/jsm/",
+      "three-mesh-bvh": "./node_modules/three-mesh-bvh/src/index.js"
+  } }
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><b>ShipCheck</b><span>class &amp; regulatory compliance</span></div>
+  <nav class="workflow-steps" aria-label="Review workflow"><a href="evidence.html"><span>1</span> Add evidence</a><i></i><b><span>2</span> Review design</b><i></i><a href="index.html?scenario=rcrv-3d#manage"><span>3</span> Manage findings</a></nav>
+  <label>Scenario <select id="scenario"></select></label>
+  <label>Decks <select id="deck"></select></label>
+  <button id="planBtn" title="Top-down plan view">Plan view</button>
+  <button id="simpleBtn" hidden title="Show only the shell, the decks and the checked parts">Simple view</button>
+  <button id="fullBtn" hidden title="Full model: also show the parts no rule looks at, in grey (overview only; hidden while a findings filter, a rule or a component is shown)">Full model</button>
+  <select id="cutSel" hidden title="Cut the model above one deck (Autodesk.Section) and look at it like a plan"><option value="">No deck cut</option></select>
+  <span id="accBadge" class="accbadge" hidden title="Ground truth of the unedited design: the same files and scoring as npm test"></span>
+  <span class="grow"></span>
+  <button id="demoBtn" class="primary" title="Scripted run-through (Esc to stop)">&#9654; Demo run-through</button>
+  <button id="traceBtn" title="Parts × rules table; click a cell to jump to the part">Traceability</button>
+  <button id="reportBtn" title="Printable findings report">Report</button>
+  <button id="csvBtn" title="Download findings as CSV">CSV</button>
+</header>
+<main>
+  <aside id="side">
+    <section id="ship"></section>
+    <section id="score"></section>
+    <section id="summary"></section>
+    <section id="edits"></section>
+    <section id="rulesBox"></section>
+    <section>
+      <h2>Findings</h2>
+      <div id="filters"></div>
+      <div id="list"></div>
+    </section>
+    <section class="legend">
+      <span><i class="dot st-compliant"></i>Compliant</span>
+      <span><i class="dot st-non_compliant"></i>Non-compliant</span>
+      <span><i class="dot st-not_enough_info"></i>Not enough info</span>
+      <span><i class="dot st-none"></i>No rule</span>
+    </section>
+  </aside>
+  <section id="view">
+    <div id="threeView" class="viewpane"></div>
+    <div id="apsView" class="viewpane" hidden></div>
+    <div id="localView" class="viewpane" hidden></div>
+    <div id="fallbackView" class="viewpane" hidden></div>
+    <div id="tracePanel" class="viewpane" hidden></div>
+    <div id="caption" hidden></div>
+  </section>
+  <aside id="detail"><p class="muted">Click an element in the model or in the list to see every rule that applies, why it passes or fails, and where each value comes from.</p></aside>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

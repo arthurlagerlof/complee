@@ -1,0 +1,31 @@
+{
+  "scenarios": [
+    {
+      "id": "rcrv-3d",
+      "name": "RCRV: real 3D model (ShipConstructor via APS)",
+      "kind": "parts",
+      "model": "ships/rcrv/parts.json",
+      "meta": "ships/rcrv/rcrv-3d.meta.json",
+      "expected": "tests/expected/rcrv-3d.json",
+      "precomputed": "ships/rcrv/results-3d.json",
+      "viewer": "aps",
+      "fallback_images": [
+        "fallback/rcrv-overview.png",
+        "fallback/rcrv-finding.png"
+      ]
+    },
+    {
+      "id": "cruise",
+      "name": "Cruise passenger deck (fictional)",
+      "model": "ships/cruise/deck.json",
+      "expected": "tests/expected/cruise.json"
+    },
+    {
+      "id": "rcrv-layout",
+      "name": "Simplified research vessel (example)",
+      "model": "ships/rcrv/layout.json",
+      "expected": "tests/expected/rcrv-layout.json",
+      "viewer": "three"
+    }
+  ]
+}

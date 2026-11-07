@@ -4,4 +4,12 @@ dist/
 .vite/
 .env*
 !.env.example
+integrations/sinceai/data/*.jsonl
 npm-debug.log*
+
+*.pyc
+.venv/
+__pycache__/
+.pytest_cache/
+# Local development server logs
+.run/

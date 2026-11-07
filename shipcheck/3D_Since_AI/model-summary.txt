@@ -1,0 +1,382 @@
+== Top levels of the model tree (source files / blocks) ==
+12100-RCRV-199_07-08-2021.nwd  (207799 parts)
+  6096 OSU RCRV 3D NO SYSTEMS_SAI_07-01-2021.nwd  (47620 parts)
+    021-D05-00_BHP.dwg  (1 parts)
+    021-D06-00_TTP.dwg  (10 parts)
+    021-D07-00_BHP.dwg  (1 parts)
+    021-D12-00_FLT.dwg  (4 parts)
+    021-D13-00_BHK.dwg  (1 parts)
+    021-D14-00_BHK.dwg  (1 parts)
+    021-D15-00_BHK.dwg  (1 parts)
+    021-D16-00_BHK.dwg  (1 parts)
+    021-D17-00_BHK.dwg  (1 parts)
+    021-D18-00_BHK.dwg  (1 parts)
+    021-D19-00_MDK.dwg  (18 parts)
+    021-DECK SOCKETS.dwg  (10 parts)
+    021-F-00.5.dwg  (2 parts)
+    021-F-01.5.dwg  (2 parts)
+    021-F-01.dwg  (2 parts)
+    021-F-02.5.dwg  (2 parts)
+    021-F-02.dwg  (2 parts)
+    021-F-03.dwg  (2 parts)
+    021-F00.5.dwg  (2 parts)
+    021-F00.dwg  (4 parts)
+    021-F01.5.dwg  (2 parts)
+    021-F01.dwg  (4 parts)
+    021-F02.5.dwg  (5 parts)
+    021-F02.dwg  (13 parts)
+    021-F03.5.dwg  (5 parts)
+    021-F03.dwg  (5 parts)
+    021-F04.5.dwg  (5 parts)
+    021-F04.dwg  (5 parts)
+    021-F05.dwg  (29 parts)
+    021-L00-00C.dwg  (4 parts)
+    021-LDRMH.dwg  (2 parts)
+    021-LDRMH.dwg  (32 parts)
+    021-SSH.dwg  (36 parts)
+    022- ELECTRICAL EQUIPMENT FOUNDATIONS.dwg  (16 parts)
+    022- GRATING PANEL - BOW THRUSTER COMPT - FINAL.dwg  (8 parts)
+    022- GRATING SUPPORT STRUCTURE - BOW THRUSTER COMPT.dwg  (122 parts)
+    022- PROVISIONS COOLING PLANT PANELS FDNS.dwg  (12 parts)
+    022- SRP HYDRAULIC PUMPS SKID AND TANK FDNS.dwg  (30 parts)
+    022-19 INCH SPARE.dwg  (3 parts)
+    022-AD05-09_06-00P.dwg  (2 parts)
+    022-AL04-00_10-00P.dwg  (32 parts)
+    022-ALARM COLUMN FDN.dwg  (7 parts)
+    022-BSH.dwg  (50 parts)
+    022-CABINET FDNS.dwg  (24 parts)
+    022-D00-00_BSH.dwg  (58 parts)
+    022-D01-06.3125_HYD.dwg  (1 parts)
+    022-D02-08.375_FLT.dwg  (11 parts)
+    022-D02-08_TTP.dwg  (22 parts)
+    022-D05-08.6875_TTP.dwg  (13 parts)
+    022-D06-00_TTP.dwg  (28 parts)
+    022-D08-05.125_FLT.dwg  (11 parts)
+    022-D10-00_TTP SUPERPANEL.dwg  (108 parts)
+    022-D10-00_TTP.dwg  (4 parts)
+    022-D12-00_FLT.dwg  (29 parts)
+    022-D19-00_MDK SUPERPANEL.dwg  (201 parts)
+    022-D19-00_MDK.dwg  (15 parts)
+    022-DECK SOCKETS.dwg  (105 parts)
+    022-DEF PUMP FDN.dwg  (24 parts)
+    022-DEWATERING PLUGS.dwg  (8 parts)
+    022-DUPLEX STRAINER 4 INCH  FDN.dwg  (4 parts)
+    022-EK 80.dwg  (1 parts)
+    022-ELECTRICAL PENETRATIONS.dwg  (40 parts)
+    022-F05.5.dwg  (8 parts)
+    022-F06.5.dwg  (8 parts)
+    022-F06.dwg  (10 parts)
+    022-F07.5.dwg  (11 parts)
+    022-F07.dwg  (22 parts)
+    022-F08.5.dwg  (8 parts)
+    022-F08.dwg  (10 parts)
+    022-F09+7.2884.dwg  (1 parts)
+    022-F09.5.dwg  (8 parts)
+    022-F09.dwg  (13 parts)
+    022-F10.5.dwg  (8 parts)
+    022-F10.dwg  (55 parts)
+    022-F11.5.dwg  (10 parts)
+    022-F11.dwg  (10 parts)
+    022-F12.5.dwg  (10 parts)
+    022-F12.dwg  (20 parts)
+    022-F13.5.dwg  (8 parts)
+    022-F13.dwg  (11 parts)
+    022-F14.5.dwg  (6 parts)
+    022-F14.dwg  (83 parts)
+    022-F15.5.dwg  (6 parts)
+    022-F15.dwg  (6 parts)
+    022-F16.5.dwg  (6 parts)
+    022-F16.dwg  (6 parts)
+    022-F17.5.dwg  (6 parts)
+    022-F17.dwg  (6 parts)
+    022-F18.5.dwg  (6 parts)
+    022-F18.dwg  (77 parts)
+    022-F19.5.dwg  (6 parts)
+    022-F19.dwg  (6 parts)
+    022-F20.5.dwg  (6 parts)
+    022-F20.dwg  (6 parts)
+    022-F21.5.dwg  (6 parts)
+    022-F21.dwg  (6 parts)
+    022-F22 SUPERPANEL.dwg  (49 parts)
+    022-F22.5.dwg  (6 parts)
+    022-F22.dwg  (73 parts)
+    022-F23.5.dwg  (6 parts)
+    022-F23.dwg  (6 parts)
+    022-F24.5.dwg  (6 parts)
+    022-F24.dwg  (57 parts)
+    022-F25.5.dwg  (6 parts)
+    022-F25.dwg  (12 parts)
+    022-F26.5.dwg  (8 parts)
+    022-F26.dwg  (8 parts)
+    022-F27.dwg  (82 parts)
+    022-F28.dwg  (12 parts)
+    022-F29.dwg  (18 parts)
+    022-F30.dwg  (33 parts)
+    022-F31 SUPERPANEL.dwg  (85 parts)
+    022-F31.dwg  (73 parts)
+    022-FAN COIL UNIT.dwg  (116 parts)
+    022-FIRE PUMP FDN.dwg  (11 parts)
+    022-FWD SEA CHEST.dwg  (9 parts)
+    022-HATCHES.dwg  (7 parts)
+    022-HVAC STRUCTURAL PENETRATIONS.dwg  (51 parts)
+    022-IMACS REMOTE I O CABINET NO1 FDN.dwg  (8 parts)
+    022-JET THRUSTER OIL PUMP FDN.dwg  (79 parts)
+    022-JOINER BHD COAMING.dwg  (9 parts)
+    022-L00-00C.dwg  (41 parts)
+    022-L02-00P.dwg  (25 parts)
+    022-L02-00S.dwg  (37 parts)
+    022-L02-03.546875P.dwg  (3 parts)
+    022-L02-03.546875S.dwg  (3 parts)
+    022-L04-00P.dwg  (29 parts)
+    022-L04-00S.dwg  (30 parts)
+    022-L05-06P.dwg  (3 parts)
+    022-L07-00P.dwg  (3 parts)
+    022-L07-00S.dwg  (3 parts)
+    022-L07-07P.dwg  (3 parts)
+    022-L07-07S.dwg  (3 parts)
+    022-L10-00P.dwg  (52 parts)
+    022-L10-00S.dwg  (47 parts)
+    022-LDRMH.dwg  (120 parts)
+    022-LIGHTING SUPPORTS.dwg  (714 parts)
+    022-MANHOLES.dwg  (60 parts)
+    022-MOUNTS.dwg  (30 parts)
+    022-OVERBOARD SHELL INSERTS.dwg  (6 parts)
+    022-PADEYES.dwg  (144 parts)
+    022-RX EM 304.dwg  (1 parts)
+    022-SCIENCE SEAWATER PUMP FDN.dwg  (21 parts)
+    022-SEAWATER WASHDOWN PUMP FDN.dwg  (4 parts)
+    022-SHIP STORES REFRIGERATION UNIT FDN.dwg  (18 parts)
+    022-SPACE HEATERS FDN.dwg  (68 parts)
+    022-SPJ AND MOTOR CONT FIRE PMP CABS AND SOFT START HYD PMP CAB FDN.dwg  (44 parts)
+    022-SPJ LEACON TANK FDN.dwg  (100 parts)
+    022-SSH.dwg  (28 parts)
+    022-STAIRS.dwg  (10 parts)
+    022-STRIKER PLATES.dwg  (5 parts)
+    022-THRUSTER.dwg  (4 parts)
+    022-TOPAS PS18.dwg  (1 parts)
+    022-TRANSCEIVER ROOM EQUIPMENT FDN.dwg  (80 parts)
+    022-TRANSDUCER STRUCTURE.dwg  (74 parts)
+    022-TX EM 304.dwg  (1 parts)
+    022-VIBRATION MONITORING SYSTEM CABINET FDN.dwg  (6 parts)
+    022-WATERTIGHT DOOR PARTS.dwg  (22 parts)
+    031- (STRUCT) FUEL OIL PURIFIER FDN.dwg  (27 parts)
+    031- (STRUCT) SEWAGE SKID FDN.dwg  (86 parts)
+    031- CHILLED WATER PUMPS & STRAINER - EMERG BILGE BALLAST PUMP FDN.dwg  (63 parts)
+    031- CHILLER FOUNDATION.dwg  (24 parts)
+    031- DOMESTIC EQUIP RM EVAP_EJECTER_WASTE HEAT_FDN_NEW.dwg  (118 parts)
+    031- Domestic Equipment Room Consolidated FDN.dwg  (248 parts)
+    031- ELECTRICAL EQUIPMENT FOUNDATIONS.dwg  (156 parts)
+    031- FRESH WATER COOLING PUMP FDN_NEW.dwg  (23 parts)
+    031- FRESH WATER EXPANSION TANK FDN.dwg  (10 parts)
+    031- FUEL OIL TRANSFER PUMP AND STRAINER FDN_NEW.dwg  (29 parts)
+    031- GRATING PANEL _ UNIT 31 FINAL.dwg  (7 parts)
+    031- GREY WATER GREASE TRAP FDN.dwg  (16 parts)
+    031- HVAC FAN FDNS.dwg  (34 parts)
+    031- LUBE OIL TRANSFER PMP & LUBE OIL BASKET STRAINER FDN.dwg  (31 parts)
+    031- OWS Expansion Tank FDN.dwg  (7 parts)
+    031- SEWAGE TANK AERATION BLOWER FDN.dwg  (8 parts)
+    031- WATER CHILLER 12 TON CAP- FDN.dwg  (25 parts)
+    031-ACCESS PLATFORM STRUCTURE - DOMESTIC SPACE.dwg  (32 parts)
+    031-AUX MACHINERY MCC #2 FOUNDATION.dwg  (27 parts)
+    031-BALLAST WATER MANAGEMENT SYSTEM FOUNDATION.dwg  (25 parts)
+    031-BILGE KEEL.dwg  (90 parts)
+    031-BILGE PLUGS.dwg  (8 parts)
+    031-BSH.dwg  (34 parts)
+    031-CENTERBOARD FIT UP.dwg  (65 parts)
+    031-CENTERBOARD TRUNK STEEL.dwg  (1 parts)
+    031-CHILLED WATER SECONDARY PUMPS FDN.dwg  (14 parts)
+    031-D00-00.dwg  (38 parts)
+    031-D03-06_FLT.dwg  (41 parts)
+    031-D06-00_TTP SUPERPANEL.dwg  (66 parts)
+    031-D06-00_TTP.dwg  (26 parts)
+    031-D08-06_TTP.dwg  (4 parts)
+    031-D12-00_FLT.dwg  (19 parts)
+    031-D15-00_FLT.dwg  (11 parts)
+    031-D19-00_MDK SUPERPANEL.dwg  (94 parts)
+    031-D19-00_MDK.dwg  (17 parts)
+    031-DECK SOCKETS.dwg  (329 parts)
+    031-DEWATERING PLUGS.dwg  (4 parts)
+    031-DOORS.dwg  (10 parts)
+    031-ELECTRICAL PENETRATIONS.dwg  (21 parts)
+    031-EXPANSION TANK 6 GAL AND 4.5 GAL FDN'S.dwg  (14 parts)
+... 812 more
+
+== Most common object names ==
+85908	3D Solid
+85589	MESH
+11771	Stiffener
+7241	Plate
+4823	Subentity
+2743	SURFACE
+2475	Standard Plate
+2365	Region
+940	DECK SOCKET 3" - SHIPYARD FABRICATED
+896	PLANESURFACE
+797	SWEPTSURFACE
+752	_Part
+592	Standard Stiffener
+502	Faceplate
+435	EXTRUDEDSURFACE
+318	DECK SOCKET 1" - SHIPYARD FABRICATED
+302	PolyFace Mesh
+292	Curved Plate
+288	90585A624
+272	+Mp4YVKe3JUc4sqYAoVVcAm-1
+223	Standard Assembly Instance
+222	+yRtSZdNMHpYUY_O5XD.CLW-5
+216	90715A145
+206	0
+176	+myjHsFyjHOsPExAt9lRE8W
+164	+yRtSZdNMHpYUY_O5XD.CLW-3
+158	+Ks_evq3hGhw0JwMjju6Mim
+144	Block
+144	Insert
+138	+cpwYtXuDJrMU0fe6anYLbm
+136	+MDPZZIfdJUciFz26qvHFx0-1
+134	+kB2ilmRnHSUCpsezUCwJzG-2
+132	1" THREADED DECK SOCKET
+132	+yRtSZdNMHpYUY_O5XD.CLW-2
+128	90107A035
+118	+ibn2m5EZIFQFmd94v5nKc0-3
+116	+SHctXragJ8ANd9VZ6VuCB0-5
+114	RING BUSHING MOUNT-6 SERIES_6.3
+114	+yRtSZdNMHpYUY_O5XD.CLW-0
+114	+CWsl44rfJ1wABuYFrpdtM0-5
+
+== Property keys per group (count, examples) ==
+
+-- ShipConstructor --
+26104	Transparency	e.g. ByLayer
+26104	Material	e.g. ByLayer,CS ABS A | ByLayer | ByLayer,CS ABS B | ByLayer,SS SST 1.5" BAR GRATING | ByLayer,SS 316L
+26104	Part GUID	e.g. {B59DEFF5-3D18-45B4-B7DB-7DD15BCD017C} | {79CB8F98-E253-4EC8-B4DB-A3A2D80EE23C} | {2536685A-F10E-495D-B85E-CB0D10BF664E} | {BE8A434D-36D9-4C16-BA9B-7F74AAF29E20} | {63E60CB5-EDCF-49F8-BC7E-CB0D10BA3AE9}
+25881	Part Name	e.g. 21 044C | 21 802S | 21 806P | 21 805S | 21 804P
+25881	Stock Name	e.g. A10 | FB 7x5/8 GR A | A08 | A06 | L6x4x3/8 GR A
+25881	Surface Area	e.g. 512.7802 in^2 | 993.1592 in^2 | 615.9049 in^2 | 1126.8612 in^2 | 8025.9325 in^2
+25856	MS	e.g. 17-304/Unassigned Structure | 17-304/Unassigned Structure,17-304/Unassigned Structure | 17-304/Unassigned Equipment | 17-304 | 17-304/Unassigned Structure,17-304
+24955	SWBS	e.g. 110 | 130 | 100 | 120 | 6231
+24823	Temp for Shell Plate	e.g. 17-304/Unassigned Structure | 17-304/Unassigned Equipment | 17-304 | Error |  --- 
+23102	Drawing Name	e.g. 021-D05-00_BHP | 021-D06-00_TTP | 021-D07-00_BHP | 021-D12-00_FLT | 021-D13-00_BHK
+23102	Assembly Name	e.g. 8005 | 2702 | 2701 | 8007 | 2703
+23102	Assembly Full Name	e.g. PROJECT/021/21/8010/8009/8008/8007/8006/8005 | PROJECT/021/21/8010/8009/8008/8007/8006/8005/8004/8003/8002/ | PROJECT/021/21/8010/8009/8008/8007 | PROJECT/021/21/8010/8009/8008/8007/8006 | PROJECT/021/21/8010/8009/8008/8007/8006/8005/8004
+23102	LCG	e.g. 79.080461652 | -13.377301463 | 37.064614571 | -80.894771431 | -17.647063713
+23102	TCG	e.g. -0.000000001 | -21.260375575 | 21.260375575 | -8.278815567 | 34.787388259
+23102	VCG	e.g. 60.3125 | 72.25 | 84.3125 | 144.1875 | 139.714480588
+23102	Weight	e.g. 40.3lb | 80.1lb | 49.4lb | 91.0lb | 552.6lb
+22879	Color	e.g. 211 | 66 | 181 | 60 | 103
+22879	Stock Desc	e.g. 5/8" Grade A Steel | FB 7x5/8 Grade A Steel | 1/2" Grade A Steel | 3/8" Grade A Steel | L6x4x3/8 Grade A Steel
+22879	Part Side	e.g. Centerline | Starboard | Port
+22879	Plate Nest Drawing	e.g. 021\6096-100-021-SN-A10 | None | 021\6096-100-022-SN-A08 | 021\6096-100-021-SN-A06 | 021\6096-100-021-SN-A05
+22879	Plate Nest	e.g. 6096-100-021-SN-A10-01 | None | 6096-100-022-SN-A08-01 | 6096-100-021-SN-A10-02 | 6096-100-021-SN-A06-01
+22879	Has Mirror	e.g. No | Yes
+22842	Manufacturer	e.g. N/A | DEFAULT
+22711	PRIMARY	e.g. PROJECT/021/21/8010/8009/8008/8007/8006/8005 | PROJECT/021/21/8010/8009/8008/8007/8006/8005/8004/8003/8002/ | PROJECT/021/21/8010/8009/8008/8007 | PROJECT/021/Deck | PROJECT/021/21/8010/8009/8008/8007/8006
+12871	Profile Standard	e.g. FB 7x5/8 | L6x4x3/8 STEEL | FB 6x5/8 | FB 8x5/8 | FB 4x3/8
+12871	Profile Type	e.g. Flat Bar | Angle | Custom | Round Bar | Structural Pipe
+12871	Start Endcut	e.g. None | Y30(1) | TRIM+LAP | C3.6875x0.875+R1 | F30(WT)
+12871	End Endcut	e.g. None | TRIM+LAP | F30(WT) | R1.5+F30(WT) | C3.6875x0.875+R1
+12871	Profile Nest	e.g. None
+12871	Extrusion Length	e.g. 5'-4 9/16" | 3'-3 13/16" | 6'-3 9/16" | 3'-10 7/8" | 3'-0 1/4"
+12871	Web Direction	e.g. Up | Down | Port | Starboard | Aft
+12871	Flange Direction	e.g. Port | Starboard | Forward | Aft | Down
+12279	Trimmed Length	e.g. 5'-4 9/16" | 3'-3 13/16" | 6'-3 9/16" | 3'-10 7/8" | 3'-0 1/4"
+12279	Trimmed Off Start Length	e.g. 0" | 5/16" | 9/16" | 1/4" | 6"
+12279	Trimmed Off End Length	e.g. 0" | 9/16" | 1/4" | 6" | 3/16"
+12279	Start Green Length	e.g. 0" | 1" | 3" | 1'-0" | 2"
+12279	End Green Length	e.g. 0" | 3" | 1" | 1'-0" | 2"
+11771	Profile Plot Drawing	e.g. 6096-100-021-SP | NONE | None | 6096-022-6221-OA08-SP REV A | 6096-022-1801-OA09-SP
+10008	Stock Thickness	e.g. 5/8" | 1/2" | 3/8" | 5/16" | 2"
+10008	Throw Direction	e.g. Up | Starboard | Aft | Port | Center
+
+-- Attributes --
+57151	.rc	e.g. 180 180 180 | 0 0 255 | 38 154 73 | 255 127 0 | 0 0 209
+57150	sys	e.g. BILGE - OILY WATER 529 | HVAC-EXHAUST | Lighting | Lighting_Emergency | 5172 WASTE HEAT HVAC DIST-SUPPLY
+57150	MAS	e.g. 0.7200 | 19.30 | 4.200 | 5.700 | 0.0440
+57150	CGX	e.g. -1067 | -16766 | -16934 | -15347 | -14122
+57150	CGY	e.g. -127 | 799 | -5419 | 1285 | 706
+57150	CGZ	e.g. 3627 | 4569 | 5305 | 2723 | 2581
+57150	obt	e.g. 9 | 1 | 2 | 5 | 12
+50046	U51	e.g. 5292 | 5121 | 5172 | 5141 | 5361
+49888	DE	e.g. HALF-COUPLING, CS, 3000#, THREADED | REDUCER, VIEGA PROPRESS, FTG X P | ELBOW, 90, VIEGA PROPRESS, COPPER, P X P | THERMAL INSULATION, ASTM F683-10 | PIPE, COPPER, SEAMLESS HARD DRAWN, TYPE K
+49888	DD	e.g. 2" | 3/4" x 1/2" | 1/2" | T=1" | 3/4"
+45916	pli	e.g. BILGE-OVERBOARD-SHORE CONNECTIONS | 022-WASTE HEAT HVAC DIST-SUPPLY | 031-OILY WATER | 031-CHILLED WATER RETURN | 031-CHILLED WATER SUPPLY
+40825	MC	e.g. ASTM A234 Gr WPB | COPPER | ASTM B88 | BRONZE | COPPER NICKEL
+38596	ST	e.g. ASME B16.11 | VIEGA | ASTM F683-10 | TYPE K | NAVSEA 810-1385880
+37316	Idn	e.g. 6096-031-5292-SP02 | 6096-031-5141-SP01 | 6096-091-5511-SP01 | 6096-114-3421-SP01 | 6096-121-5172-SP01
+34863	spn	e.g. 005 | 028 | 027 | 106 | 003
+22944	len	e.g. 346.30 | 711.69 | 135.22 | 134.79 | 729.14
+7023	VFI	e.g. Final | Preliminary
+4042	fii	e.g. 90.00 | 45.00 | 18.72 | 11.01 | 30.00
+3235	.dG	e.g. WMOR200/110 | LIGHT GKI LED U 120-277V 6016M1 | LIGHT GKI LED U 110-277V 6000M1 | LIGHT GKI LED U 110-277V 6002M1 | LIGHT GKI LED U 120-277V 6018M1
+2391	bra	e.g. 38.10 | 228.60 | 150.00 | 76.20 | 152.40
+1695	.lu	e.g. 12
+1695	ASO	e.g. 30f821ce-8eb3-4b8f-88d1-03a7b438c1fc | 1811974d-6a40-499b-a581-3ae1d174ffd5 | 50be4441-ea38-44a5-a553-c38c45eb33bd | f7d6ff31-f9cb-46bc-9392-9df6997b694a | 3e006a67-66b7-4e58-a6ca-4d9b3b728f7b
+1534	vpo	e.g. WHR-V-140 | FWC-V-062 | FWC-V-051 | FWC-V-052 | FWC-V-050
+1382	.n5	e.g. 512.01.EF28 | 512.01.HWC04 | 313.03.05 | 565.01.01 | 314.06.02
+8	X	e.g. A | B | C | D
+6	NB	e.g. 86X8_00_03 (2),86X8_00_03 (2) | 86X8_00_04 (2),86X8_00_04 (2) | 86X8_00_01 (1),86X8_00_01 (1)
+6	NN	e.g. Schrank,Schrank | Bodenwanne,Bodenwanne
+6	NT	e.g. Bodenblech mitte,Bodenblech mitte | Bodenblech hinten,Bodenblech hinten | Bodenwanne,Bodenwanne
+6	NBSYN	e.g. $BEST._00_03 ($DETAIL.),$BEST._00_03 ($DETAIL.) | $BEST._00_04 ($DETAIL.),$BEST._00_04 ($DETAIL.) | $BEST._00_01 ($DETAIL.),$BEST._00_01 ($DETAIL.)
+6	LINA	e.g. 86X8_00_03 (2),86X8_00_03 (2) | 86X8_00_04 (2),86X8_00_04 (2) | 86X8_00_01 (1),86X8_00_01 (1)
+6	CATALOG	e.g. Rittal US,Rittal US
+6	BEST	e.g. 86X8,86X8
+6	DETAIL	e.g. niedrig,niedrig | hoch,hoch
+6	B3	e.g. 512,512
+6	T3	e.g. 712,712
+6	COMPANY	e.g. RITTAL,RITTAL
+6	PSOL_0	e.g. {$CADENAS_DATA\23d-libs\rittal_usa\schaltschranksys\schranks
+6	PSOL_1	e.g. 330},{WBVAR=DETAIL},{WBNUMERIC=DETAIL}  {NB=86X8_00_03 (2)}, | 00},{WBVAR=DETAIL},{WBNUMERIC=DETAIL}  {NB=86X8_00_04 (2)},{ | },{WBVAR=DETAIL},{WBNUMERIC=DETAIL}  {NB=86X8_00_01 (1)},{LI
+2	VERS	e.g. 1,1
+2	B	e.g. 600,600
+
+-- Description --
+1510	Text	e.g. 90715A185 | 92240A798 | 90715A145 | 90107A127 | 92186A628
+
+-- Summary --
+949	Last saved by	e.g. ShipArch08 | sharbin | kburke | josht | arporter
+
+-- Item --
+330760	Type	e.g. Plate | Layer | File | Faceplate | Subentity
+330760	Icon	e.g. Geometry | Layer | File | Composite Object | Group
+330757	Material	e.g. AutoCAD Color Index 211 | AutoCAD Color Index 7 | AutoCAD Color Index 66 | AutoCAD Color Index 95 | AutoCAD Color Index 181
+329808	Source File	e.g. 021-D05-00_BHP.dwg | 021-D06-00_TTP.dwg | 021-D07-00_BHP.dwg | 021-D12-00_FLT.dwg | 021-D13-00_BHK.dwg
+325927	GUID	e.g. d021ee79-8a03-5f16-bea7-f7ee8e43caf3 | 49ad650c-622c-50d2-8d6e-8485955193a0 | a0be7483-0d69-443e-8170-50909d786204 | 4cb5436a-406f-5f9e-9b02-8ca986fbe02c | edd5f77a-2ce8-565e-b772-8179c066f344
+61425	Name	e.g. _Part | 021-D05-00_BHP.dwg | 021-D06-00_TTP.dwg | 021-D07-00_BHP.dwg | Inline2
+1	Unit	e.g. Inches
+
+-- AutoCad --
+90460	Transparency	e.g. ByLayer
+90460	Material	e.g. ByLayer
+85589	Smoothness	e.g. None
+85589	Current Vertex[1],Vertex X	e.g. 0.000 | -58.950 | -295.130 | -81.870 | -113.650
+85589	Current Vertex[1],Vertex Y	e.g. 86.560 | -3.170 | 24.340 | -41.540 | -45.430
+85589	Current Vertex[1],Vertex Z	e.g. 49.970 | 124.940 | 132.940 | -42.150 | -23.970
+85589	Number of vertices	e.g. 480 | 38 | 37 | 24 | 16
+85589	Number of faces	e.g. 1024 | 76 | 70 | 44 | 28
+4871	U isolines	e.g. 2 | 6 | 0
+4871	V isolines	e.g. 2 | 6 | 0
+4871	Wireframe display	e.g. Isolines
+4871	Maintain associativity	e.g. None | Yes
+2128	Surface Type	e.g. Extrusion | Sweep | Planar
+797	Profile rotation	e.g. 0.000
+797	Bank along path	e.g. No
+797	Twist along path	e.g. 0.000
+797	Scale along path	e.g. 1.000
+797	Length	e.g. 4.888 | 2.014 | 39.270 | 43.982 | 56.549
+441	Show associativity	e.g. No
+435	Height	e.g. 0.250 | 0.500
+
+== Objects whose name or properties mention rule-relevant words ==
+1136	door	e.g. 30"X36" QUICK ACTING WATERTIGHT FLUSH HATCH WITH RECESSED SPRING | 30"X36" QUICK ACTING WATERTIGHT FLUSH HATCH WITH RECESSED SPRING | Plate
+383	stair	e.g. Plate | Standard Plate | Standard Plate
+264	ladder	e.g. Standard Assembly Instance | Standard Assembly Instance | Standard Assembly Instance
+0	corridor	e.g. 
+0	passage	e.g. 
+13	escape	e.g. STEELQUICK ACTING WATERTIGHT HATCH - FLUSH | STEELQUICK ACTING WATERTIGHT HATCH - FLUSH | STEELQUICK ACTING WATERTIGHT HATCH - FLUSH
+450	cabin	e.g. Plate | Plate | Plate
+536	tank	e.g. Plate | Plate | Plate
+1551	hatch	e.g. 30"X36" QUICK ACTING WATERTIGHT FLUSH HATCH WITH RECESSED SPRING | 30"X36" QUICK ACTING WATERTIGHT FLUSH HATCH WITH RECESSED SPRING | Subentity
+7	railing	e.g. Inline19306 | Inline42261 | Inline42262
+10008	thickness	e.g. Plate | Plate | Plate
+858	room	e.g. 19-INCH SPARE | 19-INCH SPARE | 19-INCH SPARE
+235	space	e.g. 3D Solid | 3D Solid | 3D Solid

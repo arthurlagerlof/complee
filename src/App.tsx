@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { gsap } from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import {
@@ -17,8 +17,12 @@ import {
 } from 'lucide-react'
 import { inspectionPoints } from './inspectionData'
 import VesselViewer from './VesselViewer'
+import EvidenceIntake from './EvidenceIntake'
+import AiWorkspace from './AiWorkspace'
 
 gsap.registerPlugin(ScrollTrigger)
+
+const SHIPCHECK_REVIEW_URL = import.meta.env.VITE_SHIPCHECK_REVIEW_URL || '/inspection/index.html?scenario=rcrv-3d'
 
 function ProductName() {
   return (
@@ -33,9 +37,14 @@ function App() {
   const root = useRef<HTMLDivElement>(null)
   const [selectedId, setSelectedId] = useState(inspectionPoints[0].id)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [showConcept, setShowConcept] = useState(() => window.location.hash !== '#evidence')
+  const [showAi, setShowAi] = useState(() => window.location.hash === '#ai-settings')
+  const [evidenceCount, setEvidenceCount] = useState(0)
   const selectedPoint = inspectionPoints.find((point) => point.id === selectedId) ?? inspectionPoints[0]
 
   useEffect(() => {
+    if (!showConcept || showAi) return
+    try { setEvidenceCount(JSON.parse(sessionStorage.getItem('compleeEvidenceFiles') || '[]').length) } catch { setEvidenceCount(0) }
     const context = gsap.context(() => {
       const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
@@ -69,9 +78,36 @@ function App() {
     }, root)
 
     return () => context.revert()
-  }, [])
+  }, [showConcept, showAi])
 
   const closeMenu = () => setMenuOpen(false)
+  const openEvidence = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault()
+    window.history.pushState(null, '', '#evidence')
+    setMenuOpen(false)
+    setShowAi(false)
+    setShowConcept(false)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  const continueToInspection = () => {
+    window.location.assign(SHIPCHECK_REVIEW_URL)
+  }
+  const backToMain = () => {
+    window.history.pushState(null, '', '#top')
+    setShowAi(false)
+    setShowConcept(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  const openAiSettings = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault()
+    window.history.pushState(null, '', '#ai-settings')
+    setMenuOpen(false)
+    setShowConcept(true)
+    setShowAi(true)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  if (showAi) return <AiWorkspace onBack={backToMain} />
+  if (!showConcept) return <EvidenceIntake onContinue={continueToInspection} onBack={backToMain} />
 
   return (
     <div ref={root} id="top">
@@ -81,10 +117,12 @@ function App() {
           <nav className="desktop-nav" aria-label="Main navigation">
             <a href="#challenge">The challenge</a>
             <a href="#inspection">Vessel inspection</a>
+            <a href="#evidence" onClick={openEvidence}>Add evidence</a>
+            <a href="#ai-settings" onClick={openAiSettings}>AI Providers</a>
             <a href="#workflow">How it works</a>
             <a href="#architecture">Deployment</a>
           </nav>
-          <a className="nav-cta" href="#inspection">Explore the vessel <ArrowUpRight size={14} /></a>
+          <a className="nav-cta" href="#evidence" onClick={openEvidence}>Add evidence <ArrowUpRight size={14} /></a>
           <button
             type="button"
             className="menu-toggle"
@@ -99,6 +137,8 @@ function App() {
         <nav id="mobile-navigation" className={`mobile-nav${menuOpen ? ' menu-open' : ''}`} aria-label="Mobile navigation" aria-hidden={!menuOpen}>
           <a href="#challenge" onClick={closeMenu}>The challenge <ArrowRight size={16} /></a>
           <a href="#inspection" onClick={closeMenu}>Vessel inspection <ArrowRight size={16} /></a>
+          <a href="#evidence" onClick={openEvidence}>Add evidence <ArrowRight size={16} /></a>
+          <a href="#ai-settings" onClick={openAiSettings}>AI Providers <ArrowRight size={16} /></a>
           <a href="#workflow" onClick={closeMenu}>How it works <ArrowRight size={16} /></a>
           <a href="#architecture" onClick={closeMenu}>Deployment <ArrowRight size={16} /></a>
         </nav>
@@ -158,7 +198,7 @@ function App() {
             </div>
             <div className="inspection-workspace" data-reveal>
               <div className="inspection-vessel">
-                <div className="workspace-bar"><span><span className="live-dot" /> R/V TAANI · DESIGN VIEW</span><span>ILLUSTRATIVE DEMO</span></div>
+              <div className="workspace-bar"><span><span className="live-dot" /> R/V TAANI · DESIGN VIEW</span><span>{evidenceCount ? `${evidenceCount} EVIDENCE FILES · ` : ''}PRELOADED MODEL · ILLUSTRATIVE DEMO</span></div>
                 <VesselViewer
                   className="inspection-viewer"
                   selectedPointId={selectedId}

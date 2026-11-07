@@ -11,10 +11,45 @@ npm install
 npm run dev
 ```
 
+The navigation opens the evidence intake in the same app. The intake accepts documents, drawings and 3D model files; DOCX text review is enabled in this demo and retrieves candidate passages through the optional SinceAI SOLAS II-2 adapter. Continuing returns to the illustrative R/V Taani model inspection. Original files are processed in the browser and are not persisted; only selected file names and sizes carry into the design demo. The extracted source corpus is ignored by Git and can be placed at `integrations/sinceai/data/solas_ii2_revised_mca.jsonl`; set `EVIDENCE_PROVIDER=none` to disable source retrieval. This is local-demo middleware in Vite, not a production upload service.
+
+The local dev site opens on the evidence intake workflow. It accepts document, drawing and 3D model files in the browser; the demo's document text reviewer currently supports DOCX and retrieves candidate passages from the optional SinceAI SOLAS II-2 adapter. The next step opens the illustrative R/V Taani model review already included in the app. Original files are processed in the browser and are not persisted; only selected file names and sizes carry into the design demo. The extracted source corpus is ignored by Git and can be placed at `integrations/sinceai/data/solas_ii2_revised_mca.jsonl`; set `EVIDENCE_PROVIDER=none` to disable the source adapter. This is local-demo middleware in Vite, not a production upload service.
+
+### Pages on the dev server (http://localhost:5173)
+
+| Page | What it is |
+| --- | --- |
+| `/landing` | This Complee landing page (`/` redirects here). |
+| `/inspection/` | ShipCheck from `shipcheck/`: evidence intake, then the checker with the real RCRV 3D model at `/inspection/index.html`. |
+| `/#ai-settings` | Backend-backed AI provider configuration, model routing, provider testing and text extraction review. Requires the FastAPI setup described in `backend/README.md`. |
+
+ShipCheck needs its own dependencies. The default local viewer uses files in `shipcheck/model/`; APS keys are only needed for the optional `?viewer=aps` fallback:
+
+```sh
+cd shipcheck && npm install && cd ..
+npm run dev
+```
+
+`/inspection/` only exists on the dev server (ShipCheck runs as Node middleware); `npm run build` builds the landing page only.
+ShipCheck can still run on its own: `cd shipcheck && npm start` (port 8080).
+
+On Windows, start or recover both pages without keeping a terminal open:
+
+```powershell
+.\scripts\start-dev.ps1
+# Restart this project server: .\scripts\start-dev.ps1 -Restart
+# Stop it: .\scripts\start-dev.ps1 -Stop
+```
+
+The helper uses port 5173, checks the inspection health endpoint, and preserves startup logs in the gitignored `.run/` directory. It reuses a running project server and refuses to stop unrelated applications. Model files are served by the same app in local development unless `MODEL_BASE_URL` explicitly selects a separate model host. `npm run dev` remains available for a foreground terminal session; stopping that session stops the app.
+
 Create a production build with `npm run build`.
 
 ## Stack
 
 React, TypeScript, Vite, GSAP/ScrollTrigger, and Lucide icons.
+
+## Development
+Push changes to the dev branch, main branch will be deployed automatically when you put your changes there.
 
 - Created by team KEEP
