@@ -794,6 +794,36 @@ async function runDemo() {
         document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
         await step(4800);
       }
+
+      // 3b. Component view and rule view on a hatch (about 20 s). The model has no failing hatch: this one's
+      // size is not in the model (amber); the what-if value is shown as such and never written to the model.
+      const h = d.hatch;
+      if (h && S.results.elements[h.focus]) {
+        select(h.focus);
+        const hr = S.results.elements[h.focus].results.find((x) => x.rule_id === h.rule);
+        caption(`Component view: ${elById(h.focus).name.split(' · ')[0]}`,
+          hr.status === 'not_enough_info' ? `${LABEL[hr.status]}: ${hr.parameter.replace(/_/g, ' ')} not in the model (no size in the name) · required ${hr.required}` : `${LABEL[hr.status]}: ${hr.measured} · required ${hr.required}`);
+        await step(3800);
+        caption(`The card shows the rule, its source and review status`, `${hr.source.split(';')[0]} · ${hr.review_status ?? ''}`);
+        const card = document.querySelector(`#dResults .res[data-rule="${CSS.escape(h.rule)}"]`);
+        card?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        if (card) pulse(card);
+        await step(3800);
+        showRule(h.rule);
+        caption(`Rule view: ${countLine(ruleHits(h.rule))}`, 'Every part the rule applies to, coloured by that rule');
+        pulse('#ruleCount');
+        await step(4200);
+        select(h.focus);
+        caption(`What-if: ${h.fix.prop.replace(/_/g, ' ')} = ${h.fix.value} ${h.fix.unit}`, 'Labelled "what-if, not in model"; re-checked and recoloured instantly');
+        await step(800);
+        if (await demoTypeFix(step, h.focus, h.fix)) {
+          await step(500);
+          const now = S.results.elements[h.focus].worst;
+          caption(`${h.focus} is now ${LABEL[now].toLowerCase()} (what-if, not in model)`, 'Reset restores the model value; the model itself is never changed');
+          pulse('#dStatus');
+          await step(3200);
+        }
+      }
     }
 
     // 4. Switch to the cruise deck: C2 fails two overlapping rules.

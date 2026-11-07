@@ -6,6 +6,11 @@ for every part, which rules apply, whether it passes, **why**, and where every v
 - **Deterministic checker.** Pass/fail comes from plain code, never from an LLM. Same input, same result.
 - **Real 3D model.** The OSU RCRV ShipConstructor production model (330,760 objects, inches) converted with Autodesk APS and shown in the APS viewer:
   parts are coloured red (non-compliant), amber (not enough info) or green (compliant). Clicking a finding isolates the part and flies to it.
+- **Views on the real model** (APS viewer; the model is only hidden, ghosted, coloured, cut and framed, never changed):
+  *Simple view* (shell, decks and checked parts only) with a *deck cut*; *component view* (click a part: isolated, outlined,
+  3D label with the key value, card with every rule, missing data and what-if editing labelled "what-if, not in model");
+  *rule view* (click a rule: all its parts with counts, e.g. "22 hatches: 4 pass, 0 fail, 18 not enough info");
+  *traceability* table (parts × rules, the same data as the report).
 - **Cruise passenger deck (fictional)** with planted findings, shown in a Three.js deck view, with live editing.
   Passenger-ship rules (accessibility, LNG) are shown on an example deck because the RCRV research vessel has no passenger areas or LNG, as agreed with the Meyer mentors.
 - **Class society DNV**, confirmed by Meyer mentors (Q&A, 7 Nov). Rule values are `verified: false` with review status *reviewed by Meyer mentors*.

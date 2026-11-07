@@ -44,6 +44,15 @@
   },
   "demo": {
     "focus_rule": "IACS-W11-HULL-GRADE",
-    "quote_match": "special approval"
+    "quote_match": "special approval",
+    "hatch": {
+      "focus": "P3522",
+      "rule": "IGC-3.5.3.1.2-HATCH-OPENING",
+      "fix": {
+        "prop": "clear_opening_min_side",
+        "value": 24,
+        "unit": "in"
+      }
+    }
   }
 }

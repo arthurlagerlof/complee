@@ -74,15 +74,14 @@ export async function createApsViewer(container, { onPick } = {}) {
   let idToDb = new Map(), dbToId = new Map(), results = null, checked = [], context = new Set();
   let mode = 'all', simple = false, override = null, cut = null, selectedId = null, labelAnchor = null;
 
-  // Self-healing cache: a flag is set while the model loads and cleared on success. If the previous load never
-  // finished (e.g. the viewer's local OPFS model cache got corrupted), the cache is removed before loading again.
+  // The viewer keeps a local model cache (OPFS "otg_cache"). In testing, every load that read from it stalled
+  // (the viewer's cache writer fails with "truncate ... outside the range"), while a fresh download takes about
+  // 30 s. So the cache is removed before each load: slower than a working cache, but never stuck.
   const FLAG = 'shipcheck.apsLoadPending';
   async function clearStaleCache() {
-    let pending = false;
-    try { pending = localStorage.getItem(FLAG) === '1'; } catch { /* storage blocked */ }
-    if (!pending) return;
     const root = await navigator.storage?.getDirectory?.().catch(() => null);
-    await root?.removeEntry('otg_cache', { recursive: true }).catch(() => null);
+    if (!root) return;
+    await Promise.race([root.removeEntry('otg_cache', { recursive: true }).catch(() => null), new Promise((r) => setTimeout(r, 3000))]);
   }
   const setFlag = (on) => { try { on ? localStorage.setItem(FLAG, '1') : localStorage.removeItem(FLAG); } catch { /* ignore */ } };
 
@@ -131,7 +130,7 @@ export async function createApsViewer(container, { onPick } = {}) {
     const box = boxOf(db);
     if (!box) return viewer.fitToView([db]);
     const c = box.getCenter(new (T().Vector3)()), s = box.getSize(new (T().Vector3)());
-    const half = Math.max(s.x, s.y, s.z) * 1.5 + 100; // model unit: inch
+    const half = Math.max(s.x, s.y, s.z) * 1.5 + 60; // model unit: inch (about 1.5 m of context around the part)
     viewer.navigation.fitBounds(false, new (T().Box3)(c.clone().subScalar(half), c.clone().addScalar(half)));
   }
 
