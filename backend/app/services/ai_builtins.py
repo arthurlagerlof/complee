@@ -128,9 +128,3 @@ def test_builtin(provider_id: str) -> dict[str, Any]:
     finally:
         if adapter is not None:
             adapter.close()
-
-
-def get_builtin(provider_id: str) -> dict[str, Any]:
-    provider = _builtin(provider_id)
-    with _status_lock:
-        return {**provider, **_test_status.get(provider_id, {})}

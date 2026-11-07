@@ -92,10 +92,6 @@ def _relation(table: str) -> str:
     return f'"{validate_sql_identifier("public")}"."{validate_sql_identifier(table)}"'
 
 
-def _column(value: str) -> str:
-    return f'"{validate_sql_identifier(value)}"'
-
-
 def _select_columns() -> str:
     return """
         SELECT p.id AS id,
