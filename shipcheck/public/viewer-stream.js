@@ -96,6 +96,24 @@ export async function createLocalViewer(
   overviewMaterial.polygonOffset = true;
   overviewMaterial.polygonOffsetFactor = 1;
   overviewMaterial.polygonOffsetUnits = 1;
+  // Parts that are transparent in the original model (material opacity < 1, e.g. the rescue-boat launch envelope at
+  // 4 % or glazing at 20 %) are drawn in a second, see-through pass with their own opacity. The state alpha carries
+  // it: 255 = visible and opaque, 1-254 = visible with that opacity, 0 = hidden (or fully transparent in the source).
+  const glassMaterial = new THREE.MeshLambertMaterial({
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    clippingPlanes: clipping,
+    transparent: true,
+    depthWrite: false,
+  });
+  glassMaterial.onBeforeCompile = (s) => {
+    s.fragmentShader = s.fragmentShader.replace(
+      "#include <color_fragment>",
+      "#include <color_fragment>\nif (vColor.a > 0.995 || vColor.a < 0.002) discard;",
+    );
+  };
+  glassMaterial.customProgramCacheKey = () => "viewport-glass";
+  const PICK_MIN_ALPHA = 26; // parts below 10 % opacity are practically invisible in the original: not clickable
   const outline = new THREE.Box3Helper(new THREE.Box3(), 0x1f6feb);
   outline.material.depthTest = false;
   outline.renderOrder = 10;
@@ -324,6 +342,7 @@ export async function createLocalViewer(
       clipping.length = 0;
       material.needsUpdate = true;
       overviewMaterial.needsUpdate = true;
+    glassMaterial.needsUpdate = true;
     }
     viewRevision++;
   }
@@ -382,7 +401,9 @@ export async function createLocalViewer(
       c.state[o] = Math.round(col[0] * 255);
       c.state[o + 1] = Math.round(col[1] * 255);
       c.state[o + 2] = Math.round(col[2] * 255);
-      c.state[o + 3] = colorState(db, c.info.group === "rest");
+      const shown = colorState(db, c.info.group === "rest");
+      c.state[o + 3] =
+        shown && c.opacity && c.opacity[v] < 255 ? c.opacity[v] : shown;
     }
     c.geom.attributes.color.needsUpdate = true;
     invalidate();
@@ -458,9 +479,33 @@ export async function createLocalViewer(
             0;
     const state = new Uint8Array(n * 4);
     geom.setAttribute("color", new THREE.BufferAttribute(state, 4, true));
+    // Source opacity per vertex: from the tile (_OPACITY) or, for tiles without it, the manifest's per-part table.
+    let opacity = null;
+    const opAttr = geom.attributes._opacity;
+    if (opAttr) {
+      for (let v = 0; v < n; v++) {
+        const o = Math.round(opAttr.getX(v) * 255);
+        if (o < 255) (opacity ??= new Uint8Array(n).fill(255))[v] = o;
+      }
+      geom.deleteAttribute("_opacity");
+    } else if (manifest.opacity_by_dbid) {
+      for (let v = 0; v < n; v++) {
+        const o = manifest.opacity_by_dbid[dbids[v]];
+        if (o !== undefined) (opacity ??= new Uint8Array(n).fill(255))[v] = o;
+      }
+    }
     mesh.material = info.group === "overview" ? overviewMaterial : material;
     mesh.raycast = () => {};
     mesh.frustumCulled = true;
+    if (opacity) {
+      const glass = new THREE.Mesh(geom, glassMaterial);
+      glass.raycast = () => {};
+      glass.renderOrder = 2;
+      glass.matrixAutoUpdate = false;
+      mesh.updateMatrix();
+      glass.matrix.copy(mesh.matrix);
+      mesh.parent.add(glass);
+    }
     root.add(gltf.scene);
     mesh.updateWorldMatrix(true, false);
     let resolveReady;
@@ -473,6 +518,7 @@ export async function createLocalViewer(
         geom,
         dbids,
         state,
+        opacity,
         readyPromise,
         resolveReady,
         units: new Set(),
@@ -708,7 +754,7 @@ export async function createLocalViewer(
     for (const h of hits) {
       if (
         (clipping[0] && clipping[0].distanceToPoint(h.p) < 0) ||
-        h.c.state[h.v * 4 + 3] !== 255
+        h.c.state[h.v * 4 + 3] < PICK_MIN_ALPHA
       )
         continue;
       const id = dbToId.get(h.db);
@@ -749,6 +795,7 @@ export async function createLocalViewer(
     geometryNotice = "";
     material.needsUpdate = true;
     overviewMaterial.needsUpdate = true;
+    glassMaterial.needsUpdate = true;
     if (active) {
       refresh();
       if (selectionBox) showBox(selectionBox, labelHTML, labelStatus);
@@ -959,6 +1006,7 @@ export async function createLocalViewer(
       }
       material.needsUpdate = true;
       overviewMaterial.needsUpdate = true;
+    glassMaterial.needsUpdate = true;
       invalidate();
       schedule();
       return l;

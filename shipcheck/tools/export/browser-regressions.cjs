@@ -85,6 +85,24 @@ test('real model overview: complete exterior, centred, not cut off', { timeout: 
   assert.deepEqual(await page.evaluate(() => window.localViewer.stats.errors), [], 'no tile errors');
 }));
 
+test('parts transparent in the original stay see-through (rescue-boat launch envelope, 4 % opacity)', { timeout: 300000 }, () => withPage(async (page) => {
+  await openReal(page);
+  await settled(page);
+  const envelope = 50426; // MOD124-RESCUE BOAT AND DAVIT.dwg, layer ENV_, material opacity 0.04
+  const r = await page.evaluate((db) => {
+    let n = 0, max = 0, glass = 0;
+    for (const c of window.localViewer.tiles.values()) {
+      let has = false;
+      for (let v = 0; v < c.dbids.length; v++) if (c.dbids[v] === db) { n++; has = true; max = Math.max(max, c.state[v * 4 + 3]); }
+      if (has && c.mesh.parent.children.some((o) => o !== c.mesh && o.material?.transparent)) glass++;
+    }
+    return { n, max, glass };
+  }, envelope);
+  assert.ok(r.n > 0, 'the envelope is part of the loaded overview');
+  assert.ok(r.max > 0 && r.max <= 26, `drawn with its original opacity, not as a solid block (alpha ${r.max}/255)`);
+  assert.ok(r.glass > 0, 'drawn in the see-through pass');
+}));
+
 test('Simple / Full model / deck cut stay in sync', { timeout: 300000 }, () => withPage(async (page) => {
   await openReal(page);
   await page.focus('#cutSel'); // deck levels are filled in on first use

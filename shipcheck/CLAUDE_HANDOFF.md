@@ -15,6 +15,10 @@
   (bug fixed: cut selector now resets), rule view + component + what-if (P3522 24 in -> compliant), forced WebGL context
   loss/recovery, tall portrait resize, APS (headless: hit its own 180 s load timeout -> clean screenshot fallback), full demo.
   Ignored `work/lifecycle-regressions.cjs`: 7/7 pass (its manifest route now matches `stream*/manifest.json`).
+- Materials: the original marks ~1.58 M triangles (5,035 objects) transparent (e.g. rescue-boat launch envelope, layer ENV_,
+  opacity 0.04). The hp tiles now carry per-vertex source opacity (`_OPACITY`, normal's 4th byte); the viewer draws them in a
+  see-through pass; overview tiles use `manifest.opacity_by_dbid` (uniform parts only). audit-hp checks opacity exactly.
+  The previous opaque hp set is kept in `model/stream-hp-prev/`.
 - Known layout limit: below ~800 px width the fixed 330 px + 420 px side columns leave no room for the 3D pane (existing design).
 - `tests/tile-audit.test.mjs` no longer needs the export tools installed (tile-model.mjs loads meshoptimizer lazily). npm test: 91/91.
 
