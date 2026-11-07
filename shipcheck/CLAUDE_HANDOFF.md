@@ -30,6 +30,12 @@
   deck). viewer-stream scene mode: real ship neutral, cut at deck+1.5 m (below the real ceilings), two-phase entry (cut,
   then fly), overlay shapes from `public/viewer-scene.js`, picking/select/what-if; Simple/Full/cut controls hidden. Demo:
   real ship (overview, check, P1770, 22-hatch rule view) -> scene (corridor fail -> what-if green, guard rail inch).
+- Professional demo pass (7-8 Nov): visible demo pointer (`pointAt` in app.js) clicks the real list/rules/scenario/editor/
+  Traceability/Report; report preview overlay in the page; closing caption. Component view on the real model is never a
+  lone part: real ship solid neutral, cut 1 m above the part, X-ray pass for the selected part, ~4.5 m context, smooth
+  flight; tiles around the destination are prefetched before every flight (`focusBox` + `waitForTiles`); the viewport
+  policy returns component tiles plus context tiles. Switching between scenarios of the real viewer keeps its tiles
+  (`setActive(false, { keepTiles })`), so entering the corridor scene never rebuilds the ship.
 - Known layout limit: below ~800 px width the fixed 330 px + 420 px side columns leave no room for the 3D pane (existing design).
 - `tests/tile-audit.test.mjs` no longer needs the export tools installed (tile-model.mjs loads meshoptimizer lazily). npm test: 91/91.
 
