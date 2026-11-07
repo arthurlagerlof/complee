@@ -4,7 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { MeshoptDecoder, MeshoptEncoder } from 'meshoptimizer';
+// meshoptimizer (export-tool dependency) is loaded on first use, so pure helpers that import this module (e.g. the
+// tile audit's matcher in the app's npm test) work without the export tools installed.
+let MeshoptDecoder, MeshoptEncoder;
+async function meshopt() {
+  if (!MeshoptDecoder) ({ MeshoptDecoder, MeshoptEncoder } = await import('meshoptimizer'));
+  await Promise.all([MeshoptDecoder.ready, MeshoptEncoder.ready]);
+}
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const MODEL = path.join(ROOT, 'model');
@@ -18,7 +24,7 @@ function disk() {
   if (free < 3e9) throw Error(`STOP: ${(free / 1e9).toFixed(2)} GB free; at least 3 GB is required`);
 }
 export async function decodeGlb(file) {
-  await MeshoptDecoder.ready;
+  await meshopt();
   const bin = fs.readFileSync(file);
   if (bin.readUInt32LE(0) !== 0x46546c67) throw Error('Not a GLB');
   const jsonSize = bin.readUInt32LE(12), json = JSON.parse(bin.subarray(20, 20 + jsonSize));
@@ -40,9 +46,9 @@ export function writeGlb(json, body) {
   return Buffer.concat([h, jp, bh, bp]);
 }
 
-export async function tileChunk(info) {
-  disk(); await Promise.all([MeshoptDecoder.ready, MeshoptEncoder.ready]);
-  const { json: j, views, hash } = await decodeGlb(path.join(MODEL, info.file));
+export async function tileChunk(info, options={}) {
+  disk(); await meshopt();
+  const { json: j, views, hash } = await decodeGlb(path.join(options.inputDir||MODEL, info.file));
   if (j.meshes.length !== 1 || j.nodes.length !== 1 || j.meshes[0].primitives.length !== 1) throw Error('Expected one static merged mesh per source chunk');
   const primitive = j.meshes[0].primitives[0], pa = j.accessors[primitive.attributes.POSITION], ia = j.accessors[primitive.indices];
   const ca = j.accessors[primitive.attributes.COLOR_0], node = j.nodes[0];
@@ -51,8 +57,10 @@ export async function tileChunk(info) {
   const positions = new Uint16Array(views[pa.bufferView].buffer), indices = new Uint32Array(views[ia.bufferView].buffer, ia.byteOffset || 0, ia.count);
   const colors = views[ca.bufferView], cs = j.bufferViews[ca.bufferView].byteStride || 4, co = ca.byteOffset || 0;
   const scale = node.scale || [1, 1, 1], tr = node.translation || [0, 0, 0];
-  const cells = new Map();
+  const cells = new Map(); let retained=0;
   for (let t = 0; t < indices.length / 3; t++) {
+    if(options.visible){const id=indices[3*t+2]+options.base;if(!(options.visible[id>>3]&(1<<(id&7))))continue;}
+    retained++;
     const a = indices[3*t]*ps+po, b = indices[3*t+1]*ps+po, c = indices[3*t+2]*ps+po;
     const key = [0,1,2].map(k => Math.floor(((positions[a+k]+positions[b+k]+positions[c+k])/3*scale[k]+tr[k])/CELL_MM)).join('_');
     if (!cells.has(key)) cells.set(key, []);
@@ -94,19 +102,30 @@ export async function tileChunk(info) {
       const accessors=attrs.map((a,i)=>({...a.accessor,bufferView:i,count:oldVertices.length,...(a.semantic==='POSITION'?{min:localMin,max:localMax}:{})}));
       accessors.push({...ia,bufferView:attrs.length,count:outIndex.length});
       const gj={asset:{version:'2.0',generator:'ShipCheck lossless spatial tiler'},extensionsUsed:j.extensionsUsed,extensionsRequired:j.extensionsRequired,scene:0,scenes:[{nodes:[0]}],nodes:[node],materials:j.materials,meshes:[{primitives:[{...primitive,attributes:Object.fromEntries(attrs.map((a,i)=>[a.semantic,i])),indices:attrs.length}]}],accessors,bufferViews,buffers:[{byteLength:compressedOffset},{byteLength:decodedOffset,extensions:{EXT_meshopt_compression:{fallback:true}}}]};
-      const glb=writeGlb(gj,Buffer.concat(output)),name=`${info.name}-${cell}-${Math.floor(offset/MAX_TRIANGLES)}`,file=`${name}-${digest(glb).slice(0,12)}.glb`;
+      const glb=writeGlb(gj,Buffer.concat(output)),name=`${options.overview?'overview-':''}${info.name}-${cell}-${Math.floor(offset/MAX_TRIANGLES)}`,file=`${name}-${digest(glb).slice(0,12)}.glb`;
       fs.writeFileSync(path.join(OUT,file),glb);
-      entries.push({name,file,group:info.group==='rest'?'rest':info.name==='context'?'context':'checked',source_chunk:info.name,bytes:glb.length,decoded_bytes:decodedOffset,resident_bytes:oldVertices.length*40+count*36,vertices:oldVertices.length,triangles:count,parts:dbIds.size,dbIds:[...dbIds],bounds_mm:{min,max}});
+      entries.push({name,file,group:options.overview?'overview':info.group==='rest'?'rest':info.name==='context'?'context':'checked',source_chunk:info.name,bytes:glb.length,decoded_bytes:decodedOffset,resident_bytes:oldVertices.length*40+count*36,vertices:oldVertices.length,triangles:count,parts:dbIds.size,dbIds:[...dbIds],bounds_mm:{min,max}});
     }
   }
   const sum=entries.reduce((s,e)=>s+e.triangles,0);
-  if(sum!==ia.count/3)throw Error('Triangle coverage changed');
+  if(sum!==retained)throw Error('Triangle coverage changed');
   console.log(`${info.name}: ${entries.length} tiles, ${(entries.reduce((s,e)=>s+e.bytes,0)/1e6).toFixed(1)} MB, ${sum.toLocaleString('en')} triangles; lossless byte roundtrip OK`);
   return{entries,source:{file:info.file,sha256:hash,triangles:sum,tiles:entries.length}};
 }
 
 async function main(){
   fs.mkdirSync(OUT,{recursive:true});const original=JSON.parse(fs.readFileSync(path.join(MODEL,'manifest.json'),'utf8'));
+  if(process.argv.includes('--overview')){
+    const visibility=JSON.parse(fs.readFileSync(path.join(ROOT,'tools/export/work/overview-visibility.json'),'utf8'));
+    const visible=fs.readFileSync(path.join(ROOT,'tools/export/work/overview-visible.bin'));
+    const current=JSON.parse(fs.readFileSync(path.join(OUT,'manifest.json'),'utf8'));const inputs=visibility.mode==='tiles'?current.chunks:original.chunks;
+    const chunks=[];for(const info of inputs){const sample=visibility.chunks.find(c=>c.name===info.name);if(!sample||sample.file&&sample.file!==info.file)throw Error('Visibility source mismatch');const built=await tileChunk(info,{visible,base:sample.base,overview:true,inputDir:visibility.mode==='tiles'?OUT:MODEL});chunks.push(...built.entries);}
+    if(!chunks.length)throw Error('No visible exterior geometry captured');
+    const manifestFile=path.join(OUT,'manifest.json'),m=JSON.parse(fs.readFileSync(manifestFile,'utf8'));
+    m.overview={chunks,views:visibility.views,note:'Original source faces visible from sampled exterior views, without simplification; complete source geometry remains in the detail tiles.'};
+    const pending=path.join(OUT,'manifest.pending.json');fs.writeFileSync(pending,JSON.stringify(m));fs.renameSync(pending,manifestFile);
+    console.log('Exterior overview:',chunks.length,'tiles,',(chunks.reduce((s,c)=>s+c.bytes,0)/1e6).toFixed(1),'MB,',chunks.reduce((s,c)=>s+c.triangles,0).toLocaleString('en'),'triangles');return;
+  }
   const chunks=[],sources=[];
   for(const info of original.chunks){const built=await tileChunk(info);chunks.push(...built.entries);sources.push(built.source);}
   const manifest={version:2,kind:'viewport-tiles',units:original.units,coordinate_system:original.coordinate_system,offset_mm:original.offset_mm,deck_levels:original.deck_levels,chunks,sources,integrity:{triangles:sources.reduce((s,c)=>s+c.triangles,0),attribute_roundtrip:'every decoded attribute and index byte checked; no simplification or requantization'},streaming:{detail_span_mm:24000,max_resident_bytes:512000000,max_detail_triangles:1500000,max_requests:2}};

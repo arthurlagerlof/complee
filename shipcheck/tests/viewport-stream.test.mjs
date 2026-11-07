@@ -21,3 +21,22 @@ test('continuous camera movement still issues viewport queries and cancellation 
   const [id,run]=[...jobs][0];jobs.delete(id);run();assert.equal(calls,1);
   scheduler.request();assert.equal(jobs.size,1);scheduler.cancel();assert.equal(jobs.size,0);
 });
+
+test('Full model overview includes exterior coverage beyond the hull and Simple view retains the lightweight shell',()=>{
+  const complete={...manifest,overview:{chunks:[tile('exterior-hull','overview',0,1),tile('deckhouse','overview',0,8),tile('mast','overview',0,9)]}};
+  assert.deepEqual(selectViewportTiles(complete,{...view,span:100}).tiles.map(c=>c.name),['deckhouse','exterior-hull','mast']);
+  assert.deepEqual(selectViewportTiles(complete,{...view,span:100,fullModel:false}).tiles.map(c=>c.name),['shell']);
+});
+test('a component larger than the budget is reported explicitly instead of returning a partial component',()=>{
+ const large={...manifest,chunks:[tile('one','checked',0,99),tile('two','checked',1,99),tile('three','checked',2,99)]};
+ const p=selectViewportTiles(large,{...view,span:10,selectedDb:99,budget:{max_resident_bytes:400}});
+ assert.equal(p.tiles.length,0);assert.match(p.componentUnavailable,/complete component/);assert.equal(p.requiredBytes,600);
+});
+test('frustum-visible detail is not rejected by distance from the orbit target',()=>{
+ const p=selectViewportTiles(manifest,{planes:[[1,0,0,1000],[-1,0,0,1000]],span:10,target:[0,0,0]});
+ assert.ok(p.tiles.some(c=>c.name==='offscreen'),'the former target-distance cutoff must not hide available geometry');
+});
+test('exterior coverage manifest references original-quality overview assets', {skip:!m?.overview&&'local exterior not prepared'},()=>{
+ assert.ok(m.overview.chunks.length>0);assert.ok(m.overview.chunks.some(c=>c.source_chunk.startsWith('rest-')),'exterior includes equipment/superstructure outside the hull-only context');
+ for(const c of m.overview.chunks){assert.equal(c.group,'overview');assert.equal(fs.statSync(new URL('../model/stream/'+c.file,import.meta.url)).size,c.bytes);}
+});

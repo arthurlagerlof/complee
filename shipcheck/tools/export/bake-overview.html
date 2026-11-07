@@ -1,0 +1,34 @@
+﻿<!doctype html><meta charset="utf-8"><script type="importmap">{"imports":{"three":"http://localhost:5173/inspection/node_modules/three/build/three.module.js","three/addons/":"http://localhost:5173/inspection/node_modules/three/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {MeshoptDecoder} from 'three/addons/libs/meshopt_decoder.module.js';
+await MeshoptDecoder.ready;
+window.bake=async()=>{
+ const source=await fetch('http://localhost:5173/inspection/model/stream/manifest.json').then(r=>r.json());
+ const renderer=new THREE.WebGLRenderer({antialias:false,alpha:true,powerPreference:'high-performance'});renderer.setSize(640,480);renderer.setClearColor(0,0);renderer.autoClear=false;document.body.append(renderer.domElement);
+ const width=1536,height=1152,camera=new THREE.PerspectiveCamera(35,width/height,10,1e7),bounds=new THREE.Box3(),chunks=[],buffers=new Map();let next=1;
+ for(const c of source.chunks){bounds.union(new THREE.Box3(new THREE.Vector3(...c.bounds_mm.min),new THREE.Vector3(...c.bounds_mm.max)));chunks.push({name:c.name,file:c.file,base:next,vertices:c.vertices});next+=c.vertices;}
+ const material=new THREE.RawShaderMaterial({glslVersion:THREE.GLSL3,side:THREE.DoubleSide,blending:THREE.NoBlending,uniforms:{uBase:{value:1}},vertexShader:`precision highp float;precision highp int;in vec3 position;uniform mat4 modelViewMatrix;uniform mat4 projectionMatrix;uniform uint uBase;flat out uvec4 vID;void main(){uint id=uint(gl_VertexID)+uBase;vID=uvec4(id&255u,(id>>8u)&255u,(id>>16u)&255u,(id>>24u)&255u);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,fragmentShader:`precision highp float;precision highp int;flat in uvec4 vID;out vec4 outColor;void main(){outColor=vec4(vID)/255.0;}`});
+ const seen=new Uint8Array(Math.ceil(next/8)),pixels=new Uint8Array(width*height*4),ids=new Uint32Array(pixels.buffer),center=bounds.getCenter(new THREE.Vector3()),radius=bounds.getBoundingSphere(new THREE.Sphere()).radius,distance=radius*1.04/Math.sin(THREE.MathUtils.degToRad(camera.fov/2));
+ const views=[];for(const elevation of [-35,5,25,50,80])for(let az=0;az<360;az+=15)views.push({elevation,az});
+ for(let start=0;start<views.length;start+=6){
+  const batch=views.slice(start,start+6).map(v=>({...v,target:new THREE.WebGLRenderTarget(width,height,{minFilter:THREE.NearestFilter,magFilter:THREE.NearestFilter,depthBuffer:true})}));
+  for(const v of batch){renderer.setRenderTarget(v.target);renderer.clear(true,true,true);}
+  let i=0;for(const c of source.chunks){
+   let raw=buffers.get(c.name);if(!raw){raw=await fetch('http://localhost:5173/inspection/model/stream/'+c.file).then(r=>r.arrayBuffer());buffers.set(c.name,raw);}
+   const dv=new DataView(raw),size=dv.getUint32(12,true),j=JSON.parse(new TextDecoder().decode(new Uint8Array(raw,20,size))),body=new Uint8Array(raw,28+size),p=j.meshes[0].primitives[0],pa=j.accessors[p.attributes.POSITION],ia=j.accessors[p.indices];
+   const decode=index=>{const v=j.bufferViews[index],e=v.extensions.EXT_meshopt_compression,out=new Uint8Array(e.count*e.byteStride);MeshoptDecoder.decodeGltfBuffer(out,e.count,e.byteStride,body.subarray(e.byteOffset,e.byteOffset+e.byteLength),e.mode,e.filter);return out;};
+   const pos=decode(pa.bufferView),ix=decode(ia.bufferView),geom=new THREE.BufferGeometry();geom.setAttribute('position',new THREE.InterleavedBufferAttribute(new THREE.InterleavedBuffer(new Uint16Array(pos.buffer),j.bufferViews[pa.bufferView].byteStride/2),3,(pa.byteOffset||0)/2,!!pa.normalized));geom.setIndex(new THREE.BufferAttribute(new Uint32Array(ix.buffer,ia.byteOffset||0,ia.count),1));
+   const mesh=new THREE.Mesh(geom,material),node=j.nodes[0];mesh.position.fromArray(node.translation||[0,0,0]);mesh.scale.fromArray(node.scale||[1,1,1]);mesh.frustumCulled=false;material.uniforms.uBase.value=chunks[i].base;
+   if(pa.count!==chunks[i].vertices)throw Error('Vertex identity changed');
+   for(const v of batch){const e=THREE.MathUtils.degToRad(v.elevation),a=THREE.MathUtils.degToRad(v.az);camera.position.copy(center).add(new THREE.Vector3(Math.cos(a)*Math.cos(e),Math.sin(e),Math.sin(a)*Math.cos(e)).multiplyScalar(distance));camera.lookAt(center);camera.updateMatrixWorld();material.uniformsNeedUpdate=true;renderer.setRenderTarget(v.target);renderer.render(mesh,camera);}
+   geom.dispose();i++;if(i%200===0){console.log('BAKE TILES',start+1,'/',views.length,i,'/',source.chunks.length);await new Promise(r=>setTimeout(r,0));}
+  }
+  for(const v of batch){renderer.readRenderTargetPixels(v.target,0,0,width,height,pixels);for(let p=0;p<ids.length;p++){const id=ids[p];if(id&&id<next)seen[id>>3]|=1<<(id&7);}v.target.dispose();}
+  console.log('BAKE VIEW',Math.min(start+6,views.length),'/',views.length);await new Promise(r=>setTimeout(r,0));
+ }
+ renderer.dispose();window.bakeResult={mode:'tiles',chunks,views:views.length,width,height,bitLength:seen.length,bounds:{min:bounds.min.toArray(),max:bounds.max.toArray()}};await window.saveBakedMetadata(window.bakeResult);
+ for(let offset=0;offset<seen.length;offset+=262144){const end=Math.min(offset+262144,seen.length);let text='';for(let i=offset;i<end;i+=8192)text+=String.fromCharCode(...seen.subarray(i,Math.min(i+8192,end)));await window.saveBakedBits(offset,btoa(text));}
+ console.log('BAKE SAVED');return{mode:'tiles',views:views.length,bitLength:seen.length};
+};
+</script>

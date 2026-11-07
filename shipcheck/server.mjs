@@ -17,6 +17,17 @@ const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf
 const ALLOWED_ORIGINS = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
 const MODEL_DIR = path.resolve(ROOT, process.env.MODEL_DIR || 'model');
 
+// Viewport tiles the viewer streams: the high-precision tiles (model/stream-hp, float32 positions, see
+// tools/export/export-tiles-hp.mjs) once their source audit has passed, else the original tiles (model/stream).
+// MODEL_MANIFEST overrides (e.g. MODEL_MANIFEST=stream/manifest.json to go back).
+export function streamManifest(modelDir = MODEL_DIR) {
+  if (process.env.MODEL_MANIFEST) return process.env.MODEL_MANIFEST;
+  try {
+    if (fs.existsSync(path.join(modelDir, 'stream-hp', 'manifest.json')) && JSON.parse(fs.readFileSync(path.join(modelDir, 'stream-hp', 'audit.json'), 'utf8')).pass === true) return 'stream-hp/manifest.json';
+  } catch { /* no audit yet */ }
+  return 'stream/manifest.json';
+}
+
 function health() {
   let chunks = 0, restChunks = 0, manifest = false, parts = false;
   try {
@@ -136,7 +147,7 @@ function serveStatic(p, res, req) {
 
 const routes = {
   'GET /api/health': () => health(),
-  'GET /api/model/config': () => ({ base_url: process.env.MODEL_BASE_URL || 'model/', manifest: 'stream/manifest.json', legacy_manifest: 'manifest.json' }),
+  'GET /api/model/config': () => ({ base_url: process.env.MODEL_BASE_URL || 'model/', manifest: streamManifest(), legacy_manifest: 'manifest.json' }),
   'GET /api/scenarios': () => loadScenarios(),
   'GET /api/rules': () => ({ rules: loadRules() }),
   'GET /api/check': (q) => runCheck(q.get('scenario') || 'rcrv-3d'),

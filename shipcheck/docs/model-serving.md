@@ -9,7 +9,7 @@ The app can run on one host and retrieve model data from a second, read-only Nod
 ```json
 {
   "base_url": "model/",
-  "manifest": "stream/manifest.json",
+  "manifest": "stream-hp/manifest.json",
   "legacy_manifest": "manifest.json"
 }
 ```
@@ -28,7 +28,7 @@ MODEL_DIR/
     1.json
 ```
 
-For the external example the requests are `https://model.example.com/stream/manifest.json`, `https://model.example.com/stream/tile-01.glb` and `https://model.example.com/props/1.json`. The server does not add a `/model/` prefix. If a proxy mounts it under a versioned prefix, strip that prefix when forwarding and set `MODEL_BASE_URL` to that prefix with its trailing slash.
+The manifest is `stream-hp/manifest.json` (high-precision tiles) when `model/stream-hp/audit.json` reports a pass, else `stream/manifest.json`; `MODEL_MANIFEST` overrides it. For the external example the requests are `https://model.example.com/stream/manifest.json`, `https://model.example.com/stream/tile-01.glb` and `https://model.example.com/props/1.json`. The server does not add a `/model/` prefix. If a proxy mounts it under a versioned prefix, strip that prefix when forwarding and set `MODEL_BASE_URL` to that prefix with its trailing slash.
 
 This change provides the configuration and file-hosting contract. Tile generation, viewport selection, loading and unloading belong to the viewer, which must consume the configuration endpoint. The standalone server serves files on request; it never loads ship geometry into memory.
 

@@ -206,6 +206,16 @@ The scenario selector includes **Simplified research vessel (example)** again, w
 
 Run `node --max-old-space-size=4096 tools/export/tile-model.mjs` inside `shipcheck/` after the original GLBs are available. This preserves every packed triangle and attribute byte, leaves the original files untouched, and writes `model/stream/manifest.json` plus content-addressed tiles. The tiler stops below 3 GB free. The default client budget estimates at most 512 MB resident geometry/picking data and 1.5 million nearby detail triangles (hull context is counted against the memory budget). This is view selection, not mesh simplification; if the budget is reached, the badge asks you to zoom in.
 
+**Source fidelity (high-precision tiles).** The first export stored each whole chunk (up to ~60 m) with 16-bit positions,
+a ~0.9 mm grid, which collapsed about 4.9 million fine triangles to zero area; the tiles above copy those bytes. 
+`tools/export/export-tiles-hp.mjs` builds the same tile grid again straight from the retained SVF with float32 positions
+relative to each tile (no position quantization; one `--group` per run, then `--manifest`), into `model/stream-hp/`.
+`tools/export/audit-hp.mjs` checks it against the SVF source per dbId: identical triangle counts (50,843,045), bounds and
+mean centroids within 0.0004 mm, areas within the float32 rounding bound (`model/stream-hp/audit.json`). The app serves
+`stream-hp` once that audit has passed; `MODEL_MANIFEST=stream/manifest.json` switches back. The far exterior overview
+tiles are still taken from `model/stream` until they are re-baked. Browser regressions:
+`cd tools/export && node --test --test-concurrency=1 browser-regressions.cjs` (app running).
+
 Model files can live on a different host: see [separate model server](docs/model-serving.md) for `MODEL_BASE_URL`, CORS and read-only server commands. The original merged viewer code and APS/screenshot fallbacks remain in the repository.
 
 [Viewport architecture, measured request sizes and screenshots](docs/viewport/README.md).

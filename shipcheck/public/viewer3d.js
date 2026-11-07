@@ -2,6 +2,7 @@
 // Model x (forward) -> scene X, model y (port +) -> scene -Z, elevation -> scene Y. Scene unit: metre.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { fitPerspectiveBox, viewportAspect } from './src/view-framing.mjs';
 
 export const STATUS_HEX = { compliant: 0x2e9e5b, non_compliant: 0xd64545, not_enough_info: 0xd99a1e, null: 0x9aa3ad };
 const M = 0.001;
@@ -35,6 +36,7 @@ export function createViewer(container, { onPick } = {}) {
   scene.add(root);
   const deckGroups = {}, meshes = {}, deckIndex = {};
   let mode = 'all', selectedId = null, filterIds = null, flight = null;
+  let framedBox = null, viewportWidth = 0, viewportHeight = 0;
   const selBox = new THREE.Box3Helper(new THREE.Box3(), 0x1f6feb);
   selBox.visible = false;
   scene.add(selBox);
@@ -47,19 +49,23 @@ export function createViewer(container, { onPick } = {}) {
   container.appendChild(tip);
 
   function resize() {
-    const w = container.clientWidth || 1, h = container.clientHeight || 1;
+    const w = container.clientWidth, h = container.clientHeight;
+    // A hidden scenario has no viewport yet. Preserve its last real projection until shown.
+    if (!(w > 0 && h > 0)) return;
+    const changed = w !== viewportWidth || h !== viewportHeight;
+    viewportWidth = w; viewportHeight = h;
     renderer.setSize(w, h);
-    persp.aspect = w / h;
+    persp.aspect = viewportAspect(w, h, persp.aspect);
     persp.updateProjectionMatrix();
     fitOrtho();
+    if (changed && framedBox) frameBox(framedBox);
   }
   new ResizeObserver(resize).observe(container);
 
   function fitOrtho(span) {
-    const w = container.clientWidth || 1, h = container.clientHeight || 1;
-    const half = (span ?? ortho.userData.span ?? 40) / 2;
+    const half = Math.max(span ?? ortho.userData.span ?? 40, 0.01) / 2;
     ortho.userData.span = half * 2;
-    const a = w / h;
+    const a = viewportAspect(container.clientWidth, container.clientHeight, persp.aspect);
     ortho.left = -half * a; ortho.right = half * a; ortho.top = half; ortho.bottom = -half;
     ortho.updateProjectionMatrix();
   }
@@ -181,45 +187,77 @@ export function createViewer(container, { onPick } = {}) {
   }
 
   function overview(ms = 0) {
-    const visible = Object.values(deckGroups).filter((g) => g.visible);
+    // Include the visible hull shell down to the baseline, as well as decks and elements.
+    const visible = root.children.filter((g) => g.visible);
     const box = bounds(visible.length ? visible : [root]);
     if (box.isEmpty()) return;
-    const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
-    const span = Math.max(s.x, s.z, 8);
-    if (plan) {
-      controls.target.copy(c);
-      ortho.position.set(c.x, c.y + 200, c.z);
-      ortho.lookAt(c);
-      fitOrtho(Math.max(s.z * 1.3, (s.x * 1.1) / (container.clientWidth / container.clientHeight || 1)));
-    } else {
-      // Fit the whole restored example using both viewport dimensions, including narrow panes.
-      persp.aspect = (container.clientWidth || 1) / (container.clientHeight || 1);
-      persp.updateProjectionMatrix();
-      const vertical = THREE.MathUtils.degToRad(persp.fov / 2);
-      const horizontal = Math.atan(Math.tan(vertical) * persp.aspect);
-      const radius = Math.max(box.getBoundingSphere(new THREE.Sphere()).radius, 4);
-      const distance = radius * 1.08 / Math.sin(Math.min(vertical, horizontal));
-      const direction = new THREE.Vector3(-0.3, 0.6, 1).normalize();
-      flyTo(c, c.clone().addScaledVector(direction, distance), ms);
-    }
+    return frameBox(box, ms);
   }
 
-  function flyTo(target, pos, ms = 900) {
-    flight = null;
+  function currentDirection() {
+    const direction = persp.position.clone().sub(controlsP.target);
+    return direction.lengthSq() > 1e-12 ? direction : new THREE.Vector3(-0.3, 0.6, 1);
+  }
+
+  function frameBox(box, ms = 0) {
+    framedBox = box.clone();
+    const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+    const aspect = viewportAspect(container.clientWidth, container.clientHeight, persp.aspect);
     if (plan) {
-      controls.target.copy(target);
-      ortho.position.set(target.x, target.y + 200, target.z);
+      cancelFlight();
+      resetDamping(controlsO);
+      controlsO.target.copy(c);
+      const distance = Math.max(s.y / 2 + 1, 10);
+      ortho.position.set(c.x, c.y + distance, c.z);
+      ortho.lookAt(c);
+      ortho.near = Math.max(0.001, (distance - s.y / 2) / 2);
+      ortho.far = distance + s.y / 2 + 10;
+      fitOrtho(Math.max(s.z, s.x / aspect, 0.1) * 1.1);
+      controlsO.update();
       return Promise.resolve();
     }
+    const frame = fitPerspectiveBox(box, {
+      aspect, fov: persp.getEffectiveFOV(), direction: currentDirection(), up: persp.up, margin: 1.1,
+    });
+    persp.aspect = frame.aspect;
+    // Keep the previous camera position renderable during a flight; tighten at its endpoint.
+    persp.near = ms ? Math.min(persp.near, frame.near) : frame.near;
+    persp.far = ms ? Math.max(persp.far, frame.far) : frame.far;
+    persp.updateProjectionMatrix();
+    return flyTo(new THREE.Vector3(...frame.target), new THREE.Vector3(...frame.position), ms, () => {
+      persp.near = frame.near; persp.far = frame.far; persp.updateProjectionMatrix();
+    });
+  }
+
+  // OrbitControls r160 has no public damping reset. With damping disabled one update
+  // consumes/clears the pending deltas. Restore the intended transform only AFTER that.
+  function resetDamping(control) {
+    const damping = control.enableDamping, autoRotate = control.autoRotate;
+    control.enableDamping = false; control.autoRotate = false;
+    try { control.update(); } finally { control.enableDamping = damping; control.autoRotate = autoRotate; }
+  }
+
+  function cancelFlight() {
+    const previous = flight;
+    flight = null;
+    previous?.cancel();
+  }
+
+  for (const control of [controlsP, controlsO]) control.addEventListener('start', cancelFlight);
+
+  function flyTo(target, pos, ms = 900, done = () => {}) {
+    cancelFlight();
     const t0 = performance.now(), fromT = controls.target.clone(), fromP = persp.position.clone();
+    resetDamping(controlsP);
+    controlsP.target.copy(fromT); persp.position.copy(fromP);
     return new Promise((resolve) => {
-      if (!ms) { controls.target.copy(target); persp.position.copy(pos); controls.update(); return resolve(); }
-      flight = (now) => {
+      if (!ms) { controlsP.target.copy(target); persp.position.copy(pos); controlsP.update(); done(); return resolve(); }
+      flight = { cancel: resolve, update(now) {
         const k = Math.min(1, (now - t0) / ms), e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
-        controls.target.lerpVectors(fromT, target, e);
+        controlsP.target.lerpVectors(fromT, target, e);
         persp.position.lerpVectors(fromP, pos, e);
-        if (k >= 1) { flight = null; resolve(); }
-      };
+        if (k >= 1) { flight = null; done(); resolve(); }
+      } };
     });
   }
 
@@ -227,14 +265,8 @@ export function createViewer(container, { onPick } = {}) {
     const o = meshes[id];
     if (!o) return Promise.resolve();
     o.updateWorldMatrix(true, false);
-    const box = new THREE.Box3().setFromObject(o);
-    const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
-    const d = Math.max(s.length() * 1.6, 9);
-    if (plan) {
-      fitOrtho(Math.max(d, 14));
-      return flyTo(c, null);
-    }
-    return flyTo(c, new THREE.Vector3(c.x - d * 0.55, c.y + d * 0.6, c.z + d * 0.75), ms);
+    const box = new THREE.Box3().setFromObject(o).expandByScalar(0.08);
+    return frameBox(box, ms);
   }
 
   function select(id, { fly = true } = {}) {
@@ -256,6 +288,7 @@ export function createViewer(container, { onPick } = {}) {
   }
 
   function setPlan(on) {
+    cancelFlight();
     plan = on;
     camera = on ? ortho : persp;
     controlsP.enabled = !on;
@@ -303,7 +336,7 @@ export function createViewer(container, { onPick } = {}) {
     o.getWorldPosition(p);
     p.y += (o.geometry.parameters?.height ?? 1) / 2 + 0.3;
     p.project(camera);
-    if (p.z > 1) { label.style.display = 'none'; return; }
+    if (p.z < -1 || p.z > 1 || Math.abs(p.x) > 1 || Math.abs(p.y) > 1) { label.style.display = 'none'; return; }
     const st = results?.elements[selectedId]?.worst;
     label.className = `scene-label st-${st ?? 'none'}`;
     label.textContent = `${selectedId} · ${({ compliant: 'Compliant', non_compliant: 'Non-compliant', not_enough_info: 'Not enough info' })[st] ?? 'No rule'}`;
@@ -314,7 +347,9 @@ export function createViewer(container, { onPick } = {}) {
 
   renderer.setAnimationLoop((now) => {
     if (!container.offsetParent) return; // hidden (the real model is shown): do not draw frames
-    if (flight) flight(now);
+    // A pane can be rebuilt while hidden, before ResizeObserver delivers its visible size.
+    if (container.clientWidth !== viewportWidth || container.clientHeight !== viewportHeight) resize();
+    if (flight) flight.update(now);
     controls.update();
     if (selectedId && meshes[selectedId]) selBox.box.setFromObject(meshes[selectedId]).expandByScalar(0.08);
     updateLabel();

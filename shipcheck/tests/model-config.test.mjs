@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 
 test('app model config: defaults to the existing local route and can point to an independent model host', async (t) => {
   const previous = process.env.MODEL_BASE_URL;
-  const { server } = await import('../server.mjs');
+  const { server, streamManifest } = await import('../server.mjs');
+  const manifest = streamManifest(); // stream-hp/manifest.json once its audit passed, else stream/manifest.json
+  assert.ok(['stream/manifest.json', 'stream-hp/manifest.json'].includes(manifest), manifest);
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });
   t.after(async () => {
     if (previous === undefined) delete process.env.MODEL_BASE_URL;
@@ -20,10 +22,18 @@ test('app model config: defaults to the existing local route and can point to an
     assert.equal(response.headers.get('cache-control'), 'no-store');
     const config = await response.json();
     assert.deepEqual(config, {
-      base_url: value || 'model/', manifest: 'stream/manifest.json', legacy_manifest: 'manifest.json',
+      base_url: value || 'model/', manifest, legacy_manifest: 'manifest.json',
     });
     const base = new URL(config.base_url, 'https://app.example.com/inspection/');
-    assert.equal(new URL(config.manifest, base).href, `${base.href}stream/manifest.json`);
+    assert.equal(new URL(config.manifest, base).href, `${base.href}${manifest}`);
     assert.equal(new URL('props/1.json', base).href, `${base.href}props/1.json`);
   }
+});
+
+test('app model config: MODEL_MANIFEST overrides the tile set (rollback to the original tiles)', async () => {
+  const { streamManifest } = await import('../server.mjs');
+  const previous = process.env.MODEL_MANIFEST;
+  process.env.MODEL_MANIFEST = 'stream/manifest.json';
+  try { assert.equal(streamManifest(), 'stream/manifest.json'); } finally { if (previous === undefined) delete process.env.MODEL_MANIFEST; else process.env.MODEL_MANIFEST = previous; }
+  assert.equal(streamManifest('/nonexistent-model-dir'), 'stream/manifest.json', 'no high-precision tiles: original tiles');
 });

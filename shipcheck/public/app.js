@@ -53,19 +53,52 @@ const ruleById = (id) => allRules().find((r) => r.id === id);
 const elById = (id) => S.model.elements.find((e) => e.id === id);
 const deckName = (id) => S.norm.decks.find((d) => d.id === id)?.name ?? id;
 
-// Two viewers share the centre pane: Three.js for deck models, the Autodesk APS viewer for the real
-// production model (with a screenshot + findings fallback when APS cannot be reached).
-const onPick = (id) => { if (S.results?.elements[id]) select(id, { fly: viewer?.kind === 'local' }); };
-const views = { three: createViewer($('#threeView'), { onPick }), aps: null, fallback: null };
+// Scenario requests and viewer ownership use monotonic generations: A -> B -> A is still a new load.
+let scenarioGeneration = 0, scenarioController = null, scenarioPending = false;
+let viewerGeneration = 0, activeViewerGeneration = 0;
+let localInitialization = null, apsInitialization = null;
+const canPick = () => !scenarioPending && activeViewerGeneration === viewerGeneration;
+const onPick = (id) => { if (canPick() && S.results?.elements[id]) select(id, { fly: viewer?.kind === 'local' }); };
+const views = { three: createViewer($('#threeView'), { onPick: (id) => { if (viewer === views.three) onPick(id); } }), aps: null, fallback: null };
 let viewer = views.three;
 const LIST_PAGE = 400;
 let listLimit = LIST_PAGE;
 let restRequest = 0;
 
-// The findings render at once; the APS model (large, streamed from Autodesk) is coloured when it arrives.
-// S.viewerReady resolves when the scenario's viewer is usable.
+// Share construction itself, rather than assigning only after an awaited constructor finishes.
+function getLocalViewer() {
+  if (views.local) return Promise.resolve(views.local);
+  if (!localInitialization) {
+    localInitialization = createLocalViewer($('#localView'), {
+      onPick: (id) => { if (viewer === views.local) onPick(id); },
+      onPickRest: (db) => { if (viewer === views.local && canPick()) onPickRest(db); },
+    }).then((local) => {
+      views.local = local;
+      local.setActive?.(false); // no scenario owns a newly constructed viewer until its current continuation claims it
+      return local;
+    }).catch((e) => { localInitialization = null; throw e; });
+  }
+  return localInitialization;
+}
+
+function getApsViewer() {
+  if (views.aps) return Promise.resolve(views.aps);
+  if (!apsInitialization) {
+    apsInitialization = createApsViewer($('#apsView'), { onPick: (id) => { if (viewer === views.aps) onPick(id); } })
+      .then((aps) => { views.aps = aps; return aps; })
+      .catch((e) => { apsInitialization = null; throw e; });
+  }
+  return apsInitialization;
+}
+
+function clearCutControl() { $('#cutSel').value = ''; }
+function showOverview() { clearCutControl(); viewer.overview(); }
+
+// Findings appear immediately. Only the current generation may activate a viewer or change fallback UI.
 const NOOP_VIEWER = { build() {}, update() {}, paintNeutral() {}, select() {}, flyToElement() {}, setFilter() {}, overview() {}, setMode() {}, setPlan() {}, mode: 'all', plan: false };
 function useViewer(sc) {
+  const generation = ++viewerGeneration;
+  const current = () => generation === viewerGeneration && !scenarioPending;
   views.local?.setActive?.(false);
   const want = sc.viewer === 'aps' ? 'aps' : 'three';
   $('#threeView').hidden = want !== 'three';
@@ -73,70 +106,87 @@ function useViewer(sc) {
   $('#localView').hidden = true;
   $('#fallbackView').hidden = true;
   $('#planBtn').hidden = want !== 'three';
+  // The real model uses its deck cut. SWBS groups are not decks, and it has no exploded-deck mode.
+  $('#deck').disabled = want !== 'three';
+  const deckControl = $('#deck').closest('label');
+  deckControl.hidden = want !== 'three';
+  deckControl.style.display = want === 'three' ? '' : 'none'; // header label CSS overrides the UA [hidden] display rule
   $('#simpleBtn').hidden = $('#cutSel').hidden = $('#fullBtn').hidden = true;
   $('#simpleBtn').classList.remove('on');
-  if (want === 'three') { viewer = views.three; S.viewerReady = Promise.resolve('three'); return; }
+  clearCutControl();
+  if (want === 'three') {
+    viewer = views.three;
+    activeViewerGeneration = generation;
+    S.viewerReady = Promise.resolve('three');
+    return;
+  }
   views.fallback ??= createFallbackViewer($('#fallbackView'));
   views.fallback.setImages(sc.fallback_images || []);
   viewer = NOOP_VIEWER;
-  // Real model: our own local viewer (glTF chunks from our server) by default; ?viewer=aps uses the Autodesk viewer.
-  // Order when something is missing: local -> APS -> screenshots. ?noaps skips straight to the screenshots.
+  // Order: local -> APS -> screenshots. ?viewer=aps keeps APS; ?noaps goes straight to screenshots.
   const params = new URLSearchParams(location.search);
   const showControls = () => {
-    $('#simpleBtn').classList.toggle('on', !!viewer.simple); // Simple view is the default: light and readable
+    $('#simpleBtn').classList.toggle('on', !!viewer.simple);
     $('#simpleBtn').hidden = $('#cutSel').hidden = false;
-    $('#fullBtn').hidden = !viewer.hasRest; // local viewer with the rest of the model exported
+    $('#fullBtn').hidden = !viewer.hasRest;
     $('#fullBtn').classList.toggle('on', !!viewer.fullModel);
     $('#cutSel').innerHTML = '<option value="">No deck cut</option>';
+    clearCutControl();
   };
   S.viewerReady = (async () => {
     const notes = [];
     if (!params.has('noaps') && (params.get('viewer') || 'local') === 'local') {
       try {
         $('#localView').hidden = false;
-        views.local ??= await createLocalViewer($('#localView'), { onPick, onPickRest });
-        if (S.sc !== sc) { views.local.setActive?.(false); return 'stale'; }
-        views.local.build(S.norm, S.results); // colours apply chunk by chunk while loading
-        await views.local.load();
-        if (S.sc !== sc) { views.local.setActive?.(false); return 'stale'; }
-        viewer = views.local;
+        const local = await getLocalViewer();
+        if (!current()) return 'stale';
+        local.build(S.norm, S.results);
+        await local.load();
+        if (!current()) return 'stale';
+        viewer = local;
+        activeViewerGeneration = generation;
         viewer.build(S.norm, S.results);
         showControls();
         renderList();
         if (S.selected) select(S.selected);
         return 'local';
       } catch (e) {
+        if (!current()) return 'stale'; // an old failure must not stop a viewer claimed by a newer load
         views.local?.setActive?.(false);
         console.warn('Local viewer unavailable, trying the Autodesk viewer:', e.message);
         notes.push(`local viewer: ${e.message}`);
         $('#localView').hidden = true;
       }
     }
+    if (!current()) return 'stale';
     try {
-      // ?noaps forces the offline fallback (test without internet).
       if (params.has('noaps')) throw new Error('disabled with ?noaps');
       $('#apsView').hidden = false;
-      // ?clearcache removes the Autodesk viewer's local model cache first (a corrupt cache can stall loading).
-      if (new URLSearchParams(location.search).has('clearcache')) {
+      if (params.has('clearcache')) {
         const root = await navigator.storage?.getDirectory?.().catch(() => null);
+        if (!current()) return 'stale';
         await root?.removeEntry('otg_cache', { recursive: true }).catch(() => null);
+        if (!current()) return 'stale';
       }
-      views.aps ??= await createApsViewer($('#apsView'), { onPick });
-      await views.aps.load();
-      if (S.sc !== sc) return 'stale';
-      viewer = views.aps;
+      const aps = await getApsViewer();
+      if (!current()) return 'stale';
+      await aps.load();
+      if (!current()) return 'stale';
+      viewer = aps;
+      activeViewerGeneration = generation;
       viewer.build(S.norm, S.results);
       showControls();
       renderList();
       if (S.selected) select(S.selected);
       return 'aps';
     } catch (e) {
+      if (!current()) return 'stale';
       console.warn('APS viewer unavailable, using fallback:', e.message);
-      if (S.sc !== sc) return 'stale';
       views.fallback.setReason([...notes, e.message].join('; '));
       $('#apsView').hidden = true;
       $('#fallbackView').hidden = false;
       viewer = views.fallback;
+      activeViewerGeneration = generation;
       viewer.build();
       if (S.selected) select(S.selected);
       return 'fallback';
@@ -157,14 +207,18 @@ async function init() {
 
 // Real production models come as a parts file (kind "parts") and are turned into a checker model here,
 // in the browser. If the parts file cannot be loaded, the precomputed results are shown read-only.
-async function fetchModel(sc) {
-  if (sc.kind !== 'parts') return { model: await fetchJSON(sc.model) };
+async function fetchModel(sc, { signal } = {}) {
+  const options = { signal };
+  if (sc.kind !== 'parts') return { model: await fetchJSON(sc.model, options) };
   try {
-    const [parts, meta] = await Promise.all([fetchJSON(sc.model), sc.meta ? fetchJSON(sc.meta) : {}]);
+    const [parts, meta] = await Promise.all([fetchJSON(sc.model, options), sc.meta ? fetchJSON(sc.meta, options) : {}]);
     return { model: partsToModel(parts, meta) };
   } catch (e) {
-    if (!sc.precomputed) throw e;
-    const [pre, meta] = await Promise.all([fetchJSON(sc.precomputed), sc.meta ? fetchJSON(sc.meta).catch(() => ({})) : {}]);
+    if (signal?.aborted || e.name === 'AbortError' || !sc.precomputed) throw e;
+    const [pre, meta] = await Promise.all([
+      fetchJSON(sc.precomputed, options),
+      sc.meta ? fetchJSON(sc.meta, options).catch((error) => { if (signal?.aborted) throw error; return {}; }) : {},
+    ]);
     return { model: modelFromPrecomputed(pre, meta), precomputed: pre };
   }
 }
@@ -189,40 +243,72 @@ function resultsFromPrecomputed(pre) {
 }
 
 async function loadScenario(id) {
+  const sc = S.scenarios.find((s) => s.id === id);
+  if (!sc) throw new Error(`Unknown scenario: ${id}`);
+  const generation = ++scenarioGeneration;
+  scenarioController?.abort();
+  const controller = new AbortController();
+  scenarioController = controller;
+  scenarioPending = true;
+  ++viewerGeneration; // invalidate pending viewer continuations immediately, including A -> B -> A
   restRequest++;
-  S.sc = S.scenarios.find((s) => s.id === id);
   $('#scenario').value = id;
-  const [{ model, precomputed }, expected] = await Promise.all([
-    fetchModel(S.sc),
-    S.sc.expected ? fetchJSON(S.sc.expected).catch(() => null) : null,
-  ]);
-  S.precomputed = precomputed ?? null;
-  S.pristine = model;
-  S.model = structuredClone(model);
-  S.norm = normalizeModel(S.model);
-  S.expected = expected;
-  S.edits.clear();
-  S.selected = null;
-  S.ruleView = null;
-  traceState = { findingsOnly: null, limit: TRACE_PAGE };
-  closeTrace();
-  listLimit = LIST_PAGE;
-  // Start at the full overview; filtering by status hides the rest geometry.
-  S.filter.status = new Set(['non_compliant', 'not_enough_info', 'compliant', 'null']);
-  // Ground-truth score is computed on the unedited design with the core rule set only.
-  S.baseline = precomputed ? precomputed.score : expected ? scoreResults(checkModel(S.pristine, S.coreRules), expected) : null;
-  if (S.baseline && !S.baseline.line) S.baseline.line = scoreLine(S.baseline);
-  runCheck();
-  useViewer(S.sc);
-  viewer.build(S.norm, S.results);
-  viewer.setMode('all');
-  const decks = S.norm.decks;
-  $('#deck').innerHTML = `<option value="all">All decks</option>` +
-    (decks.length > 1 ? `<option value="exploded">Exploded</option>` : '') +
-    decks.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
-  S.filter.deck = '';
-  renderAll();
-  $('#detail').innerHTML = `<p class="muted">Click an element in the model or in the list to see every rule that applies, why it passes or fails, and where each value comes from.</p>`;
+  try {
+    const [{ model, precomputed }, expected] = await Promise.all([
+      fetchModel(sc, { signal: controller.signal }),
+      sc.expected ? fetchJSON(sc.expected, { signal: controller.signal }).catch((e) => {
+        if (controller.signal.aborted) throw e;
+        return null;
+      }) : null,
+    ]);
+    if (generation !== scenarioGeneration || controller.signal.aborted) return false;
+    S.sc = sc; // commit the scenario and its model together, after checking ownership
+    S.precomputed = precomputed ?? null;
+    S.pristine = model;
+    S.model = structuredClone(model);
+    S.norm = normalizeModel(S.model);
+    S.expected = expected;
+    S.edits.clear();
+    S.selected = null;
+    S.ruleView = null;
+    traceState = { findingsOnly: null, limit: TRACE_PAGE };
+    closeTrace();
+    listLimit = LIST_PAGE;
+    // Start at the full overview; filtering by status hides the rest geometry.
+    S.filter.status = new Set(['non_compliant', 'not_enough_info', 'compliant', 'null']);
+    // Ground-truth score is computed on the unedited design with the core rule set only.
+    S.baseline = precomputed ? precomputed.score : expected ? scoreResults(checkModel(S.pristine, S.coreRules), expected) : null;
+    if (S.baseline && !S.baseline.line) S.baseline.line = scoreLine(S.baseline);
+    runCheck();
+    scenarioPending = false;
+    useViewer(sc);
+    viewer.build(S.norm, S.results);
+    viewer.setMode('all');
+    const decks = S.norm.decks;
+    $('#deck').innerHTML = `<option value="all">All decks</option>` +
+      (decks.length > 1 ? `<option value="exploded">Exploded</option>` : '') +
+      decks.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+    S.filter.deck = '';
+    renderAll();
+    $('#detail').innerHTML = `<p class="muted">Click an element in the model or in the list to see every rule that applies, why it passes or fails, and where each value comes from.</p>`;
+    return true;
+  } catch (e) {
+    if (generation !== scenarioGeneration || controller.signal.aborted || e.name === 'AbortError') return false;
+    // A failed replacement leaves the previously committed scenario usable.
+    if (S.sc && S.model) {
+      scenarioPending = false;
+      $('#scenario').value = S.sc.id;
+      useViewer(S.sc);
+      viewer.build(S.norm, S.results);
+      renderList();
+    }
+    throw e;
+  } finally {
+    if (generation === scenarioGeneration) {
+      scenarioPending = false;
+      scenarioController = null;
+    }
+  }
 }
 
 function runCheck() {
@@ -388,6 +474,7 @@ function renderList() {
 // ---------- detail panel ----------
 
 function select(id, { fly = true } = {}) {
+  clearCutControl();
   S.selected = id;
   const el = elById(id);
   if (el && viewer.mode !== 'all' && viewer.mode !== 'exploded' && viewer.mode !== el.deck) {
@@ -419,7 +506,7 @@ function renderDetail(id) {
   renderEditor(id);
   if ($('#backOverview')) $('#backOverview').onclick = () => {
     S.selected = null;
-    viewer.overview();
+    showOverview();
     renderList();
     $('#detail').innerHTML = '<p class="muted">Click a part, a finding or a rule.</p>';
   };
@@ -429,15 +516,15 @@ function renderDetail(id) {
 
 const restProps = new Map(); // props shard -> Promise of { dbId: record }
 async function onPickRest(db) {
-  const request = ++restRequest, scenario = S.sc;
+  const request = ++restRequest, scenario = S.sc, generation = viewerGeneration, source = viewer;
   S.selected = null;
   if (S.ruleView) { S.ruleView = null; viewer.clearHighlight?.(); }
   document.querySelectorAll('#list .item.sel').forEach((n) => n.classList.remove('sel'));
   const shard = Math.floor(db / 1000);
   if (!viewer.getProperties && !restProps.has(shard)) restProps.set(shard, fetchJSON(`model/props/${shard}.json`).catch(() => ({})));
   $('#detail').innerHTML = `<h1>dbId ${db}</h1><div class="muted">Not checked by any rule · loading the part data…</div>`;
-  const rec = viewer.getProperties ? await viewer.getProperties(db) : (await restProps.get(shard))[db];
-  if (request !== restRequest || S.sc !== scenario) return;
+  const rec = source.getProperties ? await source.getProperties(db) : (await restProps.get(shard))[db];
+  if (request !== restRequest || generation !== viewerGeneration || source !== viewer || S.sc !== scenario || scenarioPending) return;
   const name = rec?.name || 'Model object';
   const table = (props) => Object.entries(props || {}).map(([group, kv]) => `<h2>${esc(group)}</h2><table class="kv">${
     Object.entries(kv || {}).map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc([].concat(v).join(', '))}</td></tr>`).join('')}</table>`).join('');
@@ -447,7 +534,8 @@ async function onPickRest(db) {
     <div class="note">This part is shown for context only. No rule in the rule set applies to it, so it has no pass/fail status and does not count in the findings.</div>
     ${rec ? table(rec.properties) : '<p class="muted">No properties found for this object.</p>'}
     ${rec?.part_of ? `<h2 style="margin-top:10px">Part: ${esc(rec.part_of.name)} (dbId ${rec.part_of.dbId})</h2>${table(rec.part_of.properties)}` : ''}`;
-  viewer.selectRest?.(db, { label: `<b>${esc(name)}</b> · dbId ${db}<br>not checked by any rule` });
+  clearCutControl();
+  source.selectRest?.(db, { label: `<b>${esc(name)}</b> · dbId ${db}<br>not checked by any rule` });
 }
 
 // ---------- component view: part -> requirements ----------
@@ -578,7 +666,7 @@ function renderRuleView(ruleId) {
     <div id="ruleParts">${shown.map((h) => `<div class="item" data-id="${esc(h.id)}"><span class="dot st-${h.status}"></span>
       <span><b>${esc(h.id)}</b> ${esc(h.name)}<br><span class="muted">${esc(h.measured ?? 'value missing')}</span></span></div>`).join('')}
       ${hits.length > shown.length ? `<p class="muted">${(hits.length - shown.length).toLocaleString('en')} more parts (use the traceability table or the report).</p>` : ''}</div>`;
-  $('#ruleBack').onclick = () => { S.ruleView = null; viewer.clearHighlight?.(); viewer.overview(); renderRules(); renderList();
+  $('#ruleBack').onclick = () => { S.ruleView = null; viewer.clearHighlight?.(); showOverview(); renderRules(); renderList();
     $('#detail').innerHTML = '<p class="muted">Click a part, a finding or a rule.</p>'; };
   $('#ruleParts').querySelectorAll('.item').forEach((n) => (n.onclick = () => select(n.dataset.id)));
 }
@@ -838,7 +926,7 @@ async function runDemo() {
       await waitViewer(step, token);
       const c = S.model.counts;
       caption('OSU RCRV: real ShipConstructor production model', `${c ? `${c.objects.toLocaleString('en')} objects in the model · ` : ''}${S.norm.elements.length.toLocaleString('en')} parts checked · inches converted to mm`);
-      viewer.overview();
+      showOverview();
       viewer.paintNeutral();
       await step(2800);
 
@@ -938,7 +1026,10 @@ async function runDemo() {
 }
 // ---------- wiring ----------
 
-$('#scenario').onchange = (e) => loadScenario(e.target.value);
+$('#scenario').onchange = (e) => loadScenario(e.target.value).catch((error) => {
+  $('#detail').innerHTML = `<p class="check-bad">Failed to load: ${esc(error.message)}</p>`;
+  console.error(error);
+});
 $('#deck').onchange = (e) => {
   viewer.setMode(e.target.value);
   if (S.selected) viewer.select(S.selected, { fly: false });
@@ -952,7 +1043,9 @@ addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.demo) S.demo.st
 $('#simpleBtn').onclick = () => {
   const on = !viewer.simple;
   viewer.setSimple?.(on);
-  $('#simpleBtn').classList.toggle('on', on);
+  $('#simpleBtn').classList.toggle('on', !!viewer.simple);
+  $('#fullBtn').classList.toggle('on', !!viewer.fullModel);
+  $('#cutSel').value = ''; // the viewer drops the deck cut on this switch; keep the selector in step
 };
 $('#cutSel').onfocus = () => {
   if ($('#cutSel').options.length > 1 || !viewer.deckLevels) return;
@@ -964,10 +1057,13 @@ $('#cutSel').onchange = (e) => viewer.setDeckCut?.(e.target.value);
 $('#fullBtn').onclick = () => {
   const on = !viewer.fullModel;
   viewer.setFullModel?.(on);
-  $('#fullBtn').classList.toggle('on', on);
+  $('#fullBtn').classList.toggle('on', !!viewer.fullModel);
+  $('#simpleBtn').classList.toggle('on', !!viewer.simple);
+  $('#cutSel').value = ''; // the viewer drops the deck cut on this switch; keep the selector in step
 };
 $('#planBtn').onclick = () => { viewer.setPlan(!viewer.plan); $('#planBtn').classList.toggle('on', viewer.plan); };
 
 window.__shipcheck = S; // for debugging in the console
+Object.defineProperty(window, '__shipcheckViewer', { get: () => viewer }); // read-only: the active viewer (tests, console)
 init().then(() => { if (new URLSearchParams(location.search).has('demo')) runDemo(); })
   .catch((e) => { $('#detail').innerHTML = `<p class="check-bad">Failed to load: ${esc(e.message)}</p>`; console.error(e); });
