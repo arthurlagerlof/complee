@@ -17,7 +17,6 @@ import {
 } from 'lucide-react'
 import { inspectionPoints } from './inspectionData'
 import VesselViewer from './VesselViewer'
-import EvidenceIntake from './EvidenceIntake'
 
 gsap.registerPlugin(ScrollTrigger)
 
@@ -34,14 +33,9 @@ function App() {
   const root = useRef<HTMLDivElement>(null)
   const [selectedId, setSelectedId] = useState(inspectionPoints[0].id)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [showConcept, setShowConcept] = useState(false)
-  const [evidenceCount, setEvidenceCount] = useState(0)
   const selectedPoint = inspectionPoints.find((point) => point.id === selectedId) ?? inspectionPoints[0]
 
   useEffect(() => {
-    if (!showConcept) return
-    try { setEvidenceCount(JSON.parse(sessionStorage.getItem('compleeEvidenceFiles') || '[]').length) } catch { setEvidenceCount(0) }
-    requestAnimationFrame(() => document.querySelector('#inspection')?.scrollIntoView({ behavior: 'smooth' }))
     const context = gsap.context(() => {
       const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
@@ -75,10 +69,9 @@ function App() {
     }, root)
 
     return () => context.revert()
-  }, [showConcept])
+  }, [])
 
   const closeMenu = () => setMenuOpen(false)
-  if (!showConcept) return <EvidenceIntake onContinue={() => setShowConcept(true)} />
 
   return (
     <div ref={root} id="top">
@@ -91,7 +84,7 @@ function App() {
             <a href="#workflow">How it works</a>
             <a href="#architecture">Deployment</a>
           </nav>
-          <a className="nav-cta" href="/">Add evidence <ArrowUpRight size={14} /></a>
+          <a className="nav-cta" href="#inspection">Explore the vessel <ArrowUpRight size={14} /></a>
           <button
             type="button"
             className="menu-toggle"
@@ -165,7 +158,7 @@ function App() {
             </div>
             <div className="inspection-workspace" data-reveal>
               <div className="inspection-vessel">
-              <div className="workspace-bar"><span><span className="live-dot" /> R/V TAANI · DESIGN VIEW</span><span>{evidenceCount ? `${evidenceCount} EVIDENCE FILES · ` : ''}PRELOADED MODEL · ILLUSTRATIVE DEMO</span></div>
+                <div className="workspace-bar"><span><span className="live-dot" /> R/V TAANI · DESIGN VIEW</span><span>ILLUSTRATIVE DEMO</span></div>
                 <VesselViewer
                   className="inspection-viewer"
                   selectedPointId={selectedId}
