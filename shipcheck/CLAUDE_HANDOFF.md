@@ -15,6 +15,21 @@
   (bug fixed: cut selector now resets), rule view + component + what-if (P3522 24 in -> compliant), forced WebGL context
   loss/recovery, tall portrait resize, APS (headless: hit its own 180 s load timeout -> clean screenshot fallback), full demo.
   Ignored `work/lifecycle-regressions.cjs`: 7/7 pass (its manifest route now matches `stream*/manifest.json`).
+- Materials: the original marks ~1.58 M triangles (5,035 objects) transparent (e.g. rescue-boat launch envelope, layer ENV_,
+  opacity 0.04). The hp tiles now carry per-vertex source opacity (`_OPACITY`, normal's 4th byte); the viewer draws them in a
+  see-through pass; overview tiles use `manifest.opacity_by_dbid` (uniform parts only). audit-hp checks opacity exactly.
+  The previous opaque hp set is kept in `model/stream-hp-prev/`.
+- Demo readiness (7 Nov, late): presenter mode (`?demo&present`, Space/→/PageDown/Enter = next step, Esc = stop; first key
+  press during autoplay switches to step-by-step), ready gate (demo starts when the overview is fully loaded), technical badge
+  hidden during the demo, ship framed by the overview tiles' corners (centred, large; `fitPerspectiveBox(..., { points })`),
+  component views with room around the part (margin 1.8), rule view: hull as a 15 % ghost + neutral, only the rule's parts
+  coloured; cruise element framed from above (margin 2.6); demo ends on the deck overview. Frame capture:
+  `tools/export/work/demo-frames.cjs` (ignored). Video backup needs Playwright ffmpeg (not installed; user to record).
+- Scene inside the real ship (7 Nov, night): scenario `rcrv-inside` = 4 example components with `geom3d` in the stream
+  manifest frame (corridor x -19..-7 m, z -3.4..-2.6 m at deck level 4, y -1.5 m; door, stair up, guard rail on the bow
+  deck). viewer-stream scene mode: real ship neutral, cut at deck+1.5 m (below the real ceilings), two-phase entry (cut,
+  then fly), overlay shapes from `public/viewer-scene.js`, picking/select/what-if; Simple/Full/cut controls hidden. Demo:
+  real ship (overview, check, P1770, 22-hatch rule view) -> scene (corridor fail -> what-if green, guard rail inch).
 - Known layout limit: below ~800 px width the fixed 330 px + 420 px side columns leave no room for the 3D pane (existing design).
 - `tests/tile-audit.test.mjs` no longer needs the export tools installed (tile-model.mjs loads meshoptimizer lazily). npm test: 91/91.
 

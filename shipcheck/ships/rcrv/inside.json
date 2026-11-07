@@ -1,0 +1,194 @@
+{
+ "name": "RCRV: corridor inside the real ship (example)",
+ "units": "mm",
+ "source": "estimated example placed in the real RCRV production model",
+ "provenance_note": "The ship around this scene is the real ShipConstructor production model (shown see-through). The corridor, door, stair and guard rail are a simplified, estimated example placed at deck level 4 (+9.5 m) of the real deckhouse; their dimensions are fictional test values, not measured from the model or GA drawings. Ship particulars as in the other RCRV scenarios.",
+ "ship": {
+  "name": "Regional Class Research Vessel (Oregon State University)",
+  "type": "research",
+  "operating_area": [
+   "US"
+  ],
+  "propulsion": {
+   "value": "diesel-electric",
+   "unit": "mm",
+   "source": "public particulars"
+  },
+  "length_overall": {
+   "value": 60650,
+   "unit": "mm",
+   "source": "public particulars",
+   "note": "about 60.65 m (199 ft); OSU press material says 193 ft"
+  },
+  "beam": {
+   "value": 12500,
+   "unit": "mm",
+   "source": "public particulars",
+   "note": "12.5 m (41 ft)"
+  },
+  "draft": {
+   "value": 3810,
+   "unit": "mm",
+   "source": "public particulars",
+   "note": "about 3.81 m"
+  },
+  "berths": {
+   "value": 31,
+   "unit": "mm",
+   "source": "public particulars",
+   "note": "16 science, 2 technicians, 13 crew"
+  },
+  "gross_tonnage": {
+   "value": 1200,
+   "unit": "mm",
+   "source": "estimated",
+   "note": "order of magnitude only; any 60 m vessel is far above the 400 GT threshold"
+  },
+  "class_society": {
+   "value": "DNV",
+   "unit": "mm",
+   "source": "confirmed by Meyer mentors (Q&A, 7 Nov)"
+  },
+  "fuel": "MGO",
+  "source": "public particulars"
+ },
+ "decks": [
+  {
+   "id": "D4",
+   "name": "Deck level 4 (+9.5 m), deckhouse",
+   "elevation": 9500,
+   "height": 2800,
+   "outline": [],
+   "source": "deck height from the real model (horizontal plating), example layout"
+  }
+ ],
+ "scene": {
+  "frame": "model/stream manifest frame: mm, x along the ship (bow at -x), y up, z across",
+  "deck_y_mm": -1500,
+  "note": "Placed in the free strip between the deckhouse longitudinal bulkhead (z = -4 m) and the cabins (from z = -2.5 m), found in the real geometry (tools/export/work/deck-map.mjs)."
+ },
+ "demo": {
+  "focus": "C1",
+  "fix": {
+   "prop": "clear_width",
+   "value": 1000,
+   "unit": "mm"
+  },
+  "second": "GR1"
+ },
+ "elements": [
+  {
+   "id": "C1",
+   "type": "corridor",
+   "name": "Deckhouse corridor, deck level 4",
+   "deck": "D4",
+   "source": "estimated",
+   "geom3d": {
+    "min": [
+     -19000,
+     -1500,
+     -3425
+    ],
+    "max": [
+     -7000,
+     600,
+     -2575
+    ]
+   },
+   "props": {
+    "clear_width": {
+     "value": 850,
+     "unit": "mm",
+     "source": "planted test case (fictional value)"
+    },
+    "dead_end_length": 0,
+    "zone": "circulation"
+   },
+   "note": "Planted: clear width 850 mm, below the FSS Code minimum."
+  },
+  {
+   "id": "D1",
+   "type": "door",
+   "name": "Weathertight door, corridor to open deck",
+   "deck": "D4",
+   "source": "estimated",
+   "geom3d": {
+    "min": [
+     -19160,
+     -1500,
+     -3420
+    ],
+    "max": [
+     -19000,
+     600,
+     -2580
+    ]
+   },
+   "props": {
+    "weathertight": true,
+    "clear_width": 800,
+    "sill_height": {
+     "value": 600,
+     "unit": "mm",
+     "source": "example value (fictional)"
+    }
+   }
+  },
+  {
+   "id": "ST1",
+   "type": "stair",
+   "name": "Stair, deck level 4 up to the bridge deck",
+   "deck": "D4",
+   "source": "estimated",
+   "geom3d": {
+    "min": [
+     -7000,
+     -1500,
+     -3450
+    ],
+    "max": [
+     -3800,
+     1300,
+     -2550
+    ],
+    "rise": "+x"
+   },
+   "props": {
+    "clear_width": {
+     "value": 900,
+     "unit": "mm",
+     "source": "example value (fictional)"
+    },
+    "zone": "circulation"
+   }
+  },
+  {
+   "id": "GR1",
+   "type": "guard_rail",
+   "name": "Guard rail, open deck forward of the deckhouse",
+   "deck": "D4",
+   "source": "estimated",
+   "geom3d": {
+    "min": [
+     -26000,
+     -1500,
+     -4700
+    ],
+    "max": [
+     -21000,
+     -550,
+     -4640
+    ]
+   },
+   "props": {
+    "height": {
+     "value": 37.4,
+     "unit": "in",
+     "source": "planted test case (fictional value)",
+     "note": "imperial value as on US drawings"
+    }
+   },
+   "note": "Planted: 37.4 in (950 mm), below 1 m."
+  }
+ ]
+}

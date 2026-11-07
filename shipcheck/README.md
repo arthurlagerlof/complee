@@ -213,8 +213,18 @@ relative to each tile (no position quantization; one `--group` per run, then `--
 `tools/export/audit-hp.mjs` checks it against the SVF source per dbId: identical triangle counts (50,843,045), bounds and
 mean centroids within 0.0004 mm, areas within the float32 rounding bound (`model/stream-hp/audit.json`). The app serves
 `stream-hp` once that audit has passed; `MODEL_MANIFEST=stream/manifest.json` switches back. The far exterior overview
-tiles are still taken from `model/stream` until they are re-baked. Browser regressions:
+tiles are still taken from `model/stream` until they are re-baked.
+**Transparency as in the original.** Each vertex also carries its source material's opacity (`_OPACITY`): about 1.58 M
+triangles (glazing, envelopes, clearance volumes) are see-through in the original, e.g. the rescue-boat launch envelope on
+layer `ENV_` is 96 % transparent. The viewer draws them in a see-through pass with that opacity (below 10 % they are not
+clickable); the audit checks the opacity of every part against the source. Browser regressions:
 `cd tools/export && node --test --test-concurrency=1 browser-regressions.cjs` (app running).
+
+**Corridor scene inside the real ship.** Scenario `rcrv-inside` (`ships/rcrv/inside.json`) places a simplified, estimated
+example (one corridor, its door, a stair, a guard rail; fictional values, ground truth in `tests/expected/rcrv-inside.json`)
+at its real position in the deckhouse (deck level 4, located from the real geometry). It opens in the real-model viewer:
+the ship is cut open 1.5 m above the deck, the camera dives in, and only the four components carry status colours
+(`public/viewer-scene.js`). The demo shows the whole real ship first, then this scene.
 
 Model files can live on a different host: see [separate model server](docs/model-serving.md) for `MODEL_BASE_URL`, CORS and read-only server commands. The original merged viewer code and APS/screenshot fallbacks remain in the repository.
 

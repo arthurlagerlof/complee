@@ -121,3 +121,21 @@ test('clip planes retain nearby geometry during a dolly and improve exterior dep
  const close=geometryDepthRange([0,0,11],[box],11);assert.ok(close.near<=.25,'near plane stays in front of the closest geometry');
  const inside=geometryDepthRange([0,0,0],[box],1);assert.equal(inside.near,.1);assert.ok(inside.far>inside.near);
 });
+
+test('point framing centres and fills the actual geometry, not the empty corners of its bounding box', () => {
+  // A long, slim "ship" (hull + a tall mast near one end) made of small boxes, seen at an oblique angle.
+  const parts = [];
+  for (let x = -30000; x < 30000; x += 6000) parts.push({ min: [x, -4000, -6000], max: [x + 6000, 2000, 6000] });
+  parts.push({ min: [-6000, 2000, -1500], max: [-3000, 20000, 1500] });
+  const points = parts.flatMap(corners);
+  const box = { min: [-30000, -4000, -6000], max: [30000, 20000, 6000] };
+  const options = { fov: 35, aspect: 1.6, direction: [-0.75, 0.45, 0.85], up: [0, 1, 0], margin: 1.1 };
+  const viaPoints = fitPerspectiveBox(box, { ...options, points });
+  const viaBox = fitPerspectiveBox(box, options);
+  const ps = project({ min: [0, 0, 0], max: [0, 0, 0] }, viaPoints) && points.map((p) => project({ min: p, max: p }, viaPoints)[0]);
+  const xs = ps.map((p) => p.x), ys = ps.map((p) => p.y);
+  for (const p of ps) assert.ok(Math.abs(p.x) <= 1 / 1.1 + 1e-8 && Math.abs(p.y) <= 1 / 1.1 + 1e-8, 'every geometry point inside the margin');
+  assert.ok(Math.abs(Math.min(...xs) + Math.max(...xs)) < 1e-8 && Math.abs(Math.min(...ys) + Math.max(...ys)) < 1e-8, 'geometry centred on both axes');
+  assert.ok(Math.abs(Math.max(...xs.map(Math.abs), ...ys.map(Math.abs)) - 1 / 1.1) < 1e-8, 'geometry fills the available view');
+  assert.ok(viaPoints.distance < viaBox.distance, `closer than the box fit (${viaPoints.distance.toFixed(0)} < ${viaBox.distance.toFixed(0)} mm)`);
+});

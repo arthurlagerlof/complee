@@ -7,6 +7,8 @@
 //     the only rounding is float32 near the tile origin (reported per run as the maximum deviation, in mm)
 //   - same dbIds as the main/rest chunks (map-ids.mjs translation; rest grouping from work/rest-plan.json)
 //   - same tile grid as tile-model.mjs (6 m cells by triangle centroid, at most 160,000 triangles per tile)
+//   - the source material's opacity per vertex (_OPACITY, 0-255, in the spare 4th byte of the 8-bit normals): e.g. the
+//     rescue-boat launch envelope is 96 % transparent in the original and must not be drawn as a solid block
 //   - normals as 8-bit (as the existing chunks); dbId in COLOR_0 bytes; meshopt compression (lossless, every byte
 //     checked after decoding); no simplification, nothing dropped, degenerate source triangles are kept as they are
 // The existing model/stream/ and the packed GLBs stay untouched.
@@ -64,7 +66,8 @@ async function group(name) {
   const { scene, toOut, scaleMM, offset } = frame;
 
   // 1) collect the group's geometry in double precision (output frame, mm)
-  const pos = new Grow(Float64Array), nrm = new Grow(Float32Array), ids = new Grow(Uint32Array), idx = new Grow(Uint32Array);
+  const pos = new Grow(Float64Array), nrm = new Grow(Float32Array), ids = new Grow(Uint32Array), idx = new Grow(Uint32Array), opq = new Grow(Uint8Array);
+  const opById = new Map(); // dbId -> opacity byte if all its fragments share it, -1 if mixed
   let verts = 0, frags = 0, srcZero = 0, unassigned = 0;
   for (let i = 0, n = scene.getNodeCount(); i < n; i++) {
     const node = scene.getNode(i);
@@ -84,7 +87,10 @@ async function group(name) {
     const V = geom.getVertices(), I = geom.getIndices(), N = geom.getNormals?.();
     if (!V?.length || !I?.length) continue;
     const M = matrixOf(node.transform), nv = V.length / 3, base = verts;
-    pos.reserve(nv * 3); nrm.reserve(nv * 3); ids.reserve(nv); idx.reserve(I.length);
+    const op = Math.round(Math.max(0, Math.min(1, scene.getMaterial(node.material)?.opacity ?? 1)) * 255);
+    const prevOp = opById.get(dbid); opById.set(dbid, prevOp === undefined || prevOp === op ? op : -1);
+    pos.reserve(nv * 3); nrm.reserve(nv * 3); ids.reserve(nv); idx.reserve(I.length); opq.reserve(nv);
+    opq.a.fill(op, opq.len, opq.len + nv); opq.len += nv;
     for (let v = 0; v < nv; v++) {
       let x = V[3 * v], y = V[3 * v + 1], z = V[3 * v + 2];
       if (M) { const X = M[0] * x + M[4] * y + M[8] * z + M[12], Y = M[1] * x + M[5] * y + M[9] * z + M[13], Z = M[2] * x + M[6] * y + M[10] * z + M[14]; x = X; y = Y; z = Z; }
@@ -149,6 +155,7 @@ async function group(name) {
           if (dev > maxDev) maxDev = dev;
           fnrm[4 * i + k] = Math.round(Math.max(-1, Math.min(1, nrm.a[3 * v + k])) * 127);
         }
+        fnrm[4 * i + 3] = opq.a[v] > 127 ? opq.a[v] - 256 : opq.a[v]; // the byte is read as unsigned _OPACITY
         const d = ids.a[v]; dbs.add(d);
         fcol[4 * i] = d & 255; fcol[4 * i + 1] = (d >>> 8) & 255; fcol[4 * i + 2] = (d >>> 16) & 255; fcol[4 * i + 3] = (d >>> 24) & 255;
       });
@@ -198,12 +205,13 @@ async function group(name) {
         extensionsUsed: ['EXT_meshopt_compression', 'KHR_mesh_quantization'], extensionsRequired: ['EXT_meshopt_compression', 'KHR_mesh_quantization'],
         scene: 0, scenes: [{ nodes: [0] }], nodes: [{ name: tile, mesh: 0, translation: origin }],
         materials: [{ name: 'part', pbrMetallicRoughness: { baseColorFactor: [0.8, 0.82, 0.85, 1], metallicFactor: 0, roughnessFactor: 0.8 } }],
-        meshes: [{ name: tile, primitives: [{ attributes: { POSITION: 0, NORMAL: 1, COLOR_0: 2 }, indices: 3, material: 0 }] }],
+        meshes: [{ name: tile, primitives: [{ attributes: { POSITION: 0, NORMAL: 1, COLOR_0: 2, _OPACITY: 4 }, indices: 3, material: 0 }] }],
         accessors: [
           { bufferView: 0, componentType: 5126, count: nv, type: 'VEC3', min: lmin, max: lmax },
           { bufferView: 1, componentType: 5120, normalized: true, count: nv, type: 'VEC3' },
           { bufferView: 2, componentType: 5121, normalized: true, count: nv, type: 'VEC4' },
           { bufferView: 3, componentType: findex.BYTES_PER_ELEMENT === 2 ? 5123 : 5125, count: nt * 3, type: 'SCALAR' },
+          { bufferView: 1, byteOffset: 3, componentType: 5121, normalized: true, count: nv, type: 'SCALAR' }, // _OPACITY
         ],
         bufferViews,
         buffers: [{ byteLength: compressedOffset }, { byteLength: decodedOffset, extensions: { EXT_meshopt_compression: { fallback: true } } }],
@@ -218,30 +226,37 @@ async function group(name) {
         bounds_mm: { min: lmin.map((x, k) => x + origin[k]), max: lmax.map((x, k) => x + origin[k]) }, sha256: hash });
     }
   }
-  const summary = { group: name, generated: new Date().toISOString(), fragments: frags, triangles: T, vertices: verts, tiles: entries.length, bytes,
+  let transparentTris = 0;
+  for (let t = 0; t < T; t++) if (opq.a[IX[3 * t]] < 255) transparentTris++;
+  const opacity = {}; for (const [id, o] of opById) if (o >= 0 && o < 255) opacity[id] = o;
+  const mixedOpacity = [...opById].filter(([, o]) => o === -1).map(([id]) => id);
+  const summary = { group: name, transparent_triangles: transparentTris, mixed_opacity_ids: mixedOpacity.length, generated: new Date().toISOString(), fragments: frags, triangles: T, vertices: verts, tiles: entries.length, bytes,
     source_zero_area_triangles: srcZero, output_zero_area_triangles: outZero, max_position_deviation_mm: maxDev, unassigned_fragments_other_groups: unassigned };
-  fs.writeFileSync(path.join(PARTS_DIR, `${name}.json`), JSON.stringify({ summary, entries }));
+  fs.writeFileSync(path.join(PARTS_DIR, `${name}.json`), JSON.stringify({ summary, entries, opacity }));
   log(`${name}: ${entries.length} tiles, ${(bytes / 1e6).toFixed(1)} MB; zero-area triangles: source ${srcZero}, output ${outZero}; max position deviation ${maxDev.toExponential(2)} mm; ${Math.round((Date.now() - t0) / 1000)} s`);
 }
 
 function manifest() {
   const groups = [...MAIN, ...JSON.parse(fs.readFileSync(PLAN, 'utf8')).chunks.map((c, i) => restName(i))];
   const v1 = JSON.parse(fs.readFileSync(path.join(SC, 'model', 'stream', 'manifest.json'), 'utf8'));
-  const chunks = [], summaries = [];
+  const chunks = [], summaries = [], opacity = {};
   for (const g of groups) {
     const f = path.join(PARTS_DIR, `${g}.json`);
     if (!fs.existsSync(f)) throw new Error(`Group ${g} not exported yet: node export-tiles-hp.mjs --group ${g}`);
-    const { summary, entries } = JSON.parse(fs.readFileSync(f, 'utf8'));
-    chunks.push(...entries); summaries.push(summary);
+    const { summary, entries, opacity: op } = JSON.parse(fs.readFileSync(f, 'utf8'));
+    chunks.push(...entries); summaries.push(summary); Object.assign(opacity, op || {});
   }
   const sum = (k) => summaries.reduce((s, x) => s + x[k], 0);
   const m = {
-    version: 3, kind: 'viewport-tiles', precision: 'float32 positions relative to each tile origin (no position quantization); 8-bit normals; dbId bytes',
+    version: 3, kind: 'viewport-tiles', precision: 'float32 positions relative to each tile origin (no position quantization); 8-bit normals; dbId bytes; source opacity per vertex (_OPACITY)',
+    // Original material opacity (0-255) of parts whose fragments all share one opacity below 1, for tiles without a
+    // per-vertex _OPACITY attribute (the exterior overview tiles). Parts mixing opacities stay opaque there.
+    opacity_by_dbid: opacity,
     units: v1.units, coordinate_system: v1.coordinate_system, offset_mm: v1.offset_mm, deck_levels: v1.deck_levels,
     chunks,
     sources: summaries,
     integrity: { triangles: sum('triangles'), source_zero_area_triangles: sum('source_zero_area_triangles'), output_zero_area_triangles: sum('output_zero_area_triangles'),
-      max_position_deviation_mm: Math.max(...summaries.map((s) => s.max_position_deviation_mm)), attribute_roundtrip: 'every compressed stream decoded and compared byte for byte' },
+      max_position_deviation_mm: Math.max(...summaries.map((s) => s.max_position_deviation_mm)), transparent_triangles: sum('transparent_triangles'), attribute_roundtrip: 'every compressed stream decoded and compared byte for byte' },
     streaming: v1.streaming,
     // The exterior overview (visibility-sampled faces, used only from a distance) is reused from model/stream/ until it
     // is re-baked from these tiles; detail always comes from the high-precision tiles above.

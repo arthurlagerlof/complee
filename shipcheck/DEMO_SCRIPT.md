@@ -14,24 +14,37 @@
    "full model … MB") and appears in grey in the overview once all filter chips are on. It never changes a colour or count; the
    rule and component steps hide the grey parts, keeping the compliance view clear.
 
-## The "Demo run-through" button (about 45 s)
+## Presenting live (recommended)
+
+- Full screen, 1920×1080 (below about 800 px width the 3D view has no room). Use the local viewer (default), not `?viewer=aps`.
+- Open `/inspection/index.html?scenario=rcrv-3d&demo&present`: the demo first waits until the whole ship is loaded
+  (caption "Loading the real 3D model…"), then stops at every step. **Space**, **→**, **Page Down** or **Enter** (a presentation
+  clicker) goes to the next step, **Esc** ends the demo. Without `&present` it plays by itself; the first key press switches
+  it to step-by-step.
+- The technical loading badge is hidden while the demo runs.
+
+## The "Demo run-through" button (about 60 s autoplay, or step by step)
 
 The captions are generated from the data, so the numbers are always correct.
 
-| Time | On screen | Caption | Voice-over (suggestion) |
+| Step | On screen | Caption | Voice-over (suggestion) |
 | --- | --- | --- | --- |
-| 0-3 s | The real RCRV model, neutral | "OSU RCRV: real ShipConstructor production model. 330,760 objects in the model, 35,328 parts checked, inches converted to mm" | "This is the real production model of the OSU research vessel, straight from ShipConstructor." |
-| 3-6 s | Parts turn green / amber / red group by group | "Checking 6 rules on real design data: IACS unified requirements, SOLAS, IGC Code, data quality" | "We check it against IACS steel rules, SOLAS and the data quality itself." |
-| 6-9 s | Summary and ground-truth box pulse | "6 non-compliant, 3,651 not enough info, 19,875 compliant. Ground truth: 13/13 hand-checked findings, 6/6 counts match an independent scan, 0 false alarms" | "Every result is checked against a ground truth: no false alarms." |
-| 9-14 s | Camera isolates the first red part (P1770, the rest dimmed); its rule card pulses | "P1770: ASTM A106 in hull structure (SWBS 100)", plus the UR W11 1.4 quote | "This hull stiffener is a 12-inch pipe of ASTM A106. That is not a hull steel grade, so it needs special approval from class. The tool quotes the rule." |
-| 14-18 s | **Component view:** hatch P3522 isolated (rest ghosted), box outline and 3D label "value not in model · required ≥ 600 mm"; the card lists drawing, SWBS and the missing size | "Component view: STEELQUICK ACTING WATERTIGHT HATCH - FLUSH. Not enough info: clear opening min side not in the model (no size in the name) · required ≥ 600 mm" | "Click any part: the tool shows what it needs to know and what is missing. The size of this hatch is not in the model, so it does not guess." |
-| 18-22 s | The rule card pulses: source and review status | "The card shows the rule, its source and review status: IGC Code 3.5.3.1.2 · reviewed by Meyer mentors (Q&A, 7 Nov)" | "Each result quotes its rule and says how far it is verified." |
-| 22-26 s | **Rule view:** all hatches light up in 3D, coloured by this rule | "Rule view: 22 hatches: 4 pass, 0 fail, 18 not enough info" | "Or start from the requirement: every hatch it applies to." |
-| 26-32 s | **What-if:** 24 in typed into the opening; the hatch turns green; label "610 mm (24 in) · what-if" | "P3522 is now compliant (what-if, not in model). Reset restores the model value" | "The engineer tries a size; it is marked as a what-if, never written into the model." |
-| 32-34 s | Switch to the cruise deck (Three.js view); example-deck note in the sidebar | "Cruise passenger deck: same checker, passenger rules" | "Passenger rules run on an example deck, as agreed with the Meyer mentors." |
-| 34-38 s | Corridor C2 selected; both failing rule cards and the governing note pulse | "C2 fails 2 overlapping rules: FSS-13-CORRIDOR (≥ 900 mm) + ADA-403.5.1 (≥ 915 mm). The strictest governs: ≥ 915 mm" | "800 mm fails SOLAS and the ADA at once, and the tool shows which value governs." |
-| 38-42 s | "1000" is typed into clear_width; C2 turns green | "C2 is now compliant with both rules. Re-checked in < 1 ms" | "The engineer fixes it and gets the answer instantly." |
-| 42-45 s | Report and CSV buttons pulse | "Export the findings: HTML report and CSV" | "And exports the findings, with the traceability table, for the class review." |
+| 1 | The real RCRV model, whole ship, neutral | "OSU RCRV: real ShipConstructor production model. 330,760 objects in the model, 35,328 parts checked, inches converted to mm" | "This is the real production model of the OSU research vessel, straight from ShipConstructor." |
+| 2 | Parts turn green / amber / red group by group | "Checking 6 rules on real design data: IACS, SOLAS, IGC Code, data quality" | "We check it against IACS steel rules, SOLAS and the data quality itself." |
+| 3 | Summary and ground-truth box pulse | "6 non-compliant, 3,651 not enough info, 19,875 compliant. Ground truth: 13/13 …, 0 false alarms" | "Every result is checked against a ground truth: no false alarms." |
+| 4 | The first red part (P1770) isolated, rule card pulses | "P1770: ASTM A106 in hull structure (SWBS 100)" + UR W11 quote | "This hull stiffener is a 12-inch pipe of ASTM A106, not a hull steel grade." |
+| 5 | **Rule view** in the real ship: all 22 hatches through a see-through hull | "Rule view: 22 hatches: 4 pass, 0 fail, 18 not enough info" | "Or start from the requirement: every hatch it applies to." |
+| 6 | **Into the ship:** the ship is cut open above deck level 4, the camera dives into the real deckhouse | "Inside the ship: one corridor on deck level 4" | "Now inside: one corridor with its door, stair and the rail outside, placed in the real deckhouse." |
+| 7 | The 4 components in colour: corridor red, guard rail red, door and stair green | "4 components checked: 3 non-compliant, 3 compliant" + ground truth 3/3 | "Four components, checked the same way." |
+| 8 | **Component view:** the corridor, label "850 mm · required ≥ 900 mm" | "Deckhouse corridor: clear width 850 mm, required ≥ 900 mm" + FSS quote | "The corridor is 5 cm too narrow for an escape route." |
+| 9 | The rule card pulses: source and review status | "The card shows the rule, its source and review status" | "Each result quotes its rule and says how far it is verified." |
+| 10 | **What-if:** 1000 typed into the clear width; the corridor turns green | "C1 is now compliant (what-if, not in model)" | "The engineer tries a width; it is marked as a what-if, never written into the model." |
+| 11 | The guard rail outside, label "950 mm (37.4 in)" | "Guard rail: 37.4 in (950 mm) fails 2 overlapping rules: Load Line + DNV" | "Drawn in inches, converted, and it fails two rules at once." |
+| 12 | Back to the scene overview; Report and CSV pulse | "Export the findings: HTML report and CSV" | "And exports the findings with the traceability table for the class review." |
+
+The corridor scene (`ships/rcrv/inside.json`) is a simplified, estimated example placed in the real deckhouse: the ship
+around it is the real model, the four components and their values are fictional test values (labelled as such in the app).
+The cruise deck is no longer part of the run-through; it stays in the scenario menu.
 
 **Why the hatch is amber, not red, and why its rule is IGC:** the real model has no failing hatch (4 pass; 18 have no size in their names),
 and no DNV or SOLAS hatch-opening value is in the project yet. The demo shows the real state and uses a what-if, labelled as such,

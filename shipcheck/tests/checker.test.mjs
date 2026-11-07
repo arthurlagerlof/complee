@@ -10,6 +10,8 @@ const RULES = read('rules.json').rules;
 // Estimated RCRV deck layout with planted findings: test data for the layout rules (escape, Load Line, ...).
 const RCRV = read('tests/fixtures/rcrv-layout.json');
 const CRUISE = read('ships/cruise/deck.json');
+// Corridor example inside the real RCRV model (corridor, door, stair, guard rail placed in the real deckhouse).
+const INSIDE = read('ships/rcrv/inside.json');
 const clone = (o) => structuredClone(o);
 const resultOf = (out, el, rule) => out.elements[el]?.results.find((r) => r.rule_id === rule);
 const notApplied = (out, el, rule) => out.elements[el]?.not_applicable.find((r) => r.rule_id === rule);
@@ -19,6 +21,7 @@ const notApplied = (out, el, rule) => out.elements[el]?.not_applicable.find((r) 
 for (const [name, model, expected] of [
   ['rcrv-layout', RCRV, read('tests/expected/rcrv-layout.json')],
   ['cruise', CRUISE, read('tests/expected/cruise.json')],
+  ['rcrv-inside', INSIDE, read('tests/expected/rcrv-inside.json')],
 ]) {
   test(`${name}: every planted finding detected, no false alarms`, () => {
     const s = scoreResults(checkModel(model, RULES), expected);

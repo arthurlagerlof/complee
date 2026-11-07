@@ -4,7 +4,8 @@
 //   triangle count (exact), bounding box and mean triangle centroid (within 0.001 mm), total area (within the bound a
 //   0.0005 mm vertex deviation allows: |dA| <= sqrt(3)/2 * 0.0005 mm * perimeter, summed per id; thin slivers are
 //   ill-conditioned, so a relative area test would flag rounding, not loss),
-//   zero-area triangles (source vs tiles), file hashes against the manifest.
+//   zero-area triangles (source vs tiles), source material opacity per triangle (exact: count of transparent
+//   triangles and sum of opacity bytes per id), file hashes against the manifest.
 // Writes model/stream-hp/audit.json (summary + the worst ids) and exits 1 on any failure.
 // Usage: node --max-old-space-size=12288 audit-hp.mjs
 import fs from 'node:fs';
@@ -20,7 +21,7 @@ const HP = path.join(SC, 'model', 'stream-hp');
 const TOL_MM = 0.001; // bounds / centroid tolerance (float32 near a tile origin is ~0.0005 mm)
 const DEV_MM = 0.0005; // maximum float32 rounding of a stored position (export-tiles-hp.mjs reports the real maximum)
 const t0 = Date.now();
-const acc = () => ({ n: 0, zero: 0, area: 0, perim: 0, cx: 0, cy: 0, cz: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] });
+const acc = () => ({ n: 0, zero: 0, area: 0, perim: 0, tn: 0, osum: 0, cx: 0, cy: 0, cz: 0, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] });
 function addTri(a, ax, ay, az, bx, by, bz, cx, cy, cz) {
   const ux = bx - ax, uy = by - ay, uz = bz - az, vx = cx - ax, vy = cy - ay, vz = cz - az;
   const ar = Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2;
@@ -46,11 +47,15 @@ for (const info of manifest.chunks) {
   if (pa.componentType !== 5126) throw new Error(`${info.file}: positions are not float32`);
   const pv = views[pa.bufferView], P = new Float32Array(pv.buffer, pv.byteOffset, pv.byteLength / 4);
   const C = views[ca.bufferView];
+  const oa = acs[pr.attributes._OPACITY];
+  if (!oa) throw new Error(`${info.file}: no _OPACITY attribute`);
+  const OV = views[oa.bufferView], ostride = json.bufferViews[oa.bufferView].byteStride || 1, ooff = oa.byteOffset || 0;
   const iv = views[ia.bufferView], I = ia.componentType === 5123 ? new Uint16Array(iv.buffer, iv.byteOffset, ia.count) : new Uint32Array(iv.buffer, iv.byteOffset, ia.count);
   for (let k = 0; k < I.length; k += 3) {
     const a = I[k], b = I[k + 1], c = I[k + 2];
     const id = (C[4 * a] | (C[4 * a + 1] << 8) | (C[4 * a + 2] << 16) | (C[4 * a + 3] << 24)) >>> 0;
     let t = tiles.get(id); if (!t) tiles.set(id, (t = acc()));
+    const ob = OV[a * ostride + ooff]; if (ob < 255) t.tn++; t.osum += ob;
     addTri(t, P[3 * a] + tr[0], P[3 * a + 1] + tr[1], P[3 * a + 2] + tr[2], P[3 * b] + tr[0], P[3 * b + 1] + tr[1], P[3 * b + 2] + tr[2], P[3 * c] + tr[0], P[3 * c + 1] + tr[1], P[3 * c + 2] + tr[2]);
     tileTris++;
   }
@@ -81,22 +86,26 @@ for (let i = 0, n = scene.getNodeCount(); i < n; i++) {
     for (let k = 0; k < 3; k++) W[v + k] = o[k] * scaleMM - offset[k];
   }
   let s = src.get(id); if (!s) src.set(id, (s = acc()));
+  const ob = Math.round(Math.max(0, Math.min(1, scene.getMaterial(node.material)?.opacity ?? 1)) * 255);
   for (let k = 0; k < I.length; k += 3) {
     const a = 3 * I[k], b = 3 * I[k + 1], c = 3 * I[k + 2];
     addTri(s, W[a], W[a + 1], W[a + 2], W[b], W[b + 1], W[b + 2], W[c], W[c + 1], W[c + 2]);
+    if (ob < 255) s.tn++; s.osum += ob;
     srcTris++;
   }
 }
 log(`Source: ${srcTris.toLocaleString('en')} triangles, ${src.size.toLocaleString('en')} dbIds (fragments without an assignment: ${skipped})`);
 
 // 3) compare
-const fail = { count: [], bounds: [], centroid: [], area: [], missing: [], extra: [] };
-let worstBounds = 0, worstCentroid = 0, worstArea = 0, srcZero = 0, tileZero = 0, lostArea = 0;
+const fail = { opacity: [], count: [], bounds: [], centroid: [], area: [], missing: [], extra: [] };
+let srcTransparent = 0, tileTransparent = 0, worstBounds = 0, worstCentroid = 0, worstArea = 0, srcZero = 0, tileZero = 0, lostArea = 0;
 for (const [id, s] of src) {
   srcZero += s.zero;
   const t = tiles.get(id);
   if (!t) { fail.missing.push(id); continue; }
   if (t.n !== s.n) fail.count.push({ id, source: s.n, tiles: t.n });
+  if (t.tn !== s.tn || t.osum !== s.osum) fail.opacity.push({ id, source: [s.tn, s.osum], tiles: [t.tn, t.osum] });
+  srcTransparent += s.tn; tileTransparent += t.tn;
   const db = Math.max(...[0, 1, 2].flatMap((k) => [Math.abs(t.min[k] - s.min[k]), Math.abs(t.max[k] - s.max[k])]));
   worstBounds = Math.max(worstBounds, db); if (db > TOL_MM) fail.bounds.push({ id, mm: db });
   const bound = Math.sqrt(3) / 2 * DEV_MM * s.perim, dA = Math.abs(t.area - s.area);
@@ -112,6 +121,7 @@ const failures = Object.values(fail).reduce((n, l) => n + l.length, 0) + hashErr
 const report = {
   generated: new Date().toISOString(), seconds: Math.round((Date.now() - t0) / 1000), pass: failures === 0,
   triangles: { source: srcTris, tiles: tileTris }, dbids: { source: src.size, tiles: tiles.size },
+  transparent_triangles: { source: srcTransparent, tiles: tileTransparent },
   zero_area_triangles: { source: srcZero, tiles: tileZero, note: 'float32 rounding near the tile origin turns sub-micron slivers into exact zero area; see area' },
   worst: { bounds_mm: worstBounds, mean_centroid_mm: worstCentroid, area_difference_vs_rounding_bound: worstArea }, area_difference_mm2: lostArea,
   tolerances: { bounds_and_centroid_mm: TOL_MM, vertex_rounding_mm: DEV_MM, area: 'sqrt(3)/2 * vertex_rounding * perimeter per id' }, hash_errors: hashErrors,
@@ -120,6 +130,6 @@ const report = {
 fs.writeFileSync(path.join(HP, 'audit.json'), JSON.stringify(report, null, 1));
 log(`Triangles: source ${srcTris.toLocaleString('en')}, tiles ${tileTris.toLocaleString('en')}; dbIds: source ${src.size.toLocaleString('en')}, tiles ${tiles.size.toLocaleString('en')}`);
 log(`Worst per-id difference: bounds ${worstBounds.toExponential(2)} mm, centroid ${worstCentroid.toExponential(2)} mm, area difference ${(worstArea * 100).toFixed(1)} % of the rounding bound; total area difference ${lostArea.toExponential(2)} mm²`);
-log(`Zero-area triangles: source ${srcZero.toLocaleString('en')}, tiles ${tileZero.toLocaleString('en')}`);
+log(`Zero-area triangles: source ${srcZero.toLocaleString('en')}, tiles ${tileZero.toLocaleString('en')}; transparent triangles: source ${srcTransparent.toLocaleString('en')}, tiles ${tileTransparent.toLocaleString('en')}`);
 log(`Failures: ${Object.entries(fail).map(([k, l]) => `${k} ${l.length}`).join(', ')}, hashes ${hashErrors} -> ${report.pass ? 'PASS' : 'FAIL'} (${report.seconds} s)`);
 process.exit(report.pass ? 0 : 1);

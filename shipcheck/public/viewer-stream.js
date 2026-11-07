@@ -1,6 +1,7 @@
 ﻿// Viewport-driven local viewer. Only requested spatial tiles are resident; old merged GLBs remain untouched.
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { createSceneOverlay } from "./viewer-scene.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import {
@@ -96,6 +97,51 @@ export async function createLocalViewer(
   overviewMaterial.polygonOffset = true;
   overviewMaterial.polygonOffsetFactor = 1;
   overviewMaterial.polygonOffsetUnits = 1;
+  // Parts that are transparent in the original model (material opacity < 1, e.g. the rescue-boat launch envelope at
+  // 4 % or glazing at 20 %) are drawn in a second, see-through pass with their own opacity. The state alpha carries
+  // it: 255 = visible and opaque, 1-254 = visible with that opacity, 0 = hidden (or fully transparent in the source).
+  const glassMaterial = new THREE.MeshLambertMaterial({
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    clippingPlanes: clipping,
+    transparent: true,
+    depthWrite: false,
+  });
+  glassMaterial.onBeforeCompile = (s) => {
+    s.fragmentShader = s.fragmentShader.replace(
+      "#include <color_fragment>",
+      "#include <color_fragment>\nif (vColor.a > 0.995 || vColor.a < 0.002) discard;",
+    );
+  };
+  glassMaterial.customProgramCacheKey = () => "viewport-glass";
+  const PICK_MIN_ALPHA = 26; // parts below 10 % opacity are practically invisible in the original: not clickable
+  // Scenario scene inside the real ship (elements with geom3d, e.g. ships/rcrv/inside.json): the real ship is neutral
+  // context, cut just above the scene's deck, and the scene's few components carry the status colours.
+  const sceneOverlay = createSceneOverlay(scene, COLORS);
+  let sceneMode = false,
+    sceneSelected = null,
+    sceneDeckY = 0;
+  const SCENE_VIEW = new THREE.Vector3(0.5, 1.05, -0.8); // from above, aft and to the side of the corridor
+  // Camera flights (scene entry, component view): eased over ms, run by the render loop; instant when not visible.
+  let flight = null;
+  function flyTo(target, position, ms = 1200, onStep = null) {
+    const from = { t: controls.target.clone(), p: camera.position.clone() };
+    const done = (k) => {
+      controls.target.lerpVectors(from.t, target, k);
+      camera.position.lerpVectors(from.p, position, k);
+      onStep?.(k);
+    };
+    if (!ms || !container.offsetParent) {
+      flight = null;
+      done(1);
+      controls.update();
+      invalidate();
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      flight = { t0: performance.now(), ms, done, resolve };
+    });
+  }
   const outline = new THREE.Box3Helper(new THREE.Box3(), 0x1f6feb);
   outline.material.depthTest = false;
   outline.renderOrder = 10;
@@ -131,6 +177,11 @@ export async function createLocalViewer(
     loaded = null,
     resolveFirst = null,
     rejectFirst = null;
+  // Screen margins (1 = edge to edge): the whole ship in the overview, a part with room around it in the component
+  // view (outline and label inside the view, the part still large), all parts of a rule in the rule view.
+  const MARGIN = { overview: 1.12, component: 1.8, rule: 1.15 };
+  const cornersOf = (b) => { const out = []; for (const x of [b.min[0], b.max[0]]) for (const y of [b.min[1], b.max[1]]) for (const z of [b.min[2], b.max[2]]) out.push([x, y, z]); return out; };
+  let framedPoints = null;
   let framedBox = null,
     frameMargin = 1.1,
     viewRevision = 0,
@@ -224,7 +275,7 @@ export async function createLocalViewer(
     renderer.setSize(w, h, false);
     camera.aspect = viewportAspect(w, h, camera.aspect);
     camera.updateProjectionMatrix();
-    if (framedBox) fitBox(framedBox, frameMargin);
+    if (framedBox) fitBox(framedBox, frameMargin, framedPoints);
     invalidate();
     schedule();
   }
@@ -248,6 +299,21 @@ export async function createLocalViewer(
   });
   renderer.setAnimationLoop(() => {
     if (!active || gpuLost || !container.offsetParent) return;
+    if (flight) {
+      const k = Math.min(1, (performance.now() - flight.t0) / flight.ms),
+        e = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+      const damping = controls.enableDamping;
+      controls.enableDamping = false;
+      flight.done(e);
+      controls.update();
+      controls.enableDamping = damping;
+      invalidate();
+      if (k >= 1) {
+        const f = flight;
+        flight = null;
+        f.resolve();
+      }
+    }
     controls.update();
     if (dirty) {
       dirty = false;
@@ -277,10 +343,12 @@ export async function createLocalViewer(
     labelEl.style.left = `${((p.x + 1) / 2) * container.clientWidth}px`;
     labelEl.style.top = `${((1 - p.y) / 2) * container.clientHeight}px`;
   }
-  function fitBox(box, k = 1.1) {
+  // points: corners of the real geometry (tile boxes), so the ship itself is centred, not its overall bounding box.
+  function fitBox(box, k = 1.1, points = null) {
     if (!box || box.isEmpty()) return;
     framedBox = box.clone();
     frameMargin = k;
+    framedPoints = points;
     const direction = camera.position.clone().sub(controls.target);
     const frame = fitPerspectiveBox(box, {
       fov: camera.getEffectiveFOV(),
@@ -292,6 +360,7 @@ export async function createLocalViewer(
       direction,
       up: camera.up,
       margin: k,
+      points,
     });
     const damping = controls.enableDamping,
       auto = controls.autoRotate;
@@ -310,13 +379,14 @@ export async function createLocalViewer(
   }
   const allBounds = new THREE.Box3();
   for (const c of allInfos) allBounds.union(boxOf(c.bounds_mm));
+  function overviewItems() {
+    return fullModel && overviewInfos.length
+      ? overviewInfos
+      : manifest.chunks.filter((c) => c.group === "context");
+  }
   function overviewBounds() {
     const b = new THREE.Box3();
-    const items =
-      fullModel && overviewInfos.length
-        ? overviewInfos
-        : manifest.chunks.filter((c) => c.group === "context");
-    for (const c of items) b.union(boxOf(c.bounds_mm));
+    for (const c of overviewItems()) b.union(boxOf(c.bounds_mm));
     return b.isEmpty() ? allBounds : b;
   }
   function resetCut() {
@@ -324,6 +394,7 @@ export async function createLocalViewer(
       clipping.length = 0;
       material.needsUpdate = true;
       overviewMaterial.needsUpdate = true;
+    glassMaterial.needsUpdate = true;
     }
     viewRevision++;
   }
@@ -333,7 +404,7 @@ export async function createLocalViewer(
     const center = overviewBounds().getCenter(new THREE.Vector3());
     controls.target.copy(center);
     camera.position.copy(center).add(new THREE.Vector3(-0.75, 0.45, 0.85));
-    fitBox(overviewBounds());
+    fitBox(overviewBounds(), MARGIN.overview, overviewItems().flatMap((c) => cornersOf(c.bounds_mm)));
   }
 
   function summary() {
@@ -364,16 +435,22 @@ export async function createLocalViewer(
   }
   function recolor(c, ids) {
     const only = ids && new Set(ids.map((id) => idToDb.get(id)));
+    let seeThrough = !!c.glass;
     for (let v = 0; v < c.dbids.length; v++) {
       const db = c.dbids[v];
       if (only && !only.has(db)) continue;
       const id = dbToId.get(db),
         st = override?.get(id) ?? results?.elements[id]?.worst;
+      // Rule view: only the rule's parts carry a status colour; the hull around them is neutral context, so the
+      // result of that rule is what stands out (the parts' own results of other rules are not mixed in).
+      const ruleContext = override && !override.has(id) && !sceneMode;
       const col = linear(
         COLORS[
           c.info.group === "rest"
             ? "none"
-            : simple && context.has(db) && (!st || st === "compliant")
+            : sceneMode ||
+                ruleContext ||
+                (simple && context.has(db) && (!st || st === "compliant"))
               ? "context"
               : st || "none"
         ],
@@ -382,13 +459,87 @@ export async function createLocalViewer(
       c.state[o] = Math.round(col[0] * 255);
       c.state[o + 1] = Math.round(col[1] * 255);
       c.state[o + 2] = Math.round(col[2] * 255);
-      c.state[o + 3] = colorState(db, c.info.group === "rest");
+      const shown = sceneMode
+        ? c.info.group === "rest" && !fullModel
+          ? 0
+          : 255
+        : colorState(db, c.info.group === "rest");
+      let alpha =
+        shown && c.opacity && c.opacity[v] < 255 ? c.opacity[v] : shown;
+      // Rule view: the hull around the rule's parts is a light see-through ghost, so parts inside the ship show.
+      if (ruleContext && alpha) alpha = Math.min(alpha, 40);
+      c.state[o + 3] = alpha;
+      if (alpha > 0 && alpha < 255) seeThrough = true;
+    }
+    // See-through pass for this tile, created the first time it has see-through vertices (shares the geometry).
+    if (seeThrough && !c.glass) {
+      const glass = new THREE.Mesh(c.geom, glassMaterial);
+      glass.raycast = () => {};
+      glass.renderOrder = 2;
+      glass.matrixAutoUpdate = false;
+      c.mesh.updateMatrix();
+      glass.matrix.copy(c.mesh.matrix);
+      c.mesh.parent.add(glass);
+      c.glass = glass;
     }
     c.geom.attributes.color.needsUpdate = true;
     invalidate();
   }
   function recompute(ids) {
     for (const c of cache.values()) recolor(c, ids);
+    if (sceneMode) colourScene(ids);
+    schedule();
+  }
+  function colourScene(ids) {
+    for (const id of ids || sceneOverlay.ids()) {
+      if (!sceneOverlay.has(id)) continue;
+      sceneOverlay.setStatus(
+        id,
+        override
+          ? override.get(id) || "context"
+          : results?.elements[id]?.worst || "none",
+      );
+    }
+    sceneOverlay.focus(sceneSelected);
+    invalidate();
+  }
+  function setCut(y) {
+    clipping.length = 0;
+    if (y != null) clipping.push(new THREE.Plane(new THREE.Vector3(0, -1, 0), y));
+    material.needsUpdate = true;
+    overviewMaterial.needsUpdate = true;
+    glassMaterial.needsUpdate = true;
+    invalidate();
+  }
+  // Scene view: cut 1.5 m above the scene's deck (below the real ceilings), camera from above at an angle.
+  function sceneFrame(box, margin) {
+    return fitPerspectiveBox(box, {
+      fov: camera.getEffectiveFOV(),
+      aspect: viewportAspect(container.clientWidth, container.clientHeight, camera.aspect),
+      direction: SCENE_VIEW,
+      up: [0, 1, 0],
+      margin,
+    });
+  }
+  async function frameScene(ms = 2400) {
+    const box = sceneOverlay.bounds();
+    if (box.isEmpty()) return;
+    const f = sceneFrame(box, 1.2);
+    framedBox = box.clone();
+    frameMargin = 1.2;
+    framedPoints = null;
+    const top = allBounds.max.y + 500,
+      cut = sceneDeckY + 1500;
+    // Entering: first the ship is cut open from the top down to the deck (camera still), then the camera dives in.
+    if (!clipping.length) setCut(top);
+    const startCut = clipping[0].constant;
+    if (ms && startCut > cut + 1) {
+      await flyTo(controls.target.clone(), camera.position.clone(), ms * 0.45, (k) => {
+        clipping[0].constant = startCut + (cut - startCut) * k;
+      });
+    }
+    setCut(cut);
+    await flyTo(new THREE.Vector3(...f.target), new THREE.Vector3(...f.position), ms * 0.55);
     schedule();
   }
   const desc = (a, more = {}) => ({
@@ -458,6 +609,21 @@ export async function createLocalViewer(
             0;
     const state = new Uint8Array(n * 4);
     geom.setAttribute("color", new THREE.BufferAttribute(state, 4, true));
+    // Source opacity per vertex: from the tile (_OPACITY) or, for tiles without it, the manifest's per-part table.
+    let opacity = null;
+    const opAttr = geom.attributes._opacity;
+    if (opAttr) {
+      for (let v = 0; v < n; v++) {
+        const o = Math.round(opAttr.getX(v) * 255);
+        if (o < 255) (opacity ??= new Uint8Array(n).fill(255))[v] = o;
+      }
+      geom.deleteAttribute("_opacity");
+    } else if (manifest.opacity_by_dbid) {
+      for (let v = 0; v < n; v++) {
+        const o = manifest.opacity_by_dbid[dbids[v]];
+        if (o !== undefined) (opacity ??= new Uint8Array(n).fill(255))[v] = o;
+      }
+    }
     mesh.material = info.group === "overview" ? overviewMaterial : material;
     mesh.raycast = () => {};
     mesh.frustumCulled = true;
@@ -473,6 +639,7 @@ export async function createLocalViewer(
         geom,
         dbids,
         state,
+        opacity,
         readyPromise,
         resolveReady,
         units: new Set(),
@@ -681,6 +848,13 @@ export async function createLocalViewer(
       ),
       camera,
     );
+    if (sceneMode) {
+      const sid = sceneOverlay.pick(ray);
+      if (sid) {
+        onPick?.(sid);
+        return;
+      }
+    }
     const revision = viewRevision;
     const origin = ray.ray.origin.clone();
     const targets = [...cache.values()].filter((c) => c.ready),
@@ -708,7 +882,7 @@ export async function createLocalViewer(
     for (const h of hits) {
       if (
         (clipping[0] && clipping[0].distanceToPoint(h.p) < 0) ||
-        h.c.state[h.v * 4 + 3] !== 255
+        h.c.state[h.v * 4 + 3] < PICK_MIN_ALPHA
       )
         continue;
       const id = dbToId.get(h.db);
@@ -723,11 +897,14 @@ export async function createLocalViewer(
     selectedId = null;
     selectedDb = null;
     selectedRest = null;
+    const hadScene = sceneSelected !== null;
+    sceneSelected = null;
+    sceneOverlay.focus(null);
     selectionVersion++;
     viewRevision++;
     geometryNotice = "";
     showBox(null, null);
-    return had;
+    return had || hadScene;
   }
   renderer.domElement.addEventListener("webglcontextlost", (event) => {
     event.preventDefault();
@@ -749,6 +926,7 @@ export async function createLocalViewer(
     geometryNotice = "";
     material.needsUpdate = true;
     overviewMaterial.needsUpdate = true;
+    glassMaterial.needsUpdate = true;
     if (active) {
       refresh();
       if (selectionBox) showBox(selectionBox, labelHTML, labelStatus);
@@ -815,16 +993,33 @@ export async function createLocalViewer(
       override = null;
       filterDbs = null;
       clearSelection();
-      resetCut();
       active = true;
+      const sceneEls = norm.elements.filter((e) => e.geom3d);
+      const wasScene = sceneMode;
+      sceneMode = sceneEls.length > 0;
+      sceneOverlay.build(sceneEls);
+      if (sceneMode) {
+        const floor = sceneEls.find((e) => e.type === "corridor") || sceneEls[0];
+        sceneDeckY = floor.geom3d.min[1];
+        recompute();
+        // Entering: fly in. Rebuilt while the flight runs (the app builds twice on a switch): let it finish.
+        if (!wasScene) frameScene(3000);
+        else if (!flight) frameScene(0);
+        return;
+      }
+      resetCut();
       recompute();
       frameOverview();
+    },
+    get sceneMode() {
+      return sceneMode;
     },
     update(r, ids) {
       results = r;
       recompute(ids);
     },
     paintNeutral() {
+      for (const id of sceneOverlay.ids()) sceneOverlay.setStatus(id, "none");
       for (const c of cache.values()) {
         for (let v = 0; v < c.state.length; v += 4) {
           c.state[v] = 184;
@@ -836,6 +1031,21 @@ export async function createLocalViewer(
       invalidate();
     },
     async select(id, { fly = true, label = null, status = null } = {}) {
+      if (sceneMode && sceneOverlay.has(id)) {
+        selectionVersion++;
+        sceneSelected = id;
+        sceneOverlay.focus(id);
+        const b = sceneOverlay.box(id);
+        if (fly) {
+          const f = sceneFrame(b, 2.4);
+          framedBox = b.clone();
+          frameMargin = 2.4;
+          framedPoints = null;
+          flyTo(new THREE.Vector3(...f.target), new THREE.Vector3(...f.position), 1100);
+        }
+        showBox(b, label, status);
+        return;
+      }
       const db = idToDb.get(id);
       if (db == null) return;
       resetCut();
@@ -859,7 +1069,7 @@ export async function createLocalViewer(
         summary();
         return;
       }
-      if (fly && b) fitBox(b, 1.05);
+      if (fly && b) fitBox(b, MARGIN.component);
       showBox(b, label, status);
     },
     setLabel(id, html, status) {
@@ -920,12 +1130,14 @@ export async function createLocalViewer(
     highlight(status) {
       override = new Map(Object.entries(status));
       clearSelection();
-      const b = new THREE.Box3();
+      const b = new THREE.Box3(), points = [];
       for (const id of override.keys())
-        for (const c of byDb.get(idToDb.get(id)) || [])
+        for (const c of byDb.get(idToDb.get(id)) || []) {
           b.union(boxOf(c.bounds_mm));
+          points.push(...cornersOf(c.bounds_mm));
+        }
       recompute();
-      fitBox(b, 1.05);
+      fitBox(b, MARGIN.rule, points);
     },
     clearHighlight() {
       override = null;
@@ -959,6 +1171,7 @@ export async function createLocalViewer(
       }
       material.needsUpdate = true;
       overviewMaterial.needsUpdate = true;
+    glassMaterial.needsUpdate = true;
       invalidate();
       schedule();
       return l;
@@ -966,6 +1179,10 @@ export async function createLocalViewer(
     overview() {
       clearSelection();
       recompute();
+      if (sceneMode) {
+        frameScene(1100);
+        return;
+      }
       frameOverview();
     },
     setMode(m) {
