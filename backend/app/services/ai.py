@@ -45,6 +45,10 @@ from app.db.models import (
 )
 from app.services.common import ConflictError, EntityNotFound, InvalidReference, commit_changes
 from app.services.design.service import ensure_revision_editable
+from app.services import knowledge
+
+# v2: the prompt carries engineering reference context from the knowledge layer (app/services/knowledge).
+EXTRACTION_PROMPT_VERSION = "text-component-extraction.v2"
 
 
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
@@ -629,7 +633,10 @@ def create_extraction(
             "Distinguish classification uncertainty. Cite exact evidence, page, section, or source_id/object ID "
             "from the extracted source data. Never infer engineering ratings, materials, capacity, purpose, or "
             "regulatory status from names or geometry alone. "
-            "Return JSON matching the provided schema.\n\nSOURCE TEXT:\n" + source_text
+            "Use the engineering reference context only to know what to look for (component types, expected "
+            "properties, relationships, terminology); every value must come from the source.\n\n"
+            + knowledge.context_for_source(source_text, session)
+            + "\n\nReturn JSON matching the provided schema.\n\nSOURCE TEXT:\n" + source_text
         ),
         system_prompt=(
             "You are extracting candidate data for engineer review, not making engineering decisions. "
@@ -641,7 +648,7 @@ def create_extraction(
         session,
         request,
         ExtractionResult,
-        prompt_template_version="text-component-extraction.v1",
+        prompt_template_version=EXTRACTION_PROMPT_VERSION,
         output_schema_version="component-extraction.v1",
     )
     if response["parsed"] is None:
@@ -672,7 +679,7 @@ def create_extraction(
         model_id=response["model_id"],
         execution_id=response["execution_id"],
         task_name="text_component_extraction",
-        prompt_template_version="text-component-extraction.v1",
+        prompt_template_version=EXTRACTION_PROMPT_VERSION,
         output_schema_version="component-extraction.v1",
         source_document_id=source_file_id,
         source_reference=resolved_source_reference,

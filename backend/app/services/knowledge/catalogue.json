@@ -1,0 +1,2306 @@
+{
+  "version": "ship-engineering-knowledge.v1",
+  "scope_note": "Reference knowledge for interpreting ship design sources. It describes what to look for (component types, expected properties, relationships, terminology, units); it holds no regulatory limit values and no project data. Official definitions are read from the regulation database by clause key.",
+  "categories": [
+    {
+      "id": "hull_structure",
+      "name": "Hull structure",
+      "swbs": "100"
+    },
+    {
+      "id": "propulsion",
+      "name": "Propulsion plant",
+      "swbs": "200"
+    },
+    {
+      "id": "electric",
+      "name": "Electric plant",
+      "swbs": "300"
+    },
+    {
+      "id": "command_surveillance",
+      "name": "Command and surveillance",
+      "swbs": "400"
+    },
+    {
+      "id": "auxiliary",
+      "name": "Auxiliary systems (piping, HVAC, tanks)",
+      "swbs": "500"
+    },
+    {
+      "id": "outfit",
+      "name": "Outfit and furnishings (doors, stairs, rails, spaces)",
+      "swbs": "600"
+    },
+    {
+      "id": "safety",
+      "name": "Fire safety and life-saving",
+      "swbs": "500/600"
+    },
+    {
+      "id": "spaces",
+      "name": "Spaces and compartments",
+      "swbs": null
+    }
+  ],
+  "relationship_types": [
+    {
+      "id": "located_in",
+      "label": "Located in",
+      "inverse": "contains",
+      "description": "Component is inside a compartment, space, zone or deck."
+    },
+    {
+      "id": "connected_to",
+      "label": "Connected to",
+      "inverse": "connected_to",
+      "description": "Physical connection, e.g. pipe to tank, pipe to valve, cable to switchboard."
+    },
+    {
+      "id": "served_by",
+      "label": "Served by",
+      "inverse": "serves",
+      "description": "Component is supplied or operated by another, e.g. tank served by a transfer pump."
+    },
+    {
+      "id": "adjacent_to",
+      "label": "Adjacent to",
+      "inverse": "adjacent_to",
+      "description": "Shares a boundary or is next to, e.g. fuel tank adjacent to an accommodation space."
+    },
+    {
+      "id": "part_of",
+      "label": "Part of",
+      "inverse": "has_part",
+      "description": "Component belongs to a system, assembly or structural member."
+    },
+    {
+      "id": "bounded_by",
+      "label": "Bounded by",
+      "inverse": "bounds",
+      "description": "Space or tank is bounded by a bulkhead, deck or shell plating."
+    },
+    {
+      "id": "penetrates",
+      "label": "Penetrates",
+      "inverse": "penetrated_by",
+      "description": "Pipe, duct or cable passes through a bulkhead or deck."
+    },
+    {
+      "id": "gives_access_to",
+      "label": "Gives access to",
+      "inverse": "accessed_from",
+      "description": "Door, hatch, stair or corridor leads to a space or escape route."
+    }
+  ],
+  "component_types": [
+    {
+      "id": "shell_plate",
+      "name": "Shell / hull plate",
+      "category": "hull_structure",
+      "synonyms": [
+        "shell plating",
+        "hull plate",
+        "side shell",
+        "bottom plate",
+        "bilge strake",
+        "sheer strake",
+        "keel plate"
+      ],
+      "abbreviations": [
+        "PL",
+        "PLT"
+      ],
+      "properties": [
+        {
+          "name": "thickness",
+          "quantity": "length",
+          "unit": "mm",
+          "required": true
+        },
+        {
+          "name": "material_grade",
+          "quantity": "text",
+          "examples": [
+            "A",
+            "AH36",
+            "DH36",
+            "EH36"
+          ],
+          "required": true
+        },
+        {
+          "name": "structural_member",
+          "quantity": "text",
+          "examples": [
+            "bottom",
+            "side",
+            "sheer strake",
+            "bilge strake"
+          ]
+        },
+        {
+          "name": "location",
+          "quantity": "text",
+          "examples": [
+            "frame range",
+            "deck",
+            "side P/S"
+          ]
+        }
+      ],
+      "relationships": [
+        "part_of",
+        "bounded_by",
+        "adjacent_to"
+      ],
+      "regulatory": {
+        "topics": [
+          "class"
+        ],
+        "terms": [
+          "hull structural steel grade",
+          "plate thickness"
+        ],
+        "documents": [
+          "DNV"
+        ]
+      }
+    },
+    {
+      "id": "deck_plate",
+      "name": "Deck plate",
+      "category": "hull_structure",
+      "synonyms": [
+        "deck plating",
+        "tween deck",
+        "weather deck plating",
+        "tank top"
+      ],
+      "abbreviations": [
+        "DK"
+      ],
+      "properties": [
+        {
+          "name": "thickness",
+          "quantity": "length",
+          "unit": "mm",
+          "required": true
+        },
+        {
+          "name": "material_grade",
+          "quantity": "text",
+          "required": true
+        },
+        {
+          "name": "deck_level",
+          "quantity": "text",
+          "examples": [
+            "Deck 1",
+            "main deck",
+            "02 level"
+          ]
+        },
+        {
+          "name": "exposed",
+          "quantity": "boolean",
+          "description": "Weather deck / exposed to weather."
+        }
+      ],
+      "relationships": [
+        "part_of",
+        "bounds",
+        "adjacent_to"
+      ],
+      "regulatory": {
+        "topics": [
+          "class"
+        ],
+        "terms": [
+          "deck plating",
+          "weather deck"
+        ],
+        "definitions": [
+          "SOLAS II-2/3/50"
+        ]
+      }
+    },
+    {
+      "id": "bulkhead",
+      "name": "Bulkhead",
+      "category": "hull_structure",
+      "synonyms": [
+        "bulkhead",
+        "watertight bulkhead",
+        "transverse bulkhead",
+        "longitudinal bulkhead",
+        "fire division",
+        "collision bulkhead"
+      ],
+      "abbreviations": [
+        "BHD",
+        "BLKHD",
+        "WTB",
+        "WT BHD"
+      ],
+      "properties": [
+        {
+          "name": "thickness",
+          "quantity": "length",
+          "unit": "mm",
+          "required": true
+        },
+        {
+          "name": "material_grade",
+          "quantity": "text"
+        },
+        {
+          "name": "watertight",
+          "quantity": "boolean"
+        },
+        {
+          "name": "fire_rating",
+          "quantity": "text",
+          "examples": [
+            "A-60",
+            "A-0",
+            "B-15",
+            "C"
+          ],
+          "description": "Structural fire protection class of the division."
+        },
+        {
+          "name": "location",
+          "quantity": "text",
+          "examples": [
+            "frame number",
+            "deck range"
+          ],
+          "required": true
+        }
+      ],
+      "relationships": [
+        "bounds",
+        "penetrated_by",
+        "part_of"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire",
+          "class"
+        ],
+        "terms": [
+          "A class division",
+          "B class division",
+          "watertight bulkhead"
+        ],
+        "definitions": [
+          "SOLAS II-2/3/2",
+          "SOLAS II-2/3/4",
+          "SOLAS II-2/3/10",
+          "SOLAS II-2/3/5"
+        ]
+      }
+    },
+    {
+      "id": "stiffener",
+      "name": "Stiffener / frame / longitudinal",
+      "category": "hull_structure",
+      "synonyms": [
+        "stiffener",
+        "frame",
+        "longitudinal",
+        "web frame",
+        "girder",
+        "beam",
+        "bulb flat",
+        "flat bar",
+        "angle"
+      ],
+      "abbreviations": [
+        "FR",
+        "LONG",
+        "WEB",
+        "HP",
+        "FB",
+        "L"
+      ],
+      "properties": [
+        {
+          "name": "profile",
+          "quantity": "text",
+          "examples": [
+            "HP 200x10",
+            "FB 100x10",
+            "L 150x90x9"
+          ],
+          "required": true
+        },
+        {
+          "name": "material_grade",
+          "quantity": "text"
+        },
+        {
+          "name": "spacing",
+          "quantity": "length",
+          "unit": "mm"
+        },
+        {
+          "name": "span",
+          "quantity": "length",
+          "unit": "mm"
+        }
+      ],
+      "relationships": [
+        "part_of",
+        "connected_to"
+      ],
+      "regulatory": {
+        "topics": [
+          "class"
+        ],
+        "terms": [
+          "stiffener",
+          "section modulus"
+        ],
+        "documents": [
+          "DNV"
+        ]
+      }
+    },
+    {
+      "id": "hatch",
+      "name": "Hatch / manhole",
+      "category": "hull_structure",
+      "synonyms": [
+        "hatch",
+        "manhole",
+        "access hatch",
+        "escape hatch",
+        "scuttle",
+        "hatch cover",
+        "access opening"
+      ],
+      "abbreviations": [
+        "MH",
+        "HTCH"
+      ],
+      "properties": [
+        {
+          "name": "clear_opening_length",
+          "quantity": "length",
+          "unit": "mm",
+          "required": true
+        },
+        {
+          "name": "clear_opening_width",
+          "quantity": "length",
+          "unit": "mm",
+          "required": true
+        },
+        {
+          "name": "coaming_height",
+          "quantity": "length",
+          "unit": "mm"
+        },
+        {
+          "name": "watertight",
+          "quantity": "boolean"
+        },
+        {
+          "name": "location",
+          "quantity": "text"
+        }
+      ],
+      "relationships": [
+        "gives_access_to",
+        "located_in",
+        "part_of"
+      ],
+      "regulatory": {
+        "topics": [
+          "access",
+          "class"
+        ],
+        "terms": [
+          "access through horizontal openings",
+          "manhole",
+          "hatch"
+        ]
+      }
+    },
+    {
+      "id": "door",
+      "name": "Door",
+      "category": "outfit",
+      "synonyms": [
+        "door",
+        "doorway",
+        "fire door",
+        "watertight door",
+        "weathertight door",
+        "sliding door",
+        "hinged door",
+        "gate"
+      ],
+      "abbreviations": [
+        "DR",
+        "WTD",
+        "FD"
+      ],
+      "properties": [
+        {
+          "name": "clear_width",
+          "quantity": "length",
+          "unit": "mm",
+          "required": true
+        },
+        {
+          "name": "clear_height",
+          "quantity": "length",
+          "unit": "mm"
+        },
+        {
+          "name": "sill_height",
+          "quantity": "length",
+          "unit": "mm"
+        },
+        {
+          "name": "fire_rating",
+          "quantity": "text",
+          "examples": [
+            "A-60",
+            "A-0",
+            "B-15"
+          ]
+        },
+        {
+          "name": "tightness",
+          "quantity": "text",
+          "examples": [
+            "watertight",
+            "weathertight",
+            "none"
+          ]
+        },
+        {
+          "name": "operation",
+          "quantity": "text",
+          "examples": [
+            "hinged",
+            "sliding",
+            "power-operated"
+          ]
+        },
+        {
+          "name": "location",
+          "quantity": "text"
+        }
+      ],
+      "relationships": [
+        "gives_access_to",
+        "located_in",
+        "part_of"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire",
+          "accessibility"
+        ],
+        "terms": [
+          "door clear width",
+          "fire door",
+          "means of escape"
+        ],
+        "clauses": [
+          {
+            "document": "ADA",
+            "clause_prefix": "404"
+          },
+          {
+            "document": "SOLAS",
+            "clause_prefix": "II-2/13"
+          }
+        ]
+      },
+      "token_sets": [
+        [
+          "FIRE",
+          "DOOR"
+        ],
+        [
+          "WT",
+          "DOOR"
+        ]
+      ]
+    },
+    {
+      "id": "corridor",
+      "name": "Corridor / passageway",
+      "category": "spaces",
+      "synonyms": [
+        "corridor",
+        "passageway",
+        "passage",
+        "alleyway",
+        "escape route",
+        "walkway",
+        "lobby"
+      ],
+      "abbreviations": [
+        "CORR",
+        "PASS"
+      ],
+      "properties": [
+        {
+          "name": "clear_width",
+          "quantity": "length",
+          "unit": "mm",
+          "required": true
+        },
+        {
+          "name": "length",
+          "quantity": "length",
+          "unit": "mm"
+        },
+        {
+          "name": "dead_end_length",
+          "quantity": "length",
+          "unit": "mm"
+        },
+        {
+          "name": "deck_level",
+          "quantity": "text"
+        },
+        {
+          "name": "main_vertical_zone",
+          "quantity": "text"
+        },
+        {
+          "name": "escape_route",
+          "quantity": "boolean"
+        }
+      ],
+      "relationships": [
+        "located_in",
+        "gives_access_to",
+        "adjacent_to"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire",
+          "accessibility"
+        ],
+        "terms": [
+          "means of escape",
+          "dead-end corridor",
+          "corridor width",
+          "walking surface clear width"
+        ],
+        "clauses": [
+          {
+            "document": "SOLAS",
+            "clause_prefix": "II-2/13"
+          },
+          {
+            "document": "ADA",
+            "clause_prefix": "403"
+          }
+        ],
+        "definitions": [
+          "SOLAS II-2/3/1",
+          "SOLAS II-2/3/32"
+        ]
+      }
+    },
+    {
+      "id": "stairway",
+      "name": "Stairway / ladder",
+      "category": "outfit",
+      "synonyms": [
+        "stairway",
+        "stair",
+        "staircase",
+        "ladder",
+        "inclined ladder",
+        "vertical ladder",
+        "companionway",
+        "stairway enclosure"
+      ],
+      "abbreviations": [
+        "STR",
+        "STAIR",
+        "LDR"
+      ],
+      "properties": [
+        {
+          "name": "clear_width",
+          "quantity": "length",
+          "unit": "mm",
+          "required": true
+        },
+        {
+          "name": "inclination",
+          "quantity": "angle",
+          "unit": "deg"
+        },
+        {
+          "name": "enclosed",
+          "quantity": "boolean"
+        },
+        {
+          "name": "handrails",
+          "quantity": "text",
+          "examples": [
+            "both sides",
+            "one side"
+          ]
+        },
+        {
+          "name": "decks_served",
+          "quantity": "text"
+        }
+      ],
+      "relationships": [
+        "gives_access_to",
+        "located_in",
+        "part_of"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire"
+        ],
+        "terms": [
+          "stairway clear width",
+          "stairway enclosure",
+          "means of escape"
+        ],
+        "clauses": [
+          {
+            "document": "SOLAS",
+            "clause_prefix": "II-2/13"
+          }
+        ]
+      }
+    },
+    {
+      "id": "ramp",
+      "name": "Ramp",
+      "category": "outfit",
+      "synonyms": [
+        "ramp",
+        "sloped walkway",
+        "gangway ramp"
+      ],
+      "abbreviations": [],
+      "properties": [
+        {
+          "name": "running_slope",
+          "quantity": "ratio",
+          "unit": "ratio",
+          "required": true
+        },
+        {
+          "name": "cross_slope",
+          "quantity": "ratio",
+          "unit": "ratio"
+        },
+        {
+          "name": "clear_width",
+          "quantity": "length",
+          "unit": "mm"
+        },
+        {
+          "name": "rise",
+          "quantity": "length",
+          "unit": "mm"
+        }
+      ],
+      "relationships": [
+        "gives_access_to",
+        "located_in"
+      ],
+      "regulatory": {
+        "topics": [
+          "accessibility"
+        ],
+        "terms": [
+          "ramp running slope"
+        ],
+        "clauses": [
+          {
+            "document": "ADA",
+            "clause_prefix": "405"
+          }
+        ]
+      }
+    },
+    {
+      "id": "guard_rail",
+      "name": "Guard rail / bulwark / handrail",
+      "category": "outfit",
+      "synonyms": [
+        "guard rail",
+        "guardrail",
+        "railing",
+        "bulwark",
+        "handrail",
+        "stanchion"
+      ],
+      "abbreviations": [
+        "GR",
+        "HR",
+        "RAIL"
+      ],
+      "properties": [
+        {
+          "name": "height",
+          "quantity": "length",
+          "unit": "mm",
+          "required": true
+        },
+        {
+          "name": "course_spacing",
+          "quantity": "length",
+          "unit": "mm"
+        },
+        {
+          "name": "stanchion_spacing",
+          "quantity": "length",
+          "unit": "mm"
+        },
+        {
+          "name": "exposed_deck",
+          "quantity": "boolean"
+        }
+      ],
+      "relationships": [
+        "located_in",
+        "part_of"
+      ],
+      "regulatory": {
+        "topics": [
+          "class"
+        ],
+        "terms": [
+          "guard rails",
+          "bulwarks",
+          "protection of the crew"
+        ],
+        "definitions": [
+          "SOLAS II-2/3/50"
+        ]
+      }
+    },
+    {
+      "id": "space",
+      "name": "Space / compartment / room",
+      "category": "spaces",
+      "synonyms": [
+        "room",
+        "space",
+        "compartment",
+        "cabin",
+        "mess",
+        "galley",
+        "store",
+        "workshop",
+        "laboratory",
+        "wheelhouse",
+        "engine room",
+        "control room",
+        "void",
+        "cofferdam"
+      ],
+      "abbreviations": [
+        "ER",
+        "ECR",
+        "WH",
+        "ACC",
+        "CAB",
+        "STORE",
+        "VOID",
+        "CD"
+      ],
+      "properties": [
+        {
+          "name": "space_category",
+          "quantity": "text",
+          "examples": [
+            "accommodation space",
+            "service space",
+            "control station",
+            "machinery space of category A",
+            "public space"
+          ],
+          "required": true
+        },
+        {
+          "name": "deck_level",
+          "quantity": "text"
+        },
+        {
+          "name": "main_vertical_zone",
+          "quantity": "text"
+        },
+        {
+          "name": "area",
+          "quantity": "area",
+          "unit": "m2"
+        },
+        {
+          "name": "occupancy",
+          "quantity": "count",
+          "unit": "persons"
+        },
+        {
+          "name": "number_of_exits",
+          "quantity": "count",
+          "unit": "count"
+        }
+      ],
+      "relationships": [
+        "contains",
+        "bounded_by",
+        "adjacent_to",
+        "accessed_from"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire"
+        ],
+        "terms": [
+          "means of escape",
+          "space category",
+          "two means of escape"
+        ],
+        "clauses": [
+          {
+            "document": "SOLAS",
+            "clause_prefix": "II-2/13"
+          }
+        ],
+        "definitions": [
+          "SOLAS II-2/3/1",
+          "SOLAS II-2/3/18",
+          "SOLAS II-2/3/30",
+          "SOLAS II-2/3/31",
+          "SOLAS II-2/3/39",
+          "SOLAS II-2/3/45"
+        ]
+      }
+    },
+    {
+      "id": "tank",
+      "name": "Tank",
+      "category": "auxiliary",
+      "synonyms": [
+        "tank",
+        "double bottom tank",
+        "wing tank",
+        "peak tank",
+        "settling tank",
+        "service tank",
+        "storage tank",
+        "day tank",
+        "overflow tank",
+        "drain tank"
+      ],
+      "abbreviations": [
+        "TK",
+        "TNK",
+        "DB",
+        "FP",
+        "AP"
+      ],
+      "properties": [
+        {
+          "name": "tank_id",
+          "quantity": "text",
+          "required": true
+        },
+        {
+          "name": "contents",
+          "quantity": "text",
+          "examples": [
+            "heavy fuel oil",
+            "marine gas oil",
+            "lubricating oil",
+            "fresh water",
+            "ballast water",
+            "sludge",
+            "LNG"
+          ],
+          "required": true
+        },
+        {
+          "name": "capacity",
+          "quantity": "volume",
+          "unit": "m3",
+          "required": true
+        },
+        {
+          "name": "design_pressure",
+          "quantity": "pressure",
+          "unit": "kPa"
+        },
+        {
+          "name": "location",
+          "quantity": "text",
+          "examples": [
+            "frame range",
+            "deck",
+            "side P/S/C"
+          ]
+        },
+        {
+          "name": "structural",
+          "quantity": "boolean",
+          "description": "Integral (structural) or independent tank."
+        }
+      ],
+      "relationships": [
+        "located_in",
+        "connected_to",
+        "served_by",
+        "adjacent_to",
+        "bounded_by"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire",
+          "class"
+        ],
+        "terms": [
+          "oil fuel tank",
+          "tank location",
+          "tank boundaries"
+        ]
+      }
+    },
+    {
+      "id": "fuel_tank",
+      "name": "Fuel tank",
+      "category": "auxiliary",
+      "parent": "tank",
+      "synonyms": [
+        "fuel tank",
+        "fuel oil tank",
+        "oil fuel tank",
+        "bunker tank",
+        "HFO tank",
+        "MGO tank",
+        "MDO tank",
+        "LNG fuel tank",
+        "fuel storage tank"
+      ],
+      "abbreviations": [
+        "FO TK",
+        "FOT",
+        "HFO",
+        "MGO",
+        "MDO",
+        "DO TK"
+      ],
+      "properties": [
+        {
+          "name": "tank_id",
+          "quantity": "text",
+          "required": true
+        },
+        {
+          "name": "fuel_type",
+          "quantity": "text",
+          "examples": [
+            "HFO",
+            "MGO",
+            "MDO",
+            "LNG",
+            "methanol"
+          ],
+          "required": true
+        },
+        {
+          "name": "capacity",
+          "quantity": "volume",
+          "unit": "m3",
+          "required": true
+        },
+        {
+          "name": "design_pressure",
+          "quantity": "pressure",
+          "unit": "kPa"
+        },
+        {
+          "name": "location",
+          "quantity": "text",
+          "required": true
+        },
+        {
+          "name": "distance_to_side_shell",
+          "quantity": "length",
+          "unit": "mm"
+        },
+        {
+          "name": "heating",
+          "quantity": "boolean"
+        }
+      ],
+      "relationships": [
+        "located_in",
+        "connected_to",
+        "served_by",
+        "adjacent_to",
+        "bounded_by"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire"
+        ],
+        "terms": [
+          "oil fuel tank",
+          "fuel storage",
+          "oil fuel arrangements"
+        ],
+        "clauses": [
+          {
+            "document": "SOLAS",
+            "clause_prefix": "II-2/4/2.2"
+          }
+        ],
+        "definitions": [
+          "SOLAS II-2/3/24",
+          "SOLAS II-2/3/34"
+        ]
+      },
+      "token_sets": [
+        [
+          "FO",
+          "TK"
+        ],
+        [
+          "HFO",
+          "TK"
+        ],
+        [
+          "MGO",
+          "TK"
+        ],
+        [
+          "MDO",
+          "TK"
+        ],
+        [
+          "DO",
+          "TK"
+        ],
+        [
+          "FO",
+          "TANK"
+        ],
+        [
+          "FUEL",
+          "TANK"
+        ],
+        [
+          "FUEL",
+          "TK"
+        ],
+        [
+          "LNG",
+          "TANK"
+        ]
+      ]
+    },
+    {
+      "id": "pipe",
+      "name": "Pipe",
+      "category": "auxiliary",
+      "synonyms": [
+        "pipe",
+        "piping",
+        "pipe spool",
+        "pipeline",
+        "line",
+        "branch",
+        "header",
+        "flexible hose",
+        "bellows"
+      ],
+      "abbreviations": [
+        "PP",
+        "SPL",
+        "DN",
+        "NB"
+      ],
+      "properties": [
+        {
+          "name": "system",
+          "quantity": "text",
+          "examples": [
+            "fuel oil",
+            "lube oil",
+            "sea water cooling",
+            "fresh water",
+            "bilge",
+            "ballast",
+            "fire main",
+            "compressed air"
+          ],
+          "required": true
+        },
+        {
+          "name": "medium",
+          "quantity": "text",
+          "required": true
+        },
+        {
+          "name": "material",
+          "quantity": "text",
+          "examples": [
+            "steel",
+            "stainless steel",
+            "copper-nickel",
+            "GRP",
+            "PVC"
+          ],
+          "required": true
+        },
+        {
+          "name": "nominal_diameter",
+          "quantity": "length",
+          "unit": "mm"
+        },
+        {
+          "name": "wall_thickness",
+          "quantity": "length",
+          "unit": "mm"
+        },
+        {
+          "name": "design_pressure",
+          "quantity": "pressure",
+          "unit": "kPa"
+        },
+        {
+          "name": "design_temperature",
+          "quantity": "temperature",
+          "unit": "degC"
+        },
+        {
+          "name": "flexible",
+          "quantity": "boolean"
+        }
+      ],
+      "relationships": [
+        "connected_to",
+        "part_of",
+        "penetrates",
+        "located_in"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire",
+          "class"
+        ],
+        "terms": [
+          "oil fuel pipes",
+          "piping material",
+          "flexible pipes"
+        ],
+        "clauses": [
+          {
+            "document": "SOLAS",
+            "clause_prefix": "II-2/4/2.2.5"
+          }
+        ]
+      },
+      "token_sets": [
+        [
+          "FO",
+          "PIPE"
+        ],
+        [
+          "LO",
+          "PIPE"
+        ],
+        [
+          "SW",
+          "PIPE"
+        ],
+        [
+          "FW",
+          "PIPE"
+        ]
+      ]
+    },
+    {
+      "id": "valve",
+      "name": "Valve",
+      "category": "auxiliary",
+      "synonyms": [
+        "valve",
+        "ball valve",
+        "butterfly valve",
+        "gate valve",
+        "globe valve",
+        "check valve",
+        "non-return valve",
+        "quick-closing valve",
+        "remote-controlled valve"
+      ],
+      "abbreviations": [
+        "V",
+        "VLV",
+        "NRV",
+        "QCV",
+        "SDNR"
+      ],
+      "properties": [
+        {
+          "name": "valve_type",
+          "quantity": "text",
+          "required": true
+        },
+        {
+          "name": "system",
+          "quantity": "text",
+          "required": true
+        },
+        {
+          "name": "body_material",
+          "quantity": "text",
+          "examples": [
+            "steel",
+            "nodular cast iron",
+            "grey cast iron",
+            "bronze"
+          ]
+        },
+        {
+          "name": "nominal_diameter",
+          "quantity": "length",
+          "unit": "mm"
+        },
+        {
+          "name": "design_pressure",
+          "quantity": "pressure",
+          "unit": "kPa"
+        },
+        {
+          "name": "remote_closing",
+          "quantity": "boolean"
+        }
+      ],
+      "relationships": [
+        "connected_to",
+        "part_of",
+        "located_in"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire",
+          "class"
+        ],
+        "terms": [
+          "valves fitted to oil fuel tanks",
+          "quick-closing valve"
+        ],
+        "clauses": [
+          {
+            "document": "SOLAS",
+            "clause_prefix": "II-2/4/2.2"
+          }
+        ]
+      }
+    },
+    {
+      "id": "pump",
+      "name": "Pump",
+      "category": "auxiliary",
+      "synonyms": [
+        "pump",
+        "transfer pump",
+        "feed pump",
+        "circulating pump",
+        "booster pump",
+        "bilge pump",
+        "fire pump",
+        "ballast pump",
+        "stripping pump"
+      ],
+      "abbreviations": [
+        "P",
+        "PMP"
+      ],
+      "properties": [
+        {
+          "name": "service",
+          "quantity": "text",
+          "required": true
+        },
+        {
+          "name": "capacity",
+          "quantity": "flow",
+          "unit": "m3/h"
+        },
+        {
+          "name": "discharge_pressure",
+          "quantity": "pressure",
+          "unit": "kPa"
+        },
+        {
+          "name": "power",
+          "quantity": "power",
+          "unit": "kW"
+        },
+        {
+          "name": "driver",
+          "quantity": "text",
+          "examples": [
+            "electric motor",
+            "engine-driven"
+          ]
+        }
+      ],
+      "relationships": [
+        "serves",
+        "connected_to",
+        "located_in",
+        "part_of"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire",
+          "class"
+        ],
+        "terms": [
+          "fire pump",
+          "bilge pump",
+          "oil fuel transfer pump"
+        ]
+      }
+    },
+    {
+      "id": "engine",
+      "name": "Engine / generator set",
+      "category": "propulsion",
+      "synonyms": [
+        "main engine",
+        "auxiliary engine",
+        "diesel engine",
+        "generator set",
+        "genset",
+        "diesel generator",
+        "emergency generator",
+        "propulsion motor"
+      ],
+      "abbreviations": [
+        "ME",
+        "AE",
+        "DG",
+        "GEN",
+        "EDG",
+        "PM"
+      ],
+      "properties": [
+        {
+          "name": "rated_power",
+          "quantity": "power",
+          "unit": "kW",
+          "required": true
+        },
+        {
+          "name": "rated_speed",
+          "quantity": "rotational_speed",
+          "unit": "rpm"
+        },
+        {
+          "name": "fuel_type",
+          "quantity": "text"
+        },
+        {
+          "name": "location",
+          "quantity": "text",
+          "required": true
+        }
+      ],
+      "relationships": [
+        "located_in",
+        "connected_to",
+        "served_by",
+        "part_of"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire",
+          "class"
+        ],
+        "terms": [
+          "internal combustion machinery",
+          "machinery space of category A"
+        ],
+        "definitions": [
+          "SOLAS II-2/3/30",
+          "SOLAS II-2/3/31"
+        ]
+      }
+    },
+    {
+      "id": "switchboard",
+      "name": "Switchboard / electrical panel",
+      "category": "electric",
+      "synonyms": [
+        "switchboard",
+        "main switchboard",
+        "emergency switchboard",
+        "distribution board",
+        "panel",
+        "transformer",
+        "battery"
+      ],
+      "abbreviations": [
+        "MSB",
+        "ESB",
+        "SWBD",
+        "DB",
+        "TRAFO"
+      ],
+      "properties": [
+        {
+          "name": "voltage",
+          "quantity": "voltage",
+          "unit": "V",
+          "required": true
+        },
+        {
+          "name": "rated_current",
+          "quantity": "current",
+          "unit": "A"
+        },
+        {
+          "name": "emergency",
+          "quantity": "boolean"
+        },
+        {
+          "name": "location",
+          "quantity": "text",
+          "required": true
+        }
+      ],
+      "relationships": [
+        "located_in",
+        "connected_to",
+        "serves"
+      ],
+      "regulatory": {
+        "topics": [
+          "class"
+        ],
+        "terms": [
+          "main switchboard",
+          "emergency source of electrical power"
+        ],
+        "definitions": [
+          "SOLAS II-2/3/18"
+        ]
+      }
+    },
+    {
+      "id": "duct",
+      "name": "Ventilation duct / fan / damper",
+      "category": "auxiliary",
+      "synonyms": [
+        "duct",
+        "ventilation duct",
+        "air duct",
+        "fan",
+        "air handling unit",
+        "fire damper",
+        "louvre"
+      ],
+      "abbreviations": [
+        "HVAC",
+        "AHU",
+        "FD",
+        "VENT"
+      ],
+      "properties": [
+        {
+          "name": "cross_section",
+          "quantity": "area",
+          "unit": "m2"
+        },
+        {
+          "name": "material",
+          "quantity": "text"
+        },
+        {
+          "name": "fire_damper",
+          "quantity": "boolean"
+        },
+        {
+          "name": "spaces_served",
+          "quantity": "text",
+          "required": true
+        }
+      ],
+      "relationships": [
+        "penetrates",
+        "serves",
+        "connected_to",
+        "located_in"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire"
+        ],
+        "terms": [
+          "ventilation ducts",
+          "fire damper",
+          "penetrations in A class divisions"
+        ]
+      }
+    },
+    {
+      "id": "fire_safety_equipment",
+      "name": "Fire safety equipment",
+      "category": "safety",
+      "synonyms": [
+        "fire extinguisher",
+        "fire detector",
+        "smoke detector",
+        "sprinkler",
+        "fire hydrant",
+        "fire hose",
+        "CO2 system",
+        "fixed fire-extinguishing system",
+        "EEBD"
+      ],
+      "abbreviations": [
+        "FFA",
+        "CO2",
+        "EEBD",
+        "FH",
+        "SD"
+      ],
+      "properties": [
+        {
+          "name": "equipment_type",
+          "quantity": "text",
+          "required": true
+        },
+        {
+          "name": "location",
+          "quantity": "text",
+          "required": true
+        },
+        {
+          "name": "coverage",
+          "quantity": "text"
+        },
+        {
+          "name": "approval",
+          "quantity": "text"
+        }
+      ],
+      "relationships": [
+        "located_in",
+        "serves",
+        "connected_to"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire"
+        ],
+        "terms": [
+          "fire-extinguishing",
+          "fire detection",
+          "emergency escape breathing device"
+        ],
+        "definitions": [
+          "SOLAS II-2/3/22"
+        ]
+      }
+    },
+    {
+      "id": "lifesaving_appliance",
+      "name": "Life-saving appliance",
+      "category": "safety",
+      "synonyms": [
+        "lifeboat",
+        "liferaft",
+        "rescue boat",
+        "davit",
+        "embarkation station",
+        "muster station",
+        "assembly station",
+        "lifejacket"
+      ],
+      "abbreviations": [
+        "LSA",
+        "LB",
+        "LR",
+        "MES"
+      ],
+      "properties": [
+        {
+          "name": "appliance_type",
+          "quantity": "text",
+          "required": true
+        },
+        {
+          "name": "capacity",
+          "quantity": "count",
+          "unit": "persons"
+        },
+        {
+          "name": "location",
+          "quantity": "text",
+          "required": true
+        },
+        {
+          "name": "side",
+          "quantity": "text",
+          "examples": [
+            "P",
+            "S"
+          ]
+        }
+      ],
+      "relationships": [
+        "located_in",
+        "accessed_from"
+      ],
+      "regulatory": {
+        "topics": [
+          "fire"
+        ],
+        "terms": [
+          "embarkation station",
+          "assembly station",
+          "means of escape"
+        ]
+      }
+    }
+  ],
+  "abbreviations": [
+    {
+      "abbr": "FO",
+      "meanings": [
+        "fuel oil"
+      ]
+    },
+    {
+      "abbr": "HFO",
+      "meanings": [
+        "heavy fuel oil"
+      ]
+    },
+    {
+      "abbr": "MGO",
+      "meanings": [
+        "marine gas oil"
+      ]
+    },
+    {
+      "abbr": "MDO",
+      "meanings": [
+        "marine diesel oil"
+      ]
+    },
+    {
+      "abbr": "DO",
+      "meanings": [
+        "diesel oil"
+      ]
+    },
+    {
+      "abbr": "LO",
+      "meanings": [
+        "lubricating oil"
+      ]
+    },
+    {
+      "abbr": "SW",
+      "meanings": [
+        "sea water"
+      ]
+    },
+    {
+      "abbr": "FW",
+      "meanings": [
+        "fresh water"
+      ]
+    },
+    {
+      "abbr": "WB",
+      "meanings": [
+        "water ballast"
+      ]
+    },
+    {
+      "abbr": "BW",
+      "meanings": [
+        "ballast water",
+        "black water (sewage)"
+      ],
+      "ambiguous": true
+    },
+    {
+      "abbr": "GW",
+      "meanings": [
+        "grey water"
+      ]
+    },
+    {
+      "abbr": "TK",
+      "meanings": [
+        "tank"
+      ]
+    },
+    {
+      "abbr": "DB",
+      "meanings": [
+        "double bottom",
+        "distribution board"
+      ],
+      "ambiguous": true
+    },
+    {
+      "abbr": "FP",
+      "meanings": [
+        "fore peak",
+        "fire pump"
+      ],
+      "ambiguous": true
+    },
+    {
+      "abbr": "AP",
+      "meanings": [
+        "aft peak",
+        "aft perpendicular"
+      ],
+      "ambiguous": true
+    },
+    {
+      "abbr": "BHD",
+      "meanings": [
+        "bulkhead"
+      ]
+    },
+    {
+      "abbr": "WT",
+      "meanings": [
+        "watertight"
+      ]
+    },
+    {
+      "abbr": "WTD",
+      "meanings": [
+        "watertight door"
+      ]
+    },
+    {
+      "abbr": "FD",
+      "meanings": [
+        "fire door",
+        "fire damper"
+      ],
+      "ambiguous": true
+    },
+    {
+      "abbr": "CL",
+      "meanings": [
+        "centreline"
+      ]
+    },
+    {
+      "abbr": "P",
+      "meanings": [
+        "port side",
+        "pump"
+      ],
+      "ambiguous": true
+    },
+    {
+      "abbr": "S",
+      "meanings": [
+        "starboard side"
+      ]
+    },
+    {
+      "abbr": "SB",
+      "meanings": [
+        "starboard"
+      ]
+    },
+    {
+      "abbr": "FR",
+      "meanings": [
+        "frame"
+      ]
+    },
+    {
+      "abbr": "DK",
+      "meanings": [
+        "deck"
+      ]
+    },
+    {
+      "abbr": "ER",
+      "meanings": [
+        "engine room"
+      ]
+    },
+    {
+      "abbr": "ECR",
+      "meanings": [
+        "engine control room"
+      ]
+    },
+    {
+      "abbr": "MCR",
+      "meanings": [
+        "maximum continuous rating",
+        "machinery control room"
+      ],
+      "ambiguous": true
+    },
+    {
+      "abbr": "WH",
+      "meanings": [
+        "wheelhouse"
+      ]
+    },
+    {
+      "abbr": "ME",
+      "meanings": [
+        "main engine"
+      ]
+    },
+    {
+      "abbr": "AE",
+      "meanings": [
+        "auxiliary engine"
+      ]
+    },
+    {
+      "abbr": "DG",
+      "meanings": [
+        "diesel generator",
+        "dangerous goods"
+      ],
+      "ambiguous": true
+    },
+    {
+      "abbr": "EDG",
+      "meanings": [
+        "emergency diesel generator"
+      ]
+    },
+    {
+      "abbr": "MSB",
+      "meanings": [
+        "main switchboard"
+      ]
+    },
+    {
+      "abbr": "ESB",
+      "meanings": [
+        "emergency switchboard"
+      ]
+    },
+    {
+      "abbr": "SWBD",
+      "meanings": [
+        "switchboard"
+      ]
+    },
+    {
+      "abbr": "HVAC",
+      "meanings": [
+        "heating, ventilation and air conditioning"
+      ]
+    },
+    {
+      "abbr": "AHU",
+      "meanings": [
+        "air handling unit"
+      ]
+    },
+    {
+      "abbr": "OWS",
+      "meanings": [
+        "oily water separator"
+      ]
+    },
+    {
+      "abbr": "STP",
+      "meanings": [
+        "sewage treatment plant"
+      ]
+    },
+    {
+      "abbr": "NRV",
+      "meanings": [
+        "non-return valve"
+      ]
+    },
+    {
+      "abbr": "QCV",
+      "meanings": [
+        "quick-closing valve"
+      ]
+    },
+    {
+      "abbr": "SDNR",
+      "meanings": [
+        "screw-down non-return valve"
+      ]
+    },
+    {
+      "abbr": "DN",
+      "meanings": [
+        "nominal diameter (mm)"
+      ]
+    },
+    {
+      "abbr": "NB",
+      "meanings": [
+        "nominal bore"
+      ]
+    },
+    {
+      "abbr": "MVZ",
+      "meanings": [
+        "main vertical zone"
+      ]
+    },
+    {
+      "abbr": "LSA",
+      "meanings": [
+        "life-saving appliances"
+      ]
+    },
+    {
+      "abbr": "FFA",
+      "meanings": [
+        "fire-fighting appliances"
+      ]
+    },
+    {
+      "abbr": "EEBD",
+      "meanings": [
+        "emergency escape breathing device"
+      ]
+    },
+    {
+      "abbr": "MES",
+      "meanings": [
+        "marine evacuation system"
+      ]
+    },
+    {
+      "abbr": "SWBS",
+      "meanings": [
+        "Ship Work Breakdown Structure (system grouping, e.g. 100 hull structure)"
+      ]
+    },
+    {
+      "abbr": "GA",
+      "meanings": [
+        "general arrangement (drawing)"
+      ]
+    },
+    {
+      "abbr": "LNG",
+      "meanings": [
+        "liquefied natural gas"
+      ]
+    },
+    {
+      "abbr": "A-60",
+      "meanings": [
+        "A class division with 60 min insulation rating"
+      ]
+    },
+    {
+      "abbr": "A-0",
+      "meanings": [
+        "A class division without insulation rating"
+      ]
+    },
+    {
+      "abbr": "B-15",
+      "meanings": [
+        "B class division with 15 min insulation rating"
+      ]
+    }
+  ],
+  "regulatory_terms": [
+    {
+      "term": "accommodation space",
+      "definition": "SOLAS II-2/3/1"
+    },
+    {
+      "term": "A class division",
+      "definition": "SOLAS II-2/3/2"
+    },
+    {
+      "term": "B class division",
+      "definition": "SOLAS II-2/3/4"
+    },
+    {
+      "term": "C class division",
+      "definition": "SOLAS II-2/3/10"
+    },
+    {
+      "term": "bulkhead deck",
+      "definition": "SOLAS II-2/3/5"
+    },
+    {
+      "term": "control station",
+      "definition": "SOLAS II-2/3/18"
+    },
+    {
+      "term": "flashpoint",
+      "definition": "SOLAS II-2/3/24"
+    },
+    {
+      "term": "machinery space",
+      "definition": "SOLAS II-2/3/30"
+    },
+    {
+      "term": "machinery space of category A",
+      "definition": "SOLAS II-2/3/31"
+    },
+    {
+      "term": "main vertical zone",
+      "definition": "SOLAS II-2/3/32"
+    },
+    {
+      "term": "non-combustible material",
+      "definition": "SOLAS II-2/3/33"
+    },
+    {
+      "term": "oil fuel unit",
+      "definition": "SOLAS II-2/3/34"
+    },
+    {
+      "term": "public space",
+      "definition": "SOLAS II-2/3/39"
+    },
+    {
+      "term": "steel or other equivalent material",
+      "definition": "SOLAS II-2/3/43"
+    },
+    {
+      "term": "service space",
+      "definition": "SOLAS II-2/3/45"
+    },
+    {
+      "term": "weather deck",
+      "definition": "SOLAS II-2/3/50"
+    }
+  ],
+  "units": {
+    "canonical": {
+      "length": "mm",
+      "area": "m2",
+      "volume": "m3",
+      "pressure": "kPa",
+      "temperature": "degC",
+      "mass": "kg",
+      "power": "kW",
+      "flow": "m3/h",
+      "angle": "deg",
+      "ratio": "ratio"
+    },
+    "aliases": {
+      "mm": "mm",
+      "millimetre": "mm",
+      "millimeter": "mm",
+      "cm": "cm",
+      "m": "m",
+      "metre": "m",
+      "meter": "m",
+      "in": "in",
+      "inch": "in",
+      "inches": "in",
+      "\"": "in",
+      "ft": "ft",
+      "foot": "ft",
+      "feet": "ft",
+      "'": "ft",
+      "m2": "m2",
+      "m²": "m2",
+      "sq m": "m2",
+      "ft2": "ft2",
+      "sq ft": "ft2",
+      "m3": "m3",
+      "m³": "m3",
+      "cbm": "m3",
+      "l": "l",
+      "litre": "l",
+      "liter": "l",
+      "us gal": "usgal",
+      "gal": "usgal",
+      "kpa": "kPa",
+      "pa": "Pa",
+      "mpa": "MPa",
+      "bar": "bar",
+      "mbar": "mbar",
+      "psi": "psi",
+      "n/mm2": "MPa",
+      "°c": "degC",
+      "degc": "degC",
+      "c": "degC",
+      "°f": "degF",
+      "degf": "degF",
+      "f": "degF",
+      "kg": "kg",
+      "t": "t",
+      "tonne": "t",
+      "lb": "lb",
+      "kw": "kW",
+      "mw": "MW",
+      "hp": "hp",
+      "m3/h": "m3/h",
+      "l/s": "l/s",
+      "l/min": "l/min",
+      "deg": "deg",
+      "°": "deg",
+      "rad": "rad"
+    },
+    "factors": {
+      "mm": [
+        "length",
+        1
+      ],
+      "cm": [
+        "length",
+        10
+      ],
+      "m": [
+        "length",
+        1000
+      ],
+      "in": [
+        "length",
+        25.4
+      ],
+      "ft": [
+        "length",
+        304.8
+      ],
+      "m2": [
+        "area",
+        1
+      ],
+      "ft2": [
+        "area",
+        0.09290304
+      ],
+      "m3": [
+        "volume",
+        1
+      ],
+      "l": [
+        "volume",
+        0.001
+      ],
+      "usgal": [
+        "volume",
+        0.003785411784
+      ],
+      "kPa": [
+        "pressure",
+        1
+      ],
+      "Pa": [
+        "pressure",
+        0.001
+      ],
+      "MPa": [
+        "pressure",
+        1000
+      ],
+      "bar": [
+        "pressure",
+        100
+      ],
+      "mbar": [
+        "pressure",
+        0.1
+      ],
+      "psi": [
+        "pressure",
+        6.894757293168361
+      ],
+      "kg": [
+        "mass",
+        1
+      ],
+      "t": [
+        "mass",
+        1000
+      ],
+      "lb": [
+        "mass",
+        0.45359237
+      ],
+      "kW": [
+        "power",
+        1
+      ],
+      "MW": [
+        "power",
+        1000
+      ],
+      "hp": [
+        "power",
+        0.745699872
+      ],
+      "m3/h": [
+        "flow",
+        1
+      ],
+      "l/s": [
+        "flow",
+        3.6
+      ],
+      "l/min": [
+        "flow",
+        0.06
+      ],
+      "deg": [
+        "angle",
+        1
+      ],
+      "rad": [
+        "angle",
+        57.29577951308232
+      ]
+    }
+  },
+  "tag_conventions": [
+    {
+      "id": "system_equipment_number",
+      "pattern": "^(?P<system>[A-Z]{2,4})[-_ ](?P<equipment>[A-Z]{1,4})[-_ ]?(?P<number>\\d{1,4})(?:\\s*\\((?P<side>P|S|C|PS|SB)\\))?$",
+      "example": "FO-P-001, SW-V-12 (S)",
+      "note": "Common yard convention <system>-<equipment><number>; conventions vary by yard, confirm against the project's tag list."
+    },
+    {
+      "id": "name_number_side",
+      "pattern": "^(?P<name>[A-Z][A-Z .]+?)\\s+(?P<number>\\d{1,3})\\s*\\((?P<side>P|S|C|PS|SB)\\)$",
+      "example": "FO SERVICE TK 3 (P)",
+      "note": "Descriptive name with number and side; P = port, S = starboard, C = centre."
+    },
+    {
+      "id": "aps_part_number",
+      "pattern": "^P(?P<number>\\d{3,6})$",
+      "example": "P3522",
+      "note": "Part numbers in the RCRV ShipConstructor model (APS export)."
+    }
+  ]
+}
