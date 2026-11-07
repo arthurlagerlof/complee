@@ -16,14 +16,13 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { readKeys, token, manifest as getManifest, svfDerivative, SVF_URN_FILE } from './request-svf.mjs';
 import { partsToModel } from '../../src/parts-model.mjs';
 import { checkModel } from '../../src/checker.mjs';
 import { loadIdMap } from './map-ids.mjs';
 import { readTree } from './read-tree.mjs';
 
 const require = createRequire(import.meta.url);
-const { SVFReader, SVFDownloader, TwoLeggedAuthenticationProvider } = require('svf-utils');
+const { SVFReader } = require('svf-utils');
 const IMF = require('svf-utils/lib/common/intermediate-format');
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -85,22 +84,12 @@ export function matrixOf(t) {
 }
 
 export async function ensureSvf() {
-  if (!fs.existsSync(SVF_URN_FILE)) throw new Error('No SVF copy yet: run node request-svf.mjs first');
-  const urn = fs.readFileSync(SVF_URN_FILE, 'utf8').trim();
-  const tok = await token('data:read viewables:read');
-  const svf = svfDerivative(await getManifest(tok, urn));
-  if (svf?.status !== 'success') throw new Error('No finished SVF derivative yet: run node request-svf.mjs first');
   const dir = path.join(WORK, 'svf');
   const find = (d) => { if (!fs.existsSync(d)) return null; for (const f of fs.readdirSync(d, { recursive: true })) if (String(f).endsWith('output.svf')) return path.join(d, String(f)); return null; };
-  let file = find(dir);
-  if (!file) {
-    log('Downloading the SVF derivative (one time)…');
-    const { APS_CLIENT_ID, APS_CLIENT_SECRET } = readKeys();
-    await new SVFDownloader(new TwoLeggedAuthenticationProvider(APS_CLIENT_ID, APS_CLIENT_SECRET)).download(urn, { outputDir: dir, log: () => {}, region: 'US' });
-    file = find(dir);
-  }
-  if (!file) throw new Error('SVF download produced no output.svf');
-  return file;
+  // Full-model re-exports use the retained local cache without contacting Autodesk or reading any keys.
+  const cached = find(dir);
+  if (cached) return cached;
+  throw new Error('No cached SVF in tools/export/work/svf. Restore the one-time export cache before rebuilding; this script does not request credentials or download a replacement.');
 }
 
 // Parts, checker results, and leaf node -> checked part (geometry often sits on child nodes).
