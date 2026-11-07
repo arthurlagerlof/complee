@@ -33,7 +33,14 @@ try {
   Set-Content -Encoding ascii -Path (Join-Path $Tmp 'server.env') -Value @("DOMAIN=$($cfg['DOMAIN'])", "ALLOWED_ORIGINS=$($cfg['ALLOWED_ORIGINS'])")
   $appMB = [math]::Round((Get-Item (Join-Path $Tmp 'app.tgz')).Length / 1MB, 1)
   $modelMB = [math]::Round((Get-Item (Join-Path $Tmp 'model.tar')).Length / 1MB, 1)
+  # model/ = the 6 main chunks, the rest sub-chunks (rest-NN.glb, Full model), manifest.json and props/ (rest part data)
+  $glb = @(Get-ChildItem (Join-Path $Sc 'model') -Filter *.glb)
+  $restGlb = @($glb | Where-Object { $_.Name -like 'rest-*' })
+  $propsDir = Join-Path $Sc 'model/props'
+  $props = if (Test-Path $propsDir) { @(Get-ChildItem $propsDir).Count } else { 0 }
+  Write-Host "Model: $($glb.Count) chunk files ($($restGlb.Count) rest sub-chunks), $props property files"
   Write-Host "Archive: app $appMB MB, model $modelMB MB"
+  Write-Host "Total upload: $([math]::Round($appMB + $modelMB, 1)) MB"
 
   ssh @SshOpts $Target "mkdir -p '$RemoteDir'"
   if ($LASTEXITCODE -ne 0) { throw 'ssh failed' }

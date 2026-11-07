@@ -28,7 +28,10 @@ trap 'rm -rf "$TMP"' EXIT
 git -C "$SC" archive --format=tar.gz -o "$TMP/app.tgz" HEAD:shipcheck 2>/dev/null || git -C "$SC" archive --format=tar.gz -o "$TMP/app.tgz" HEAD
 tar -cf "$TMP/model.tar" -C "$SC" model
 printf 'DOMAIN=%s\nALLOWED_ORIGINS=%s\n' "${DOMAIN:-}" "${ALLOWED_ORIGINS:-}" > "$TMP/server.env"
+# model/ = the 6 main chunks, the rest sub-chunks (rest-NN.glb, Full model), manifest.json and props/ (rest part data)
+echo "Model: $(ls "$SC"/model/*.glb | wc -l | tr -d ' ') chunk files ($(ls "$SC"/model/rest-*.glb 2>/dev/null | wc -l | tr -d ' ') rest sub-chunks), $(ls "$SC"/model/props 2>/dev/null | wc -l | tr -d ' ') property files"
 echo "Archive: app $(du -h "$TMP/app.tgz" | cut -f1), model $(du -h "$TMP/model.tar" | cut -f1)"
+echo "Total upload: $(( ( $(wc -c < "$TMP/app.tgz") + $(wc -c < "$TMP/model.tar") ) / 1000000 )) MB"
 
 ssh "${SSH_OPTS[@]}" "$TARGET" "mkdir -p '$REMOTE_DIR'"
 scp "${SSH_OPTS[@]}" "$TMP/app.tgz" "$TMP/model.tar" "$TMP/server.env" "$TARGET:$REMOTE_DIR/"

@@ -10,6 +10,9 @@
 4. No internet, or APS is down: open http://localhost:8080/?noaps. The 3D view switches to the saved screenshots and the findings
    still come from the local check. Every caption and step stays the same.
 5. `?demo` starts the run-through on load. **Esc** stops it.
+6. **Full model** (top bar, on by default): after the checked parts, the rest of the ship loads in the background (badge
+   "full model … MB") and appears in grey in the overview once all filter chips are on. It never changes a colour or count; the
+   rule and component steps hide the grey parts, keeping the compliance view clear.
 
 ## The "Demo run-through" button (about 45 s)
 

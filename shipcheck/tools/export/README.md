@@ -34,6 +34,8 @@ A controlled 60-frame rotation, one render per animation frame with GPU completi
 
 The checked workflow passed in the browser: rest selection/property card, findings filter, hatch rule view, what-if edit, deck cut, cruise C2 live edit and the full demo run-through. A simulated missing rest chunk shows an explicit incomplete-download message; it is not reported as a successful full load. `?noaps` still opens the screenshot fallback. Server tests cover all rest files, manifest coverage, cache/MIME, health counts and HTTP 206.
 
+Screenshots: [full overview](../../docs/full-model/full-overview.png), [Full model off, same camera](../../docs/full-model/compliance-overview.png), [rest part selected](../../docs/full-model/rest-selected.png).
+
 ## Rebuild
 
 Run the mapping and main export once when correcting or replacing the source. Then run `export-rest.mjs --plan`, each `--chunk N` in its own Node process (up to `--max-old-space-size=12288`), `--props`, and `audit-model.mjs`, in that order. The rest exporter never rewrites the six main GLBs. Each rest run checks disk space and reserves at least 3 GB while writing its temporary files. Only temporary raw files for the completed compression are deleted; the cached SVF remains. Model files and working data stay outside Git. Deployment scripts archive the entire model folder and print the total upload size; they have not been run.

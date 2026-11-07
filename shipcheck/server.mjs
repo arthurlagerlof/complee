@@ -18,10 +18,13 @@ const ALLOWED_ORIGINS = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
 const MODEL_DIR = path.resolve(ROOT, process.env.MODEL_DIR || 'model');
 
 function health() {
-  let chunks = 0, manifest = false, parts = false;
-  try { const m = JSON.parse(fs.readFileSync(path.join(MODEL_DIR, 'manifest.json'), 'utf8')); manifest = true; chunks = m.chunks?.length ?? 0; } catch { /* no model deployed */ }
+  let chunks = 0, restChunks = 0, manifest = false, parts = false;
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(MODEL_DIR, 'manifest.json'), 'utf8'));
+    manifest = true; chunks = m.chunks?.length ?? 0; restChunks = m.chunks?.filter((c) => c.group === 'rest').length ?? 0;
+  } catch { /* no model deployed */ }
   try { parts = Array.isArray(JSON.parse(fs.readFileSync(path.join(ROOT, 'ships/rcrv/parts.json'), 'utf8')).parts); } catch { /* missing */ }
-  return { status: 'ok', version: VERSION, model_manifest: manifest, chunks, parts_loaded: parts, viewer: manifest ? 'local' : 'aps-or-fallback' };
+  return { status: 'ok', version: VERSION, model_manifest: manifest, chunks, rest_chunks: restChunks, parts_loaded: parts, viewer: manifest ? 'local' : 'aps-or-fallback' };
 }
 const evidenceProvider = await createEvidenceProvider({ kind: process.env.EVIDENCE_PROVIDER || 'sinceai' });
 

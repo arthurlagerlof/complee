@@ -61,7 +61,7 @@ The real RCRV model is shown by ShipCheck's own Three.js viewer from glTF chunks
 colours, component card, rule view, labels, deck cut and what-if as before. `?viewer=aps` switches to the Autodesk viewer,
 `?noaps` to the saved screenshots. If `model/manifest.json` is missing the app falls back to APS automatically.
 
-The chunks are exported once from the Autodesk model (needs the APS keys; the files are gitignored, about 10-100 MB):
+The chunks are exported once from the Autodesk model (needs the APS keys; the files are gitignored, 226.5 MB of GLBs plus 56.7 MB of on-demand properties):
 
 ```bash
 cd tools/export && npm install
@@ -70,13 +70,29 @@ cd tools/export && npm install
 node request-svf.mjs
 ```
 ```bash
+node --max-old-space-size=12288 map-ids.mjs
+```
+```bash
 node --max-old-space-size=12288 export-chunks.mjs
 ```
+```bash
+node --max-old-space-size=12288 export-rest.mjs --plan
+```
+Then `node --max-old-space-size=12288 export-rest.mjs --chunk 1`, `--chunk 2`, … (one run per sub-chunk, as many as the plan prints) and `node --max-old-space-size=12288 export-rest.mjs --props`. Finish with `node --max-old-space-size=12288 audit-model.mjs`.
 
 `request-svf.mjs` copies the source file inside our APS bucket and translates the copy to SVF (svf-utils 8 reads SVF only;
-the original model keeps its SVF2 for the APS viewer). `export-chunks.mjs` merges each chunk (context, openings, structure with
-findings, piping, stairs/ladders, other structure, rest) into one mesh with the part's dbId on every vertex, compresses it with
-gltfpack (meshopt) and writes `model/manifest.json`.
+the original model keeps its SVF2 for the APS viewer). `map-ids.mjs` matches the SVF copy's node ids to the APS model's dbIds
+(the two translations number objects differently) by DWG source file + entity handle; `verify-ids.mjs` checks the result
+(each part's ShipConstructor centre of gravity must lie inside its geometry: 99.7 %). `export-chunks.mjs` merges each chunk
+(context, openings, structure with findings, piping, stairs/ladders, other structure) into one mesh with the part's dbId on
+every vertex, compresses it with gltfpack (meshopt, no simplification) and writes `model/manifest.json`.
+
+**Full model:** `export-rest.mjs` exports everything else (parts no rule looks at) as `rest-01.glb` … (about 29-31 MB each,
+slices along the ship) plus their names and properties (`model/props/`). The viewer loads them in the background after
+the 6 main chunks and shows them in grey in the overview (**Full model** button; hidden while a findings filter, the rule
+view or a component is shown). Clicking a grey part shows its dbId, name and properties: not checked by any rule.
+
+The full geometry is rendered without simplification; decoding and picking-index construction run in workers. See [export coverage and measured performance](tools/export/README.md) for sizes, timings, dbId mapping limits and the correction to the original six chunks.
 
 ## Deploy to Vultr
 
