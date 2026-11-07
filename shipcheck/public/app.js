@@ -1,10 +1,10 @@
 // ShipCheck UI. The pass/fail decision always comes from the shared deterministic checker
-// (/src/checker.mjs), which runs right here in the browser so edits re-check instantly.
-import { checkModel, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK } from '/src/checker.mjs';
-import { scoreResults, scoreLine, badgeText } from '/src/score.mjs';
-import { partsToModel } from '/src/parts-model.mjs';
-import { reportRows, toCSV, toHTML } from '/src/report.mjs';
-import { traceMatrix, traceCSV, cellLabel } from '/src/trace.mjs';
+// (src/checker.mjs), which runs right here in the browser so edits re-check instantly.
+import { checkModel, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK } from './src/checker.mjs';
+import { scoreResults, scoreLine, badgeText } from './src/score.mjs';
+import { partsToModel } from './src/parts-model.mjs';
+import { reportRows, toCSV, toHTML } from './src/report.mjs';
+import { traceMatrix, traceCSV, cellLabel } from './src/trace.mjs';
 import { createViewer } from './viewer3d.js';
 import { createApsViewer, createFallbackViewer } from './viewer-aps.js';
 
@@ -112,7 +112,7 @@ function useViewer(sc) {
 // ---------- loading ----------
 
 async function init() {
-  const [scen, core] = await Promise.all([fetchJSON('/api/scenarios'), fetchJSON('/rules.json')]);
+  const [scen, core] = await Promise.all([fetchJSON('api/scenarios'), fetchJSON('rules.json')]);
   S.scenarios = scen;
   S.coreRules = core.rules;
   $('#scenario').innerHTML = S.scenarios.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
@@ -123,13 +123,13 @@ async function init() {
 // Real production models come as a parts file (kind "parts") and are turned into a checker model here,
 // in the browser. If the parts file cannot be loaded, the precomputed results are shown read-only.
 async function fetchModel(sc) {
-  if (sc.kind !== 'parts') return { model: await fetchJSON('/' + sc.model) };
+  if (sc.kind !== 'parts') return { model: await fetchJSON(sc.model) };
   try {
-    const [parts, meta] = await Promise.all([fetchJSON('/' + sc.model), sc.meta ? fetchJSON('/' + sc.meta) : {}]);
+    const [parts, meta] = await Promise.all([fetchJSON(sc.model), sc.meta ? fetchJSON(sc.meta) : {}]);
     return { model: partsToModel(parts, meta) };
   } catch (e) {
     if (!sc.precomputed) throw e;
-    const [pre, meta] = await Promise.all([fetchJSON('/' + sc.precomputed), sc.meta ? fetchJSON('/' + sc.meta).catch(() => ({})) : {}]);
+    const [pre, meta] = await Promise.all([fetchJSON(sc.precomputed), sc.meta ? fetchJSON(sc.meta).catch(() => ({})) : {}]);
     return { model: modelFromPrecomputed(pre, meta), precomputed: pre };
   }
 }
@@ -158,7 +158,7 @@ async function loadScenario(id) {
   $('#scenario').value = id;
   const [{ model, precomputed }, expected] = await Promise.all([
     fetchModel(S.sc),
-    S.sc.expected ? fetchJSON('/' + S.sc.expected).catch(() => null) : null,
+    S.sc.expected ? fetchJSON(S.sc.expected).catch(() => null) : null,
   ]);
   S.precomputed = precomputed ?? null;
   S.pristine = model;

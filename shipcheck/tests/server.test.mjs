@@ -7,7 +7,7 @@ test('server serves the app and API but never .env, keys or files outside the wh
   const log = console.log;
   console.log = () => {};
   const { server } = await import('../server.mjs');
-  await new Promise((r) => (server.listening ? r() : server.once('listening', r)));
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
   console.log = log;
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.address().port}`;
