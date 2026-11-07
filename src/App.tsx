@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { gsap } from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import {
@@ -34,14 +34,18 @@ function App() {
   const root = useRef<HTMLDivElement>(null)
   const [selectedId, setSelectedId] = useState(inspectionPoints[0].id)
   const [menuOpen, setMenuOpen] = useState(false)
-  const [showConcept, setShowConcept] = useState(false)
+  const [showConcept, setShowConcept] = useState(() => window.location.hash !== '#evidence')
   const [evidenceCount, setEvidenceCount] = useState(0)
+  const scrollToInspection = useRef(false)
   const selectedPoint = inspectionPoints.find((point) => point.id === selectedId) ?? inspectionPoints[0]
 
   useEffect(() => {
     if (!showConcept) return
     try { setEvidenceCount(JSON.parse(sessionStorage.getItem('compleeEvidenceFiles') || '[]').length) } catch { setEvidenceCount(0) }
-    requestAnimationFrame(() => document.querySelector('#inspection')?.scrollIntoView({ behavior: 'smooth' }))
+    if (scrollToInspection.current) {
+      scrollToInspection.current = false
+      requestAnimationFrame(() => document.querySelector('#inspection')?.scrollIntoView({ behavior: 'smooth' }))
+    }
     const context = gsap.context(() => {
       const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
 
@@ -78,7 +82,19 @@ function App() {
   }, [showConcept])
 
   const closeMenu = () => setMenuOpen(false)
-  if (!showConcept) return <EvidenceIntake onContinue={() => setShowConcept(true)} />
+  const openEvidence = (event: MouseEvent<HTMLAnchorElement>) => {
+    event.preventDefault()
+    window.history.pushState(null, '', '#evidence')
+    setMenuOpen(false)
+    setShowConcept(false)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+  const continueToInspection = () => {
+    scrollToInspection.current = true
+    window.history.pushState(null, '', '#inspection')
+    setShowConcept(true)
+  }
+  if (!showConcept) return <EvidenceIntake onContinue={continueToInspection} />
 
   return (
     <div ref={root} id="top">
@@ -88,11 +104,11 @@ function App() {
           <nav className="desktop-nav" aria-label="Main navigation">
             <a href="#challenge">The challenge</a>
             <a href="#inspection">Vessel inspection</a>
-            <a href="http://localhost:8094/evidence.html" target="_blank" rel="noreferrer">Local evidence intake demo</a>
+            <a href="#evidence" onClick={openEvidence}>Add evidence</a>
             <a href="#workflow">How it works</a>
             <a href="#architecture">Deployment</a>
           </nav>
-          <a className="nav-cta" href="/">Add evidence <ArrowUpRight size={14} /></a>
+          <a className="nav-cta" href="#evidence" onClick={openEvidence}>Add evidence <ArrowUpRight size={14} /></a>
           <button
             type="button"
             className="menu-toggle"
@@ -107,7 +123,7 @@ function App() {
         <nav id="mobile-navigation" className={`mobile-nav${menuOpen ? ' menu-open' : ''}`} aria-label="Mobile navigation" aria-hidden={!menuOpen}>
           <a href="#challenge" onClick={closeMenu}>The challenge <ArrowRight size={16} /></a>
           <a href="#inspection" onClick={closeMenu}>Vessel inspection <ArrowRight size={16} /></a>
-          <a href="http://localhost:8094/evidence.html" target="_blank" rel="noreferrer" onClick={closeMenu}>Local evidence intake demo <ArrowRight size={16} /></a>
+          <a href="#evidence" onClick={openEvidence}>Add evidence <ArrowRight size={16} /></a>
           <a href="#workflow" onClick={closeMenu}>How it works <ArrowRight size={16} /></a>
           <a href="#architecture" onClick={closeMenu}>Deployment <ArrowRight size={16} /></a>
         </nav>
