@@ -1,0 +1,20 @@
+{
+  "name": "shipcheck",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Deterministic class and regulatory compliance checker for ship designs (Since AI Hackathon 2026, Meyer Turku challenge)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test tests/",
+    "check": "node scripts/check.mjs",
+    "prepare-model": "node scripts/prepare-model.mjs",
+    "precompute": "node scripts/check.mjs --precompute"
+  },
+  "dependencies": {
+    "three": "0.160.0"
+  }
+}

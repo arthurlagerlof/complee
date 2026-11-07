@@ -1,0 +1,21 @@
+{
+  "scenario": "rcrv",
+  "note": "Ground truth for the planted cases in tests/fixtures/rcrv-layout.json. Every finding the checker reports must be listed here, otherwise it counts as a false alarm.",
+  "findings": [
+    { "element": "MD-C1", "rule": "FSS-13-CORRIDOR", "status": "non_compliant", "why": "Lab corridor 850 mm < 900 mm escape width" },
+    { "element": "02-ST1", "rule": "FSS-13-STAIR", "status": "non_compliant", "why": "Stair 31.5 in = 800 mm < 900 mm (unit conversion)" },
+    { "element": "01-Z1", "rule": "SOLAS-II-2-13-ESCAPE-ACCOM", "status": "non_compliant", "why": "Science berthing area has only one means of escape" },
+    { "element": "01-C2", "rule": "SOLAS-II-2-13-DEADEND-CARGO", "status": "non_compliant", "why": "7.5 m dead end > 7 m (cargo/SPS); the 13 m passenger limit must NOT apply" },
+    { "element": "MD-D1", "rule": "LL-REG12-SILL", "status": "non_compliant", "why": "Weathertight door sill 300 mm < 380 mm" },
+    { "element": "01-GR1", "rule": "LL-REG25-GUARDRAIL", "status": "non_compliant", "why": "Guard rail 37.4 in = 950 mm < 1 m (Load Line)" },
+    { "element": "01-GR1", "rule": "DNV-GUARDRAIL", "status": "non_compliant", "why": "Same rail also fails the overlapping class rule" },
+    { "element": "MD-D2", "rule": "LL-REG12-SILL", "status": "not_enough_info", "why": "Sill height missing: must not be guessed" }
+  ],
+  "compliant": [
+    { "element": "01-EXT1", "rule": "FSS-13-STAIR", "why": "Boundary: exactly 900 mm passes" },
+    { "element": "02-GR1", "rule": "LL-REG25-GUARDRAIL", "why": "Boundary: exactly 1000 mm passes" },
+    { "element": "LD-ER", "rule": "SOLAS-II-2-13-ESCAPE-MACH", "why": "Ladder + escape trunk = 2 means of escape" },
+    { "element": "LD-ER", "rule": "MARPOL-I-12-SLUDGE", "why": "Sludge tank LD-SLUDGE exists" },
+    { "element": "02-C1", "rule": "SOLAS-II-2-13-DEADEND-CARGO", "why": "4 m dead end is within 7 m" }
+  ]
+}

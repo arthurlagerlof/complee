@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ShipCheck - compliance viewer</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="style.css" />
+<script type="importmap">
+  { "imports": {
+      "three": "/node_modules/three/build/three.module.js",
+      "three/addons/": "/node_modules/three/examples/jsm/"
+  } }
+</script>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><b>ShipCheck</b><span>class &amp; regulatory compliance</span></div>
+  <label>Scenario <select id="scenario"></select></label>
+  <label>Decks <select id="deck"></select></label>
+  <button id="planBtn" title="Top-down plan view">Plan view</button>
+  <span id="accBadge" class="accbadge" hidden title="Ground truth of the unedited design: the same files and scoring as npm test"></span>
+</header>
+<main>
+  <aside id="side">
+    <section id="ship"></section>
+    <section id="score"></section>
+    <section id="summary"></section>
+    <section id="edits"></section>
+    <section>
+      <h2>Findings</h2>
+      <div id="filters"></div>
+      <div id="list"></div>
+    </section>
+    <section class="legend">
+      <span><i class="dot st-compliant"></i>Compliant</span>
+      <span><i class="dot st-non_compliant"></i>Non-compliant</span>
+      <span><i class="dot st-not_enough_info"></i>Not enough info</span>
+      <span><i class="dot st-none"></i>No rule</span>
+    </section>
+  </aside>
+  <section id="view">
+    <div id="threeView" class="viewpane"></div>
+    <div id="apsView" class="viewpane" hidden></div>
+    <div id="fallbackView" class="viewpane" hidden></div>
+  </section>
+  <aside id="detail"><p class="muted">Click an element in the model or in the list to see every rule that applies, why it passes or fails, and where each value comes from.</p></aside>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

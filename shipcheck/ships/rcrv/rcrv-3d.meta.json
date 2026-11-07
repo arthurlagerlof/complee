@@ -1,0 +1,44 @@
+{
+  "name": "OSU RCRV: real 3D production model (ShipConstructor, via APS)",
+  "provenance_note": "Real ShipConstructor production model (structure + piping), converted with Autodesk APS. No rooms or corridors in this model, so escape-route rules cannot run on it; the checks use material, grade, thickness, SWBS, pipe material, opening sizes from item names, and design status. Model unit: inches, converted to mm.",
+  "ship": {
+    "name": "Regional Class Research Vessel (Oregon State University)",
+    "type": "research",
+    "operating_area": [
+      "US"
+    ],
+    "length_overall": {
+      "value": 60650,
+      "unit": "mm",
+      "source": "public particulars",
+      "note": "about 60.65 m (199 ft); OSU press material says 193 ft"
+    },
+    "beam": {
+      "value": 12500,
+      "unit": "mm",
+      "source": "public particulars"
+    },
+    "draft": {
+      "value": 3810,
+      "unit": "mm",
+      "source": "public particulars"
+    },
+    "berths": {
+      "value": 31,
+      "source": "public particulars"
+    },
+    "gross_tonnage": {
+      "value": 1200,
+      "source": "estimated"
+    },
+    "class_society": {
+      "value": "ABS",
+      "source": "inferred from material names \"CS ABS A/B/D/EH36\" in the model; to confirm (VERIFY.md: ABS or DNV?)"
+    },
+    "propulsion": {
+      "value": "diesel-electric",
+      "source": "public particulars"
+    },
+    "source": "public particulars"
+  }
+}
