@@ -25,7 +25,7 @@ const SHIPCHECK_DATA_API_URL = process.env.SHIPCHECK_DATA_API_URL
 const ALLOWED_ORIGINS = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
 const MODEL_DIR = path.resolve(ROOT, process.env.MODEL_DIR || 'model');
 const apiRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 120 });
-const modelRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 360 });
+const modelRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 1_200 });
 const staticRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 600 });
 const checkRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 30 });
 

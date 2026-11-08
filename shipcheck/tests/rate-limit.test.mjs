@@ -41,4 +41,8 @@ test('public API endpoints enforce the configured per-IP limit without login', a
   assert.equal(cloudflareLast.status, 429);
   const distinctVisitor = await fetch(url, { headers: { 'CF-Connecting-IP': '203.0.113.12', 'X-Real-IP': '203.0.113.10' } });
   assert.equal(distinctVisitor.status, 200, 'tunnel mode trusts Cloudflare client IP rather than the Caddy/container address or spoofed X-Real-IP');
+
+  let modelLast;
+  for (let i = 0; i < 361; i++) modelLast = await fetch(`${url.replace('/api/health', '')}/model/nonexistent.glb`);
+  assert.equal(modelLast.status, 404, 'a viewport with more than 360 tile requests is not prematurely rate-limited');
 });

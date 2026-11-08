@@ -153,7 +153,7 @@ The public read-only viewer surface includes the app's static files, `/api/healt
 `/api/*` data routes, and `/model/*` viewer assets. These routes require no login. `/model/*` accepts only the existing
 allow-listed reference-model assets; the private bucket and credentials are never sent to the browser. Mutating local
 maintenance endpoints remain loopback-only. The Node service applies in-memory limits of 600 static requests/minute, 120 general API requests/minute,
-30 `/api/check` requests/minute, and 360 model requests/minute per client IP; rate limits reset on restart and are not a
+30 `/api/check` requests/minute, and 1,200 model requests/minute per client IP to permit full viewport streaming; rate limits reset on restart and are not a
 substitute for an upstream DDoS/WAF service. Keep the app container reachable only through Caddy, restrict SSH (22) to
 trusted administrator IPs, and keep port 8080 private. CORS limits browser access, not direct HTTP callers.
 
