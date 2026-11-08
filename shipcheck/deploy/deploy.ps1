@@ -6,6 +6,8 @@ $ErrorActionPreference = 'Stop'
 
 $Here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Sc = Split-Path -Parent $Here
+$RepoRoot = (git -C $Sc rev-parse --show-toplevel).Trim()
+if (-not $RepoRoot) { throw 'Could not locate the Git repository root.' }
 $EnvFile = Join-Path $Here 'deploy.env'
 if (-not (Test-Path $EnvFile)) { throw "Missing $EnvFile (copy deploy.env.example and fill it in)" }
 $cfg = @{}
@@ -29,8 +31,16 @@ if ($FromBucket) {
 $Tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("shipcheck-deploy-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Force $Tmp | Out-Null
 try {
-  git -C $Sc archive --format=tar.gz -o (Join-Path $Tmp 'app.tgz') HEAD:shipcheck
+  $appArchive = Join-Path $Tmp 'app.tgz'
+  git -C $RepoRoot archive --format=tar.gz -o $appArchive HEAD:shipcheck
   if ($LASTEXITCODE -ne 0) { throw 'git archive failed' }
+  $archiveEntries = @(tar -tzf $appArchive)
+  if ($LASTEXITCODE -ne 0 -or $archiveEntries -notcontains 'server.mjs' -or $archiveEntries -notcontains 'deploy/docker-compose.yml') {
+    throw 'The ShipCheck archive is incomplete; refusing to deploy.'
+  }
+  if ($archiveEntries | Where-Object { $_ -match '(^|/)(\.env(\..*)?|deploy\.env)$' }) {
+    throw 'The app archive contains a forbidden environment file; refusing to deploy.'
+  }
   # diagnostic audit reports (hundreds of MB) are not served: left out of the upload
   if ($FromBucket) {
     # model tiles are streamed from the bucket: upload an empty model/ folder
@@ -66,7 +76,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'ssh failed' }
   scp @SshOpts (Join-Path $Tmp 'app.tgz') (Join-Path $Tmp 'model.tar') (Join-Path $Tmp 'server.env') "${Target}:$RemoteDir/"
   if ($LASTEXITCODE -ne 0) { throw 'scp failed' }
-  $remote = "set -e; cd '$RemoteDir' && tar -xzf app.tgz && $modelPrep && tar -xf model.tar && mv server.env deploy/server.env && rm -f app.tgz model.tar && docker compose --env-file deploy/server.env -f deploy/docker-compose.yml up -d --build && sleep 5 && curl -fsS http://127.0.0.1/api/health"
+  $remote = "set -e; cd '$RemoteDir' && chmod 600 server.env && tar -xzf app.tgz && $modelPrep && tar -xf model.tar && mv server.env deploy/server.env && rm -f app.tgz model.tar && docker compose --env-file deploy/server.env -f deploy/docker-compose.yml up -d --build && sleep 5 && curl -fsS http://127.0.0.1/api/health"
   ssh @SshOpts $Target $remote
   if ($LASTEXITCODE -ne 0) { throw 'remote deploy failed' }
   $hostName = if ($cfg['DOMAIN']) { $cfg['DOMAIN'] } else { $cfg['SERVER_HOST'] }

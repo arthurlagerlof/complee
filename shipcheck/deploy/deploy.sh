@@ -7,6 +7,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SC="$(cd "$HERE/.." && pwd)"
+REPO_ROOT="$(git -C "$SC" rev-parse --show-toplevel)"
 ENV_FILE="$HERE/deploy.env"
 [ -f "$ENV_FILE" ] || { echo "Missing $ENV_FILE (copy deploy.env.example and fill it in)"; exit 1; }
 # shellcheck disable=SC1090
@@ -31,7 +32,10 @@ fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-git -C "$SC" archive --format=tar.gz -o "$TMP/app.tgz" HEAD:shipcheck 2>/dev/null || git -C "$SC" archive --format=tar.gz -o "$TMP/app.tgz" HEAD
+git -C "$REPO_ROOT" archive --format=tar.gz -o "$TMP/app.tgz" HEAD:shipcheck
+tar -tzf "$TMP/app.tgz" > "$TMP/app-files.txt"
+grep -qx 'server.mjs' "$TMP/app-files.txt" && grep -qx 'deploy/docker-compose.yml' "$TMP/app-files.txt" || { echo "The ShipCheck archive is incomplete; refusing to deploy."; exit 1; }
+if grep -Eq '(^|/)(\.env(\..*)?|deploy\.env)$' "$TMP/app-files.txt"; then echo "The app archive contains a forbidden environment file; refusing to deploy."; exit 1; fi
 # diagnostic audit reports (hundreds of MB) are not served: left out of the upload
 if [ "${MODEL_SOURCE:-}" = "vultr" ]; then
   # model tiles are streamed from the bucket: upload an empty model/ folder
@@ -52,7 +56,7 @@ scp "${SSH_OPTS[@]}" "$TMP/app.tgz" "$TMP/model.tar" "$TMP/server.env" "$TARGET:
 MODEL_PREP='rm -rf model'
 [ "${MODEL_SOURCE:-}" = "vultr" ] && MODEL_PREP=true
 ssh "${SSH_OPTS[@]}" "$TARGET" "set -e; cd '$REMOTE_DIR' \
-  && tar -xzf app.tgz && $MODEL_PREP && tar -xf model.tar && mv server.env deploy/server.env && rm -f app.tgz model.tar \
+  && chmod 600 server.env && tar -xzf app.tgz && $MODEL_PREP && tar -xf model.tar && mv server.env deploy/server.env && rm -f app.tgz model.tar \
   && docker compose --env-file deploy/server.env -f deploy/docker-compose.yml up -d --build \
   && sleep 5 && curl -fsS http://127.0.0.1/api/health || curl -fsS -H 'Host: ${DOMAIN:-localhost}' http://127.0.0.1/api/health"
 echo
