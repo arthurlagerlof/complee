@@ -1,5 +1,5 @@
 // Full model: the rest sub-chunks (rest-01.glb …, tools/export/export-rest.mjs) are listed in model/manifest.json,
-// exist on disk, are counted by /api/health and are served with Range support.
+// exist on disk and are served with Range support; /api/health only says that a model is available.
 // Skipped when no model is exported (model/ is not in Git).
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,7 +40,7 @@ test('source audit covers every non-empty geometry fragment across all chunks', 
   assert.equal(coverage.source_triangles, manifest.chunks.reduce((n, c) => n + c.triangles, 0));
 });
 
-test('server: health counts the rest sub-chunks; a rest sub-chunk answers a Range request with 206', { skip }, async (t) => {
+test('server: health reports the local model without internal counts; a rest sub-chunk answers a Range request with 206', { skip }, async (t) => {
   const log = console.log;
   console.log = () => {};
   const { server } = await import('../server.mjs');
@@ -49,8 +49,12 @@ test('server: health counts the rest sub-chunks; a rest sub-chunk answers a Rang
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.address().port}`;
   const h = await (await fetch(`${base}/api/health`)).json();
-  assert.equal(h.chunks, manifest.chunks.length);
-  assert.equal(h.rest_chunks, restChunks.length);
+  // /api/health reports basic service health only (no chunk counts or other internal details).
+  assert.equal(h.status, 'ok');
+  assert.equal(h.model_source, 'local');
+  assert.equal(h.model_available, true);
+  assert.equal(h.chunks, undefined);
+  assert.equal(h.rest_chunks, undefined);
   for (const c of restChunks) {
     const head = await fetch(`${base}/model/${c.file}`, { method: 'HEAD' });
     assert.equal(head.status, 200);
