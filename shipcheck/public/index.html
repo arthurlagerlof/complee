@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ShipCheck - compliance viewer</title>
+<title>Complee - compliance viewer</title>
 <link rel="icon" href="data:," />
 <link rel="stylesheet" href="style.css" />
 <script type="importmap">
@@ -15,8 +15,20 @@
 </script>
 </head>
 <body>
+<div id="loadingScreen" class="loading-screen" role="status" aria-live="polite">
+  <div class="loading-card">
+    <div class="loading-brand"><b>Complee</b><span>class &amp; regulatory compliance</span></div>
+    <div class="loading-spinner" aria-hidden="true"></div>
+    <ol class="loading-steps">
+      <li data-step="data" class="active">Loading rules and design data</li>
+      <li data-step="check">Running the compliance check</li>
+      <li data-step="model">Streaming the 3D model</li>
+    </ol>
+    <p id="loadingDetail" class="loading-detail"></p>
+  </div>
+</div>
 <header class="top">
-  <div class="brand"><b>ShipCheck</b><span>class &amp; regulatory compliance</span></div>
+  <div class="brand"><b>Complee</b><span>class &amp; regulatory compliance</span></div>
   <nav class="workflow-steps" aria-label="Review workflow"><a href="evidence.html"><span>1</span> Add evidence</a><i></i><b><span>2</span> Review design</b><i></i><a href="index.html?scenario=rcrv-3d#manage"><span>3</span> Manage findings</a></nav>
   <label>Scenario <select id="scenario"></select></label>
   <label>Decks <select id="deck"></select></label>

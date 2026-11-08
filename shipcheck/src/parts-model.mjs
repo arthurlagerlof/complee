@@ -68,7 +68,7 @@ export function elementType(p) {
 
 export function partsToModel(partsFile, meta = {}) {
   const SRC = (p) => `ShipConstructor model (APS): ${p.sourceFile ?? 'file not stated'}`;
-  const DER = (what) => `derived by ShipCheck from ${what} (src/parts-model.mjs)`;
+  const DER = (what) => `derived by Complee from ${what} (src/parts-model.mjs)`;
   const groups = new Map();
   const elements = [];
   for (const p of partsFile.parts) {

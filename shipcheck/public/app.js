@@ -66,7 +66,7 @@ export function family(source = '') {
 function provClass(src = '') {
   if (/edited|what-if/.test(src)) return 'edit';
   if (/planted/.test(src)) return 'plant';
-  if (/derived by ShipCheck|not in the model/.test(src)) return 'der';
+  if (/derived by (ShipCheck|Complee)|not in the model/.test(src)) return 'der';
   if (/public|GA drawing|ShipConstructor model|viewer dbId/.test(src)) return 'pub';
   if (/estimated|assumed/.test(src)) return 'est';
   return '';
@@ -258,6 +258,7 @@ async function loadScenario(id) {
         return null;
       }) : null,
     ]);
+    loadingScreen.step('check', `${(model.elements?.length ?? 0).toLocaleString('en-GB')} design elements loaded`);
     if (generation !== scenarioGeneration || controller.signal.aborted) return false;
     S.sc = sc; // commit the scenario and its model together, after checking ownership
     S.precomputed = precomputed ?? null;
@@ -877,12 +878,15 @@ async function waitViewer(step, token) {
   const ready = S.viewerReady ?? Promise.resolve();
   let done = false;
   ready.finally(() => { done = true; });
+  // A model that is already on screen settles within a moment: only say "loading" if it really is.
+  await Promise.race([ready.catch(() => {}), new Promise((r) => setTimeout(r, 300))]);
   if (!done) caption('Loading the real 3D model…', 'The check itself already ran locally');
   while (!done) { await step(250); if (token.stop) return; }
   // Start only when the ship is fully on screen (streamed viewer): no parts popping in during the story. At most 90 s.
   const st = viewer.stats;
   if (viewer.kind !== 'local' || !st || !('pending' in st)) return;
   for (let waited = 0; waited < 90000 && (st.pending || !(st.viewComplete || st.coverageComplete)); waited += 250) {
+    if (waited < 750) { await step(250); continue; } // brief top-ups after the first picture need no caption
     caption('Loading the real 3D model…', `${viewer.residentTiles ?? st.residentTiles ?? ''} parts of the view loaded · the check itself already ran locally`.replace(/^ parts/, 'Parts'));
     await step(250);
   }
@@ -933,13 +937,24 @@ async function pointAt(target, step, { click = true, x = null } = {}) {
 }
 function hidePointer() { if (demoPointer) demoPointer.hidden = true; }
 // The report as the Report button produces it, shown inside the page (the button opens it in a new tab).
-function showReportPreview() {
+// The report of a large model takes about a second to build and parse, so the demo prepares it hidden while the
+// screen is still (the traceability table) and only reveals it when the Report button is clicked.
+let preparedReport = null;
+const toHTMLKey = () => `${S.sc?.id}|${[...S.edits.keys()].join(',')}|${S.lastCheckMs}`;
+function prepareReportPreview() {
   const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(),
     score: S.baseline, edits: [...S.edits.values()] });
   let d = $('#reportPreview');
   if (!d) { d = document.createElement('div'); d.id = 'reportPreview'; $('#view').appendChild(d); }
+  d.hidden = true;
   d.innerHTML = '<div class="rp-head"><b>Report</b><span class="muted">the HTML file the Report button opens · for the class review</span></div><iframe title="Report preview"></iframe>';
   d.querySelector('iframe').srcdoc = html;
+  preparedReport = { key: toHTMLKey() };
+  return d;
+}
+function showReportPreview() {
+  const current = toHTMLKey();
+  const d = preparedReport && preparedReport.key === current && $('#reportPreview') ? $('#reportPreview') : prepareReportPreview();
   d.hidden = false;
   return d.querySelector('iframe');
 }
@@ -1095,7 +1110,9 @@ async function runDemo() {
     const tb = await pointAt('#traceBtn', step);
     if (tb) {
       openTrace();
-      await beat(3800);
+      await step(400);
+      prepareReportPreview(); // built now, while the table is on screen and nothing moves
+      await beat(3400);
       const focus = S.model.demo?.focus;
       const cell = focus && await pointAt(`#tracePanel td.cell[data-id="${CSS.escape(focus)}"]`, step);
       if (cell) {
@@ -1117,7 +1134,7 @@ async function runDemo() {
     // 10. Closing frame: the whole scene with every result coloured.
     hidePointer();
     showOverview();
-    caption('ShipCheck: deterministic rule checks on the real design model', 'Every result traceable to its rule, its source and the design value · what-ifs never change the model');
+    caption('Complee: deterministic rule checks on the real design model', 'Every result traceable to its rule, its source and the design value · what-ifs never change the model');
     await beat(4200);
   } catch (e) {
     if (e.message !== 'stopped') console.error(e);
@@ -1179,5 +1196,50 @@ $('#planBtn').onclick = () => { viewer.setPlan(!viewer.plan); $('#planBtn').clas
 
 window.__shipcheck = S; // for debugging in the console
 Object.defineProperty(window, '__shipcheckViewer', { get: () => viewer }); // read-only: the active viewer (tests, console)
-init().then(() => { if (new URLSearchParams(location.search).has('demo')) runDemo(); })
-  .catch((e) => { $('#detail').innerHTML = `<p class="check-bad">Failed to load: ${esc(e.message)}</p>`; console.error(e); });
+// ---------- loading screen: until the first part of the 3D model is on screen ----------
+const loadingScreen = {
+  el: $('#loadingScreen'),
+  step(name, detail = '') {
+    if (!this.el || this.el.classList.contains('is-done')) return;
+    let reached = false;
+    for (const li of this.el.querySelectorAll('[data-step]')) {
+      const current = li.dataset.step === name;
+      li.classList.toggle('active', current);
+      li.classList.toggle('done', !current && !reached);
+      if (current) reached = true;
+    }
+    $('#loadingDetail').textContent = detail;
+  },
+  hide() {
+    if (!this.el || this.el.classList.contains('is-done')) return;
+    for (const li of this.el.querySelectorAll('[data-step]')) { li.classList.remove('active'); li.classList.add('done'); }
+    this.el.classList.add('is-done');
+    setTimeout(() => this.el.remove(), 600);
+  },
+  fail(message) {
+    if (!this.el) return;
+    this.el.classList.add('is-error');
+    $('#loadingDetail').innerHTML = `Could not load: ${esc(message)} <button type="button" onclick="location.reload()">Reload</button>`;
+  },
+};
+
+async function showWhenReady() {
+  loadingScreen.step('model', 'Preparing the 3D view…');
+  const progress = setInterval(() => {
+    const st = views.local?.stats;
+    if (st?.residentTiles || st?.pending) loadingScreen.step('model', `${st.residentTiles} parts of the view streamed in`);
+  }, 400);
+  // The first picture of the model resolves viewerReady; never keep the page covered for more than 90 s.
+  await Promise.race([Promise.resolve(S.viewerReady).catch(() => {}), new Promise((r) => setTimeout(r, 90000))]);
+  clearInterval(progress);
+  loadingScreen.hide();
+}
+
+init().then(async () => {
+  await showWhenReady();
+  if (new URLSearchParams(location.search).has('demo')) runDemo();
+}).catch((e) => {
+  loadingScreen.fail(e.message);
+  $('#detail').innerHTML = `<p class="check-bad">Failed to load: ${esc(e.message)}</p>`;
+  console.error(e);
+});

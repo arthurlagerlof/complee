@@ -153,3 +153,12 @@ def api_client(monkeypatch):
         yield client
     app.dependency_overrides.clear()
     test_engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _isolated_catalog_cache(tmp_path, monkeypatch):
+    """Tests never read or write the developer's catalog response cache."""
+    from app.services import shipcheck_catalog
+
+    monkeypatch.setattr(shipcheck_catalog, "CACHE_DIR", tmp_path / "catalog-cache")
+    monkeypatch.setattr(shipcheck_catalog, "_json_cache", {})

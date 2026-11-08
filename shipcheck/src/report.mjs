@@ -71,7 +71,7 @@ th{background:#f3f5f8}.nc{color:#b42318;font-weight:600}.ok{color:#1d6b3d}.ni{co
 @media print{button{display:none}}</style></head><body>
 <button onclick="print()">Print / save as PDF</button>
 <h1>Compliance findings: ${esc(title)}</h1>
-<div class="muted">Scenario ${esc(scenario)} · generated ${esc(generated.toLocaleString('en-GB'))} by ShipCheck. Pass/fail is decided by the deterministic checker only (no AI).</div>
+<div class="muted">Scenario ${esc(scenario)} · generated ${esc(generated.toLocaleString('en-GB'))} by Complee. Pass/fail is decided by the deterministic checker only (no AI).</div>
 ${score ? `<div class="badge ${pass ? 'ok' : 'bad'}">${pass ? '✓' : '✗'} Accuracy: ${esc(badgeText(score))}</div><div class="muted">${esc(scoreLine(score))} (ground truth of the unedited design, same as npm test)</div>` : ''}
 <p>Result: <b>${s.non_compliant}</b> non-compliant, <b>${s.not_enough_info}</b> not enough info, <b>${s.compliant}</b> compliant rule checks.
 ${usedRules.length} rules applied, ${verified}/${rules.length} rule values verified against official text: every "no" must be checked before submission (VERIFY.md).</p>
@@ -88,6 +88,6 @@ ${traceSection(results, rules)}
 <table><tr><th>Rule</th><th>Source</th><th>Clause</th><th>Text (${'verbatim or paraphrase'})</th><th>Basis</th><th>Verified</th><th>Review</th></tr>
 ${usedRules.map((r) => `<tr><td>${esc(r.id)}</td><td>${esc(r.source)}</td><td>${esc(r.clause)}</td><td>“${esc(r.text)}” <span class="muted">(${esc(r.text_status || 'paraphrase')})</span></td><td>${esc(r.basis || 'explicit')}${r.basis_note ? `<br><span class="muted">${esc(r.basis_note)}</span>` : ''}</td><td>${r.verified ? 'yes' : 'no'}</td><td>${esc(r.review_status || '')}</td></tr>`).join('\n')}
 </table>
-<p class="muted">Values with source "estimated", "planted test case" or "derived by ShipCheck" are not design data. Inch values are shown as written in the model with their mm conversion (1 in = 25.4 mm).</p>
+<p class="muted">Values with source "estimated", "planted test case" or "derived by Complee" are not design data. Inch values are shown as written in the model with their mm conversion (1 in = 25.4 mm).</p>
 </body></html>`;
 }

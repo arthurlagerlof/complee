@@ -27,7 +27,7 @@ const unique = (values) => [...new Set(values)];
 
 // productName is a server-side option (not part of the request body) so the
 // root Complee dev server can reuse this module with its own name.
-export async function reviewDocumentEvidence({ filename, dataBase64, provider }, { productName = 'ShipCheck' } = {}) {
+export async function reviewDocumentEvidence({ filename, dataBase64, provider }, { productName = 'Complee' } = {}) {
   const ext = path.extname(String(filename || '')).toLowerCase();
   if (ext !== '.docx') throw Object.assign(new Error('This demo reviewer currently extracts DOCX files only.'), { status: 415 });
   if (typeof dataBase64 !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(dataBase64)) {

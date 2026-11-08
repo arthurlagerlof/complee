@@ -55,7 +55,7 @@ function applyRateLimit(req, res, pathname) {
 
 async function databaseCatalog(sourceKey) {
   if (!SHIPCHECK_DATA_API_URL) {
-    throw Object.assign(new Error('SHIPCHECK_DATA_API_URL must point to the database-backed ShipCheck API.'), { status: 503 });
+    throw Object.assign(new Error('SHIPCHECK_DATA_API_URL must point to the database-backed Complee API.'), { status: 503 });
   }
   const target = new URL(`/api/v1/shipcheck/catalog/${sourceKey}`, SHIPCHECK_DATA_API_URL);
   const response = await fetch(target, { signal: AbortSignal.timeout(90_000) });
@@ -311,11 +311,11 @@ export async function handleRequest(req, res) {
   const catalogMatch = /^\/api\/catalog\/([a-z0-9-]+)$/.exec(p);
   if (req.method === 'GET' && catalogMatch) {
     if (!SHIPCHECK_DATA_API_URL) {
-      return sendJSON(res, 503, { error: 'SHIPCHECK_DATA_API_URL must point to the database-backed ShipCheck API.' });
+      return sendJSON(res, 503, { error: 'SHIPCHECK_DATA_API_URL must point to the database-backed Complee API.' });
     }
     try {
       if (!SHIPCHECK_DATA_API_URL) {
-        return sendJSON(res, 503, { error: 'SHIPCHECK_DATA_API_URL must point to the database-backed ShipCheck API.' });
+        return sendJSON(res, 503, { error: 'SHIPCHECK_DATA_API_URL must point to the database-backed Complee API.' });
       }
       const target = new URL(`/api/v1/shipcheck/catalog/${catalogMatch[1]}`, SHIPCHECK_DATA_API_URL);
       const upstream = await fetch(target, { signal: AbortSignal.timeout(90_000) });
@@ -327,7 +327,7 @@ export async function handleRequest(req, res) {
       });
       return res.end(body);
     } catch {
-      return sendJSON(res, 502, { error: 'ShipCheck database API is temporarily unavailable.' });
+      return sendJSON(res, 502, { error: 'Complee database API is temporarily unavailable.' });
     }
   }
   const handler = routes[`${req.method} ${p}`];

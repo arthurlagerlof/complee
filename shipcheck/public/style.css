@@ -275,3 +275,34 @@ table.trace td.cell:hover { outline: 2px solid var(--accent); }
 #reportPreview[hidden] { display: none; }
 #reportPreview .rp-head { display: flex; gap: 10px; align-items: baseline; padding: 10px 16px; border-bottom: 1px solid #e3e7ee; }
 #reportPreview iframe { flex: 1; border: 0; width: 100%; }
+
+/* Loading screen: shown until the first part of the 3D model is on screen (or the view is ready). */
+.loading-screen { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 16px; background: linear-gradient(160deg, #0c2034 0%, #123a5a 100%); color: #e8eef3; transition: opacity .45s ease, visibility .45s ease; }
+.loading-screen.is-done { opacity: 0; visibility: hidden; pointer-events: none; }
+.loading-card { display: grid; justify-items: center; gap: 18px; width: min(380px, 100%); text-align: center; }
+.loading-brand { display: grid; gap: 4px; }
+.loading-brand b { font-size: 26px; letter-spacing: .02em; color: #fff; }
+.loading-brand span { color: #9fb4c6; font-size: 12px; }
+.loading-spinner { width: 42px; height: 42px; border: 3px solid rgba(255, 255, 255, .18); border-top-color: #94d9d0; border-radius: 50%; animation: loading-spin .9s linear infinite; }
+.loading-screen.is-error .loading-spinner { animation: none; border-color: #e58b50; }
+@keyframes loading-spin { to { transform: rotate(360deg); } }
+.loading-steps { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; text-align: left; font-size: 13px; color: #7f97ab; }
+.loading-steps li { display: flex; align-items: center; gap: 10px; }
+.loading-steps li::before { content: ''; flex: none; width: 10px; height: 10px; border: 2px solid currentColor; border-radius: 50%; box-sizing: border-box; }
+.loading-steps li.active { color: #fff; }
+.loading-steps li.active::before { border-color: #94d9d0; background: radial-gradient(circle, #94d9d0 35%, transparent 40%); }
+.loading-steps li.done { color: #b9cad7; }
+.loading-steps li.done::before { border-color: #94d9d0; background: #94d9d0; }
+.loading-detail { min-height: 1.4em; margin: 0; color: #9fb4c6; font-size: 12px; }
+.loading-detail button { margin-left: 6px; }
+@media (prefers-reduced-motion: reduce) { .loading-spinner { animation-duration: 2.4s; } .loading-screen { transition: none; } }
+/* Wide screens: keep the top bar on one line (the ground-truth badge shortens instead of pushing buttons down). */
+@media (min-width: 1400px) {
+  .top { flex-wrap: nowrap; }
+  .top .accbadge { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .top select { max-width: 330px; }
+}
+@media (min-width: 1400px) {
+  .top button, .top .brand, .top .brand span, .top label, .workflow-steps a, .workflow-steps b { white-space: nowrap; flex: none; }
+  .top select { max-width: 300px; }
+}

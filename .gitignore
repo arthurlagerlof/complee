@@ -13,3 +13,6 @@ __pycache__/
 .pytest_cache/
 # Local development server logs
 .run/
+
+# Backend catalog response cache (content-addressed, regenerated on demand)
+backend/.cache/

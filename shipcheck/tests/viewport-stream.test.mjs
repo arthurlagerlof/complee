@@ -61,3 +61,14 @@ test('the detail budget is spent on the tiles largest on screen first', () => {
   const p = selectViewportTiles(m, { ...view, span: 10, eye: [0.5, 0.5, 8], screenScale: 400, budget: { max_resident_bytes: 200 } });
   assert.deepEqual(p.tiles.map((c) => c.name), ['big'], 'only one tile fits: the larger one on screen wins');
 });
+test('focus context (scene, rule) is bounded by screen size and a triangle budget, largest first', async () => {
+  const { selectFocusTiles } = await import('../src/viewport-policy.mjs');
+  const box = (name, x, size, triangles) => ({ ...tile(name, 'rest', 0, 9, triangles), bounds_mm: { min: [x, 0, 0], max: [x + size, size, size] } });
+  const m = { chunks: [box('wall', 0, 4, 600), box('cabin', 0, 3, 500), box('bolt', 0, 0.2, 10), box('far', 50, 4, 10)], streaming: { max_focus_triangles: 1000 } };
+  const focus = { min: [-1, -1, -1], max: [5, 5, 5] };
+  const p = selectFocusTiles(m, focus, { eye: [2, 2, 12], screenScale: 200 });
+  assert.deepEqual(p.tiles.map((c) => c.name), ['wall'], 'the largest tile first; the next one would exceed the budget');
+  assert.equal(p.smallDeferred, 1, 'the bolt is too small on screen');
+  assert.equal(p.budgetDeferred, 1, 'the cabin waits for budget');
+  assert.equal(selectFocusTiles(m, focus, { eye: [2, 2, 12], screenScale: 200, cutHeight: -1 }).tiles.length, 0, 'nothing above the cut');
+});

@@ -1,5 +1,7 @@
 import hashlib
 import json
+import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -117,6 +119,53 @@ def import_catalog_sources(
         imported[source_key] = (content_sha256, len(records))
     session.flush()
     return imported
+
+
+CACHE_DIR = Path(os.environ.get("SHIPCHECK_CATALOG_CACHE_DIR") or Path(__file__).resolve().parents[2] / ".cache" / "shipcheck-catalog")
+_json_cache: dict[str, tuple[str, bytes]] = {}
+_cache_lock = threading.Lock()
+
+
+def _active_version(session: Session, source_key: str) -> ShipCheckDatasetVersion:
+    if source_key not in CATALOG_SOURCES:
+        raise KeyError(source_key)
+    active = session.get(ShipCheckActiveDataset, source_key)
+    if active is None:
+        raise LookupError(f"ShipCheck catalog {source_key!r} has not been imported.")
+    version = session.get(ShipCheckDatasetVersion, active.dataset_version_id)
+    if version is None:
+        raise RuntimeError(f"Active ShipCheck catalog {source_key!r} points to a missing version.")
+    if version.source_key != source_key:
+        raise RuntimeError(f"Active ShipCheck catalog {source_key!r} points to another source's version.")
+    return version
+
+
+def read_active_catalog_json(session: Session, source_key: str, cache_dir: Path | None = None) -> bytes:
+    """The active catalog as JSON bytes. Dataset versions are immutable and content-addressed, so the serialized
+    document is cached in memory and on disk per content hash: only the first read of a version goes to the
+    database (the parts list takes minutes over a remote connection). A newly activated version is read fresh."""
+    version = _active_version(session, source_key)
+    digest = version.content_sha256
+    with _cache_lock:
+        hit = _json_cache.get(source_key)
+    if hit and hit[0] == digest:
+        return hit[1]
+    directory = cache_dir or CACHE_DIR
+    path = directory / f"{source_key}-{digest}.json"
+    try:
+        data = path.read_bytes()
+    except OSError:
+        data = json.dumps(read_active_catalog(session, source_key), ensure_ascii=False, separators=(",", ":")).encode()
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            temp = path.with_suffix(f".{os.getpid()}.tmp")
+            temp.write_bytes(data)
+            os.replace(temp, path)
+        except OSError:
+            pass  # the disk cache is an optimisation only
+    with _cache_lock:
+        _json_cache[source_key] = (digest, data)
+    return data
 
 
 def read_active_catalog(session: Session, source_key: str) -> dict[str, Any]:

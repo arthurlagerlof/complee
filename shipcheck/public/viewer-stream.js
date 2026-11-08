@@ -5,6 +5,7 @@ import { createSceneOverlay } from "./viewer-scene.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import {
+  selectFocusTiles,
   selectViewportTiles,
   viewportScheduler,
 } from "./src/viewport-policy.mjs";
@@ -800,7 +801,8 @@ export async function createLocalViewer(
   function refresh() {
     if (!active || gpuLost) return;
     failed.clear();
-    const plan = selectViewportTiles(manifest, viewOptions());
+    const options = viewOptions();
+    const plan = selectViewportTiles(manifest, options);
     stats.deferred = plan.deferred;
     stats.overviewDeferred = plan.overviewDeferred || 0;
     stats.smallDeferred = plan.smallDeferred || 0;
@@ -809,13 +811,11 @@ export async function createLocalViewer(
     desired.clear();
     for (const c of plan.tiles) desired.add(c.name);
     if (focusBox) {
-      const cut = clipping[0]?.constant ?? Infinity;
-      for (const c of manifest.chunks) {
-        const b = c.bounds_mm;
-        if (b.min[1] > cut || (!fullModel && c.group === "rest")) continue;
-        if (b.max[0] < focusBox.min.x || b.min[0] > focusBox.max.x || b.max[1] < focusBox.min.y || b.min[1] > focusBox.max.y || b.max[2] < focusBox.min.z || b.min[2] > focusBox.max.z) continue;
-        desired.add(c.name);
-      }
+      // Context around a scene or rule focus: bounded by screen size and a triangle budget (viewport-policy.mjs).
+      const focus = selectFocusTiles(manifest, { min: focusBox.min.toArray(), max: focusBox.max.toArray() }, options);
+      for (const c of focus.tiles) desired.add(c.name);
+      stats.smallDeferred += focus.smallDeferred;
+      stats.deferred += focus.budgetDeferred;
     }
     for (const [name, r] of requests)
       if (!desired.has(name)) r.controller.abort();

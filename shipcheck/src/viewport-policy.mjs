@@ -186,3 +186,26 @@ export function viewportScheduler(
     },
   };
 }
+// Context around a scene or rule focus (the cut-open ship around a corridor or part): tiles in the focus box below
+// the cut, largest on screen first, small ones only when large enough on screen (as in selectViewportTiles), and at
+// most max_focus_triangles in total, so a close-up never pulls in every tile of the surrounding hull.
+export function selectFocusTiles(manifest, box, options = {}) {
+  const { cutHeight = Infinity, fullModel = true, eye = null, screenScale = null, resident = null } = options;
+  const cfg = { min_detail_screen_px: 56, detail_keep_ratio: 0.6, max_focus_triangles: 8000000, ...manifest.streaming, ...options.budget };
+  const inside = (b) => b.min[1] <= cutHeight && [0, 1, 2].every((k) => b.max[k] >= box.min[k] && b.min[k] <= box.max[k]);
+  const candidates = manifest.chunks.filter((c) => (fullModel || c.group !== 'rest') && inside(c.bounds_mm));
+  const size = new Map(candidates.map((c) => [c, projectedPixels(c.bounds_mm, eye, screenScale)]));
+  const bigEnough = (c) => size.get(c) >= cfg.min_detail_screen_px * (resident?.has(c.name) ? cfg.detail_keep_ratio : 1);
+  const wanted = candidates
+    .filter(bigEnough)
+    .sort((a, b) => (Number.isFinite(size.get(a)) && Number.isFinite(size.get(b)) ? size.get(b) - size.get(a) : 0) || a.name.localeCompare(b.name));
+  const tiles = [];
+  let triangles = 0;
+  for (const c of wanted) {
+    if (triangles + c.triangles > cfg.max_focus_triangles) continue;
+    tiles.push(c);
+    triangles += c.triangles;
+  }
+  const smallDeferred = candidates.length - wanted.length;
+  return { tiles, triangles, smallDeferred, budgetDeferred: wanted.length - tiles.length };
+}

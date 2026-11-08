@@ -117,7 +117,7 @@ test('reviewDocumentEvidence reads the demo DOCX and keeps the product name serv
   assert.ok(result.extracted_characters > 1000);
   assert.deepEqual(result.findings.map((f) => f.topic), ['Fixed fire suppression', 'Oil-fuel piping', 'Fire alarms and controls']);
   assert.equal(queries.length, 3);
-  assert.match(result.message, /ShipCheck has not decided/);
+  assert.match(result.message, /Complee has not decided/);
   const complee = await reviewDocumentEvidence({ filename: 'brief.docx', dataBase64, provider }, { productName: 'Complee' });
   assert.match(complee.message, /Complee has not decided/);
 });
