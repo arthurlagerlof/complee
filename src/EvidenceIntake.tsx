@@ -312,6 +312,13 @@ export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () 
     <header className="evidence-header"><a className="brand" href="#top" onClick={returnToMain} aria-label="Complee home"><span className="brand-mark"><Ship size={17} strokeWidth={1.8} /></span>Complee</a><a className="evidence-return-link" href="#top" onClick={returnToMain}><ArrowLeft size={14} />Back to main page</a><nav className="evidence-steps" aria-label="Review workflow"><b><span>01</span>Upload</b><i /><span><span>02</span>Review design</span><i /><span><span>03</span>Manage findings</span></nav><span className="evidence-local"><i />LOCAL WORKSPACE</span></header>
     <main className="evidence-workspace" id="top">
       <div className="evidence-title"><div><span className="evidence-kicker">VESSEL DESIGN REVIEW / STEP 01</span><h1>Add design documentation</h1><p>Upload the design documents, drawings, and models to prepare the OSU RCRV review.</p></div><div className="evidence-vessel-tag"><Ship size={15} /><span><small>REVIEW VESSEL</small>OSU RCRV · Demo model</span><Check size={15} /></div></div>
+      <div className="evidence-fast-track">
+        <div>
+          <span className="evidence-kicker">SHOWCASE</span>
+          <p><strong>R/V Taani is ready.</strong> Open the prepared design review, or add files below.</p>
+        </div>
+        <button type="button" onClick={continueToReview}>Open the R/V Taani review <ArrowRight size={15} /></button>
+      </div>
       <div className="evidence-layout">
         <section className="evidence-main-col">
           <label className={`evidence-dropzone${dragging ? ' is-dragging' : ''}`} htmlFor="evidence-file-input" onDragOver={(event) => { event.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); addFiles(event.dataTransfer.files) }}>

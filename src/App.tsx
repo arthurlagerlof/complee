@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState, type MouseEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { gsap } from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import {
   ArrowDown,
   ArrowRight,
-  ArrowUpRight,
   Check,
   ChevronRight,
   CircleAlert,
@@ -15,7 +14,7 @@ import {
   Ship,
   X,
 } from 'lucide-react'
-import { inspectionPoints } from './inspectionData'
+import { inspectionPoints, reviewExamples } from './inspectionData'
 import VesselViewer from './VesselViewer'
 import EvidenceIntake from './EvidenceIntake'
 import AiWorkspace from './AiWorkspace'
@@ -37,7 +36,11 @@ function ProductName() {
 function App() {
   const root = useRef<HTMLDivElement>(null)
   const [selectedId, setSelectedId] = useState(inspectionPoints[0].id)
+  const [reviewId, setReviewId] = useState(reviewExamples[0].id)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [loginOpen, setLoginOpen] = useState(false)
+  const [continuePromptOpen, setContinuePromptOpen] = useState(false)
+  const loginOpenRef = useRef(false)
   const [showConcept, setShowConcept] = useState(() => window.location.hash !== '#evidence')
   const [showAi, setShowAi] = useState(() => window.location.hash === '#ai-settings')
   const [showFindings, setShowFindings] = useState(() => window.location.hash === '#findings')
@@ -54,6 +57,7 @@ function App() {
   }, [])
   const [evidenceCount, setEvidenceCount] = useState(0)
   const selectedPoint = inspectionPoints.find((point) => point.id === selectedId) ?? inspectionPoints[0]
+  const selectedReview = reviewExamples.find((item) => item.id === reviewId) ?? reviewExamples[0]
 
   useEffect(() => {
     if (!showConcept || showAi) return
@@ -94,14 +98,6 @@ function App() {
   }, [showConcept, showAi])
 
   const closeMenu = () => setMenuOpen(false)
-  const openEvidence = (event: MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault()
-    window.history.pushState(null, '', '#evidence')
-    setMenuOpen(false)
-    setShowAi(false)
-    setShowConcept(false)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
   const continueToInspection = () => {
     window.location.assign(SHIPCHECK_REVIEW_URL)
   }
@@ -111,14 +107,63 @@ function App() {
     setShowConcept(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
-  const openAiSettings = (event: MouseEvent<HTMLAnchorElement>) => {
-    event.preventDefault()
-    window.history.pushState(null, '', '#ai-settings')
+  const startLogin = () => {
     setMenuOpen(false)
-    setShowConcept(true)
-    setShowAi(true)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    setContinuePromptOpen(false)
+    setLoginOpen(true)
   }
+  loginOpenRef.current = loginOpen
+
+  useEffect(() => {
+    if (!showConcept || showAi || showFindings) return
+    if (sessionStorage.getItem('compleeLoginHint')) return
+    const timer = window.setTimeout(() => {
+      if (loginOpenRef.current) return
+      setContinuePromptOpen(true)
+      sessionStorage.setItem('compleeLoginHint', 'shown')
+    }, 10000)
+    return () => window.clearTimeout(timer)
+  }, [showConcept, showAi, showFindings])
+
+  useEffect(() => {
+    if (!continuePromptOpen) return
+    const mobile = window.matchMedia('(max-width: 800px)')
+    let timer = 0
+    const arm = () => {
+      window.clearTimeout(timer)
+      if (!mobile.matches) return
+      timer = window.setTimeout(() => setContinuePromptOpen(false), 6000)
+    }
+    arm()
+    mobile.addEventListener('change', arm)
+    return () => {
+      window.clearTimeout(timer)
+      mobile.removeEventListener('change', arm)
+    }
+  }, [continuePromptOpen])
+
+  useEffect(() => {
+    if (!loginOpen) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setLoginOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    document.querySelector<HTMLElement>('.login-card')?.focus()
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const timer = window.setTimeout(() => {
+      sessionStorage.setItem('compleeLoginHint', 'login')
+      window.history.pushState(null, '', '#evidence')
+      setLoginOpen(false)
+      setShowAi(false)
+      setShowFindings(false)
+      setShowConcept(false)
+      window.scrollTo({ top: 0 })
+    }, reducedMotion ? 900 : 3800)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.clearTimeout(timer)
+    }
+  }, [loginOpen])
   if (showFindings) return <FindingsWorkspace onBack={() => { setShowFindings(false); backToMain() }} />
   if (showAi) return <AiWorkspace onBack={backToMain} />
   if (!showConcept) return <EvidenceIntake onContinue={continueToInspection} onBack={backToMain} />
@@ -131,32 +176,28 @@ function App() {
           <nav className="desktop-nav" aria-label="Main navigation">
             <a href="#challenge">The challenge</a>
             <a href="#inspection">Vessel inspection</a>
-            <a href="#evidence" onClick={openEvidence}>Upload</a>
-            <a href="#findings">Findings</a>
-            <a href="#ai-settings" onClick={openAiSettings}>AI Providers</a>
             <a href="#workflow">How it works</a>
-            <a href="#architecture">Deployment</a>
+            <a href="#architecture">The platform</a>
           </nav>
-          <a className="nav-cta" href="#evidence" onClick={openEvidence}>Upload <ArrowUpRight size={14} /></a>
-          <button
-            type="button"
-            className="menu-toggle"
-            onClick={() => setMenuOpen((open) => !open)}
-            aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
-            aria-expanded={menuOpen}
-            aria-controls="mobile-navigation"
-          >
+          <div className="header-actions">
+            <button type="button" className={continuePromptOpen ? 'nav-cta is-prompted' : 'nav-cta'} onClick={startLogin} aria-describedby={continuePromptOpen ? 'login-prompt' : undefined}>Login</button>
+            <button
+              type="button"
+              className="menu-toggle"
+              onClick={() => setMenuOpen((open) => !open)}
+              aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
+              aria-expanded={menuOpen}
+              aria-controls="mobile-navigation"
+            >
             {menuOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
+          </div>
         </div>
         <nav id="mobile-navigation" className={`mobile-nav${menuOpen ? ' menu-open' : ''}`} aria-label="Mobile navigation" aria-hidden={!menuOpen}>
           <a href="#challenge" onClick={closeMenu}>The challenge <ArrowRight size={16} /></a>
           <a href="#inspection" onClick={closeMenu}>Vessel inspection <ArrowRight size={16} /></a>
-          <a href="#evidence" onClick={openEvidence}>Upload <ArrowRight size={16} /></a>
-          <a href="#findings" onClick={closeMenu}>Findings <ArrowRight size={16} /></a>
-          <a href="#ai-settings" onClick={openAiSettings}>AI Providers <ArrowRight size={16} /></a>
           <a href="#workflow" onClick={closeMenu}>How it works <ArrowRight size={16} /></a>
-          <a href="#architecture" onClick={closeMenu}>Deployment <ArrowRight size={16} /></a>
+          <a href="#architecture" onClick={closeMenu}>The platform <ArrowRight size={16} /></a>
         </nav>
       </header>
 
@@ -166,15 +207,20 @@ function App() {
           <div className="hero-wrap">
             <div className="hero-copy">
               <span className="eyebrow"><span className="eyebrow-dot" /> EARLIER DESIGN. CLEARER DECISIONS.</span>
-              <h1>Design with compliance in mind. <span>From the very beginning.</span></h1>
+              <h1>Find compliance gaps before they become <span>expensive engineering problems.</span></h1>
               <p className="hero-description">
-                An AI-assisted engineering tool that connects ship design information with applicable regulations, helping engineers identify potential compliance gaps during the earliest stages of design.
+                Complee connects the design model, engineering documents and the regulation library. An engineer adds a drawing or a 3D model, opens it in the 3D view, and sees the parts that need attention highlighted.
               </p>
+              <ul className="hero-points">
+                <li>See possible gaps earlier in the design.</li>
+                <li>Read the requirement next to the evidence.</li>
+                <li>Review the highlighted parts on the model.</li>
+              </ul>
               <div className="hero-actions">
                 <a className="button-primary" href="#inspection">Explore the vessel <ArrowRight size={16} /></a>
                 <a className="text-link" href="#workflow">How it works <ArrowDown size={14} /></a>
               </div>
-              <div className="hero-note"><ShieldCheck size={16} /><span>Engineer-led review. <strong>Not automated certification.</strong></span></div>
+              <div className="hero-note"><ShieldCheck size={16} /><span>Complee prepares the review. <strong>The engineer checks it and decides.</strong></span></div>
             </div>
             <div className="hero-vessel">
               <div className="hero-vessel-label"><span>VESSEL MODEL</span><span>R/V TAANI · INTERACTIVE</span></div>
@@ -197,11 +243,12 @@ function App() {
               <article className="challenge-card" data-reveal><span className="card-index">02 / SEARCH</span><h3>Manual document searching</h3><p>Finding relevant passages across large rule documents takes time and context.</p></article>
               <article className="challenge-card" data-reveal><span className="card-index">03 / CONTEXT</span><h3>Rules meet design decisions</h3><p>It can be difficult to see how a requirement connects to a specific design element.</p></article>
             </div>
-            <div className="timing-comparison" data-reveal>
-              <div className="timing-stage early-stage"><span>EARLY DESIGN</span><strong>Easier to understand and correct</strong><span className="stage-line"><i /></span></div>
-              <ArrowRight className="timing-arrow" size={19} />
-              <div className="timing-stage late-stage"><span>CONSTRUCTION</span><strong>Changes can become significantly more expensive</strong><span className="stage-line"><i /></span></div>
+            <div className="stage-track" data-reveal>
+              {['Concept design', 'Detailed engineering', 'Procurement', 'Fabrication', 'Installation', 'Commissioning'].map((stage) => (
+                <span key={stage}><i />{stage}</span>
+              ))}
             </div>
+            <p className="stage-caption" data-reveal>Earlier in this sequence, a change is still a design edit. Later, the same issue can disturb materials, schedule and work already underway.</p>
           </div>
         </section>
 
@@ -254,56 +301,102 @@ function App() {
           <div className="section-container">
             <div className="section-heading workflow-heading" data-reveal>
               <span className="section-kicker section-kicker-light">03 — THE PROPOSED WORKFLOW</span>
-              <h2>From design information to actionable compliance insight.</h2>
-              <p className="section-intro">A traceable self-check to help engineers understand what may apply, what is missing and what to review next.</p>
+              <h2>From the design model to a review the engineer can check.</h2>
+              <p className="section-intro">Complee reads the design, finds the provisions that may apply, and prepares a review. The engineer then checks that review.</p>
             </div>
             <div className="process-steps">
-              <article className="process-step" data-reveal><span className="process-number">01</span><span className="process-icon"><FileText size={19} /></span><h3>Understand the design</h3><p>Engineers provide initial design information, documents and relevant vessel context.</p></article>
+              <article className="process-step" data-reveal><span className="process-number">01</span><span className="process-icon"><FileText size={19} /></span><h3>Understand the design</h3><p>The engineer adds documents, a 2D drawing and the 3D model. Complee keeps the parts, the values and the file they came from.</p></article>
               <span className="process-connector" aria-hidden="true" />
-              <article className="process-step" data-reveal><span className="process-number">02</span><span className="process-icon"><FileCheck2 size={19} /></span><h3>Identify applicable requirements</h3><p>Search provided rule documents for potentially relevant requirements.</p></article>
+              <article className="process-step" data-reveal><span className="process-number">02</span><span className="process-icon"><FileCheck2 size={19} /></span><h3>Find the provisions</h3><p>Search the regulation library for provisions that may apply to this design, and keep the source text.</p></article>
               <span className="process-connector" aria-hidden="true" />
-              <article className="process-step" data-reveal><span className="process-number">03</span><span className="process-icon"><CircleAlert size={19} /></span><h3>Perform a self-check</h3><p>Compare design information to find potential issues, missing evidence and uncertainties.</p></article>
+              <article className="process-step" data-reveal><span className="process-number">03</span><span className="process-icon"><CircleAlert size={19} /></span><h3>Prepare the review</h3><p>Compare the design with those provisions. Measurable values are calculated. The review shows what matches, what is missing and what to inspect on the model.</p></article>
               <span className="process-connector" aria-hidden="true" />
-              <article className="process-step" data-reveal><span className="process-number">04</span><span className="process-icon"><Check size={19} /></span><h3>Review and resolve</h3><p>Engineers inspect traceable findings, provide information and confirm assessments.</p></article>
+              <article className="process-step" data-reveal><span className="process-number">04</span><span className="process-icon"><Check size={19} /></span><h3>Engineer check</h3><p>The engineer opens the highlighted part, reads the evidence and confirms or corrects the review.</p></article>
             </div>
-            <div className="process-note"><span className="note-line" /> A decision-support concept. Engineers remain responsible for review and confirmation.</div>
+            <div className="process-note"><span className="note-line" /> Complee prepares the review. The engineer checks it again before it is treated as decided.</div>
           </div>
         </section>
 
-        <section className="finding-section section-pad">
+        <section className="integration-section section-pad" id="integration">
+          <div className="section-container">
+            <div className="section-heading" data-reveal>
+              <span className="section-kicker">YOUR DESIGN FILES</span>
+              <h2>The review sits beside the design work, not in place of it.</h2>
+              <p className="section-intro">Complee is not another CAD system. Engineers bring the documents, the drawing and the model into the review, open the ship in the 3D view, and select a highlighted part to read the requirement and the evidence.</p>
+            </div>
+            <div className="challenge-grid">
+              <article className="challenge-card" data-reveal><span className="card-index">01 / ADD</span><h3>Add the design files</h3><p>Documents, a 2D drawing and the 3D model go in with the revision. Each value keeps a link to the file it came from.</p></article>
+              <article className="challenge-card" data-reveal><span className="card-index">02 / VIEW</span><h3>Select a part on the model</h3><p>The 3D view highlights the parts tied to the review. The engineer selects one and reads the requirement next to the evidence.</p></article>
+              <article className="challenge-card" data-reveal><span className="card-index">03 / CONNECT</span><h3>Use it with the yard’s tools</h3><p>The design software stays in place. A yard system can send the same design information and open this review.</p></article>
+            </div>
+          </div>
+        </section>
+
+        <section className="finding-section section-pad" id="review">
           <div className="section-container finding-layout">
             <div className="section-heading" data-reveal>
-              <span className="section-kicker">04 — TRACEABLE FINDINGS</span>
-              <h2>Not just a warning. Understand why.</h2>
-              <p className="section-intro">A useful finding connects a design observation to its source, supporting evidence and a clear next step—without hiding uncertainty.</p>
+              <span className="section-kicker">THE REVIEW</span>
+              <h2>From the list to the requirement.</h2>
+              <p className="section-intro">Each row is one check, with the same fields as the 3D review. Select a row to read the measured value, the required value, where the number came from, and the provision text.</p>
             </div>
-            <article className="finding-card" data-reveal>
-              <div className="finding-card-head"><span className="finding-label"><CircleAlert size={14} /> ILLUSTRATIVE FINDING</span><span className="review-state">ENGINEER REVIEW · PENDING</span></div>
-              <h3>Ventilation arrangement</h3>
-              <div className="finding-reference"><span>REQUIREMENT ID</span><strong>DEMO-VA-02</strong><span>SOURCE REFERENCE</span><strong>Example rule source · paragraph to verify</strong></div>
-              <div className="finding-observation"><span>DESIGN OBSERVATION</span><p>The available design information does not fully describe the ventilation arrangement.</p></div>
-              <div className="finding-reason"><span>WHY THIS NEEDS REVIEW</span><p>Applicable requirements depend on the relevant spaces and systems. The current example does not include enough design detail to assess them.</p></div>
-              <div className="finding-bottom">
-                <div><span>SUPPORTING EVIDENCE</span><p>Ventilation drawings or design specifications required.</p></div>
-                <div><span>NEXT ACTION</span><p>Provide the ventilation arrangement for assessment.</p></div>
+            <div className="review-board" data-reveal>
+              <div className="review-list" role="listbox" aria-label="Illustrative checks">
+                {reviewExamples.map((item) => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    className={item.id === selectedReview.id ? 'review-row selected' : 'review-row'}
+                    onClick={() => setReviewId(item.id)}
+                    aria-pressed={item.id === selectedReview.id}
+                  >
+                    <span className={`status-dot ${item.status}`} />
+                    <span>
+                      <strong>{item.part}</strong>
+                      <small>{item.ruleId}</small>
+                      <em>{item.statusLabel}</em>
+                    </span>
+                  </button>
+                ))}
               </div>
-              <div className="finding-source-note"><FileText size={14} /> Reference shown as a placeholder; verify the governing source and paragraph with an engineer.</div>
-            </article>
+              <article className="finding-card ship-result" aria-live="polite">
+                <div className="finding-card-head">
+                  <span className="finding-label">{selectedReview.ruleId}</span>
+                  <span className={`ship-badge ${selectedReview.status}`}>{selectedReview.statusLabel}</span>
+                </div>
+                <p className="ship-source">{selectedReview.source} — {selectedReview.clause}</p>
+                <h3>{selectedReview.part}</h3>
+                <table className="ship-kv">
+                  <tbody>
+                    <tr><th>Measured</th><td>{selectedReview.measured}</td></tr>
+                    <tr><th>Required</th><td>{selectedReview.required}</td></tr>
+                  </tbody>
+                </table>
+                <p className="ship-expl">{selectedReview.explanation}</p>
+                <p className="ship-inputs"><span>Inputs</span> {selectedReview.inputs}</p>
+                <blockquote>“{selectedReview.provision}”</blockquote>
+                <div className="ship-tags">
+                  {selectedReview.tags.map((tag) => <span key={tag}>{tag}</span>)}
+                </div>
+              </article>
+            </div>
           </div>
-          <div className="section-container"><p className="demo-disclaimer finding-disclaimer"><ShieldCheck size={15} /> Illustrative example only—not a verified rule interpretation or finding about R/V Taani.</p></div>
+          <div className="section-container"><p className="demo-disclaimer finding-disclaimer"><ShieldCheck size={15} /> Illustrative checks, using the review’s own fields. Rule values are not yet verified against the official text. Selecting a row does not move the model above.</p></div>
         </section>
 
         <section className="architecture-section section-pad" id="architecture">
           <div className="section-container architecture-layout">
             <div className="section-heading" data-reveal>
-              <span className="section-kicker section-kicker-light">05 — PROPOSED ARCHITECTURE</span>
-              <h2>Your design data stays under your control.</h2>
-              <p className="section-intro">The concept is designed around local-first deployment for engineering environments—not a claim of an already certified or fully deployed enterprise solution.</p>
+              <span className="section-kicker section-kicker-light">05 — THE PLATFORM</span>
+              <h2>Separate parts, one Complee review.</h2>
+              <p className="section-intro">These parts of Complee can change without rebuilding the rest. A new file reader does not require a new regulation search. A different language model does not require a new check. A local model can be used, so the design text need not be sent to an external service.</p>
             </div>
             <div className="architecture-points">
-              <article data-reveal><span>01</span><h3>Local infrastructure</h3><p>Designed to run within an organisation's own environment.</p></article>
-              <article data-reveal><span>02</span><h3>Controlled design data</h3><p>Design documents and models need not be sent to external AI services.</p></article>
-              <article data-reveal><span>03</span><h3>Adaptable AI choices</h3><p>Local AI models can be used, with architecture adapted to organisational IT needs.</p></article>
+              <article data-reveal><span>01</span><h3>Design records</h3><p>Projects, revisions, parts and the file each value came from.</p></article>
+              <article data-reveal><span>02</span><h3>File reading</h3><p>Documents, DXF drawings and glTF models are read into those records. A new file type is another reader.</p></article>
+              <article data-reveal><span>03</span><h3>Regulation library</h3><p>Search for provisions that may apply, and keep the source text with the review.</p></article>
+              <article data-reveal><span>04</span><h3>Engineering checks</h3><p>Distance, clearance and numeric comparisons run as their own checks, not inside a prompt.</p></article>
+              <article data-reveal><span>05</span><h3>Language models</h3><p>The model that interprets a provision can be swapped. The readers and the checks stay.</p></article>
+              <article data-reveal><span>06</span><h3>3D view</h3><p>The ship model in Complee, with the parts under review highlighted for the engineer.</p></article>
             </div>
           </div>
         </section>
@@ -314,10 +407,38 @@ function App() {
             <span className="section-kicker section-kicker-light">DESIGN AWARENESS, EARLIER</span>
             <h2>Better-informed design.<br /><span>Fewer unanswered questions.</span></h2>
             <p>Bring regulatory awareness into the earliest stages of ship design, where potential problems are easier to understand and resolve.</p>
-            <a href="#inspection" className="button-primary">Explore the vessel inspection <ArrowRight size={16} /></a>
           </div>
         </section>
       </main>
+
+      {loginOpen && (
+        <div className="login-overlay" onClick={() => setLoginOpen(false)}>
+          <div
+            className="login-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="login-title"
+            tabIndex={-1}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <span className="login-kicker">SIGNING IN</span>
+            <h2 id="login-title">Demo session</h2>
+            <p>Checking a sample engineer profile.</p>
+            <div className="login-progress" aria-hidden="true"><i /></div>
+            <div className="login-fields">
+              <div><span>ENGINEER</span><strong>Eric Jacobsen</strong></div>
+              <div><span>ROLE</span><strong>Development Engineer</strong></div>
+              <div><span>PROJECT</span><strong>Concept study</strong></div>
+            </div>
+          </div>
+        </div>
+      )}
+      {continuePromptOpen && !loginOpen && (
+        <aside className="continue-prompt" id="login-prompt" role="status">
+          <p><strong>Hey, hackathon participant.</strong> To view our solution, press Login.</p>
+          <button type="button" className="continue-dismiss" onClick={() => setContinuePromptOpen(false)} aria-label="Dismiss">×</button>
+        </aside>
+      )}
 
       <footer className="site-footer">
         <div className="footer-main">

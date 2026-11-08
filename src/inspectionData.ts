@@ -12,6 +12,71 @@ export type InspectionPoint = {
   markerPosition: { left: string; top: string }
 }
 
+export type ReviewExample = {
+  id: string
+  part: string
+  status: 'non_compliant' | 'not_enough_info' | 'compliant'
+  statusLabel: string
+  ruleId: string
+  source: string
+  clause: string
+  measured: string
+  required: string
+  explanation: string
+  inputs: string
+  provision: string
+  tags: string[]
+}
+
+// Same fields as a 3D-review result. Values are the documented example checks, shown here as an illustration.
+export const reviewExamples: ReviewExample[] = [
+  {
+    id: 'deadend',
+    part: 'Corridor 01-C2',
+    status: 'non_compliant',
+    statusLabel: 'Non-compliant',
+    ruleId: 'SOLAS-II-2-13-DEADEND-CARGO',
+    source: 'SOLAS II-2/13',
+    clause: 'cargo-ship dead-end limit',
+    measured: '7.5 m',
+    required: '≤ 7 m',
+    explanation: 'The dead end is 7.5 m, longer than 7 m. The 13 m passenger-ship limit is not applied to this example.',
+    inputs: 'dead-end length = 7.5 m, from the layout example',
+    provision: 'Dead-end corridors are limited. In this example the cargo-ship limit of 7 m is the value used.',
+    tags: ['Rule value not yet verified against official text', 'Reviewed by Meyer mentors (Q&A, 7 Nov)', 'Paraphrased text', 'Basis: interpretation'],
+  },
+  {
+    id: 'pipe',
+    part: 'Oil fuel pipe',
+    status: 'not_enough_info',
+    statusLabel: 'Not enough info',
+    ruleId: 'SOLAS-II-2-4.2.2.5.1-FO-PIPE',
+    source: 'SOLAS II-2/4.2.2.5.1',
+    clause: 'oil fuel pipe material',
+    measured: '5083 aluminium',
+    required: 'steel or other approved material',
+    explanation: 'The material is not steel, and the model does not record an approval for another material. The check stays at not enough info.',
+    inputs: 'pipe material = 5083 aluminium, from the model material field',
+    provision: 'Oil fuel pipes, valves and fittings are to be of steel or other approved material.',
+    tags: ['Rule value not yet verified against official text', 'Reviewed by Meyer mentors (Q&A, 7 Nov)', 'Paraphrased text'],
+  },
+  {
+    id: 'corridor-ok',
+    part: 'Corridor 02-C1',
+    status: 'compliant',
+    statusLabel: 'Compliant',
+    ruleId: 'SOLAS-II-2-13-DEADEND-CARGO',
+    source: 'SOLAS II-2/13',
+    clause: 'cargo-ship dead-end limit',
+    measured: '4 m',
+    required: '≤ 7 m',
+    explanation: 'The dead end is 4 m, within the 7 m limit used for this example.',
+    inputs: 'dead-end length = 4 m, from the layout example',
+    provision: 'Dead-end corridors are limited. In this example the cargo-ship limit of 7 m is the value used.',
+    tags: ['Rule value not yet verified against official text', 'Reviewed by Meyer mentors (Q&A, 7 Nov)', 'Paraphrased text', 'Basis: interpretation'],
+  },
+]
+
 export const inspectionPoints: InspectionPoint[] = [
   {
     id: 'fuel',
