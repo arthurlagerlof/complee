@@ -57,11 +57,12 @@ export async function createLocalViewer(
   labelEl.hidden = true;
   container.append(labelEl);
   const renderer = new THREE.WebGLRenderer({
-    antialias: true,
+    antialias: false,
     preserveDrawingBuffer: true,
     powerPreference: "high-performance",
   });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  // Keep GPU fill/fragment work bounded on high-DPI displays; screenshots still use the preserved drawing buffer.
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.25));
   renderer.setClearColor(0xeef1f5);
   renderer.localClippingEnabled = true;
   host.append(renderer.domElement);
