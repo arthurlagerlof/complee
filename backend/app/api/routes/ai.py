@@ -9,6 +9,8 @@ from urllib.parse import quote, unquote
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import Field
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.ai.providers import AIProviderError
@@ -44,6 +46,8 @@ from app.services import ai_builtins
 from app.services.common import ConflictError, EntityNotFound, InvalidReference
 from app.services.design.service import ensure_revision_editable
 from app.services.extractions import SourceProcessingError, parse_source
+from app.services.assessment.document_review import review_document
+from app.services.retrieval.service import EmbeddingProviderError, VectorSearchUnavailable
 
 
 router = APIRouter(prefix="/ai", tags=["ai"])
@@ -51,11 +55,52 @@ logger = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 MAX_UPLOAD_TOTAL_BYTES = 100 * 1024 * 1024
 MAX_UPLOAD_COUNT = 20
+MAX_DOCUMENT_REVIEW_BYTES = 10 * 1024 * 1024
 
 
 class CandidateImportRequest(BaseModel):
     candidate_indexes: list[int] = Field(default_factory=list)
     fact_indexes: list[int] = Field(default_factory=list)
+
+
+@router.post("/document-reviews")
+def review_uploaded_documents(
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+):
+    """Review DOCX/TXT evidence against hybrid-retrieved TigerData regulations with Gemini."""
+    if not files or len(files) > 5:
+        raise HTTPException(status_code=400, detail="Upload between 1 and 5 DOCX or TXT files.")
+    results = []
+    total_bytes = 0
+    for uploaded in files:
+        filename = PurePosixPath((uploaded.filename or "upload").replace("\\", "/")).name
+        if PurePosixPath(filename).suffix.lower() not in {".docx", ".txt"}:
+            raise HTTPException(status_code=415, detail=f"{filename}: only DOCX and TXT document review is supported.")
+        data = uploaded.file.read(MAX_DOCUMENT_REVIEW_BYTES + 1)
+        total_bytes += len(data)
+        if len(data) > MAX_DOCUMENT_REVIEW_BYTES:
+            raise HTTPException(status_code=413, detail=f"{filename}: maximum size is 10 MB.")
+        if total_bytes > 30 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Combined document review upload limit is 30 MB.")
+        try:
+            parsed = parse_source(filename, data)
+        except SourceProcessingError as exc:
+            raise HTTPException(status_code=422, detail=f"{filename}: {exc}") from exc
+        if not parsed.content.strip():
+            raise HTTPException(status_code=422, detail=f"{filename}: no readable text was found.")
+        try:
+            db.execute(text("SET LOCAL statement_timeout = '30s'"))
+            results.append(review_document(db, filename, parsed.content, len(parsed.content)))
+        except (EmbeddingProviderError, VectorSearchUnavailable) as exc:
+            raise HTTPException(status_code=503, detail=f"TigerData regulation retrieval is unavailable: {exc}") from exc
+        except DBAPIError as exc:
+            logger.exception("TigerData/document review database request failed for %s", filename)
+            raise HTTPException(status_code=503, detail="TigerData did not complete the review query. Retry after checking the database connection.") from exc
+        except AIProviderError as exc:
+            logger.exception("Gemini document review failed for %s", filename)
+            raise HTTPException(status_code=502, detail=f"Gemini document review failed: {exc}") from exc
+    return {"results": results}
 
 
 @router.get("/built-in-providers")
