@@ -13,7 +13,64 @@ class GeometryCalculationTool:
             return self._distance(inputs, operation)
         if operation in {"area", "volume"}:
             return self._measure(inputs, operation)
-        raise ValueError("Geometry operation must be distance, bounding_box_distance, clearance, area, or volume.")
+        if operation in {"intersection", "containment"}:
+            return self._box_relation(inputs, operation)
+        raise ValueError(
+            "Geometry operation must be distance, bounding_box_distance, clearance, area, volume, intersection, or containment."
+        )
+
+    def _box_relation(self, inputs: dict[str, Any], operation: str) -> VerificationResult:
+        """Axis-aligned bounding-box overlap (intersection) or whether `second` lies inside `first` (containment).
+        Boxes are compared as given (world-space AABBs); exact mesh surfaces are not evaluated."""
+        first = inputs.get("first")
+        second = inputs.get("second")
+        if first is None or second is None:
+            return VerificationResult(
+                status="needs_information",
+                missing_information=["first", "second"],
+                explanation="Two bounding boxes are required; no geometry was inferred.",
+            )
+        first_min, first_max, first_unit = self._box(first, "first")
+        second_min, second_max, second_unit = self._box(second, "second")
+        if len(first_min) != len(second_min):
+            raise ValueError("Bounding boxes must use the same coordinate dimension.")
+        if first_unit != second_unit:
+            raise ValueError("Both bounding boxes must use the same coordinate unit.")
+        tolerance = float(inputs.get("tolerance", 0.0))
+        if not math.isfinite(tolerance) or tolerance < 0:
+            raise ValueError("tolerance must be a finite non-negative value.")
+        if operation == "intersection":
+            overlaps = [min(first_max[i], second_max[i]) - max(first_min[i], second_min[i]) for i in range(len(first_min))]
+            intersects = all(value > tolerance for value in overlaps)
+            touching = not intersects and all(value >= -tolerance for value in overlaps)
+            overlap_size = math.prod(max(value, 0.0) for value in overlaps)
+            return VerificationResult(
+                status="calculated",
+                result={
+                    "intersects": intersects,
+                    "touching": touching,
+                    "overlap_per_axis": overlaps,
+                    "overlap_size": overlap_size,
+                    "unit": f"{first_unit}^{len(first_min)}",
+                },
+                explanation=(
+                    "Axis-aligned bounding boxes overlap." if intersects else
+                    "Axis-aligned bounding boxes touch within the tolerance." if touching else
+                    "Axis-aligned bounding boxes are separate."
+                ) + " Bounding boxes only; the actual surfaces may not touch even when the boxes overlap.",
+            )
+        margins = [
+            min(second_min[i] - first_min[i], first_max[i] - second_max[i]) for i in range(len(first_min))
+        ]
+        contained = all(value >= -tolerance for value in margins)
+        return VerificationResult(
+            status="calculated",
+            result={"contained": contained, "margin_per_axis": margins, "unit": first_unit},
+            explanation=(
+                "The second bounding box lies inside the first." if contained else
+                "The second bounding box extends outside the first."
+            ) + " Axis-aligned bounding boxes only.",
+        )
 
     @staticmethod
     def _point(point: Any, label: str) -> tuple[list[float], str]:

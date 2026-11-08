@@ -6,12 +6,12 @@ from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from urllib.parse import quote, unquote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import Field
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.ai.providers import AIProviderError
 from app.ai.schemas import (
@@ -47,6 +47,7 @@ from app.services.common import ConflictError, EntityNotFound, InvalidReference
 from app.services.design.service import ensure_revision_editable
 from app.services.extractions import SourceProcessingError, parse_source
 from app.services.assessment.document_review import review_document
+from app.services.assessment import workflow
 from app.services.retrieval.service import EmbeddingProviderError, VectorSearchUnavailable
 
 
@@ -61,6 +62,10 @@ MAX_DOCUMENT_REVIEW_BYTES = 10 * 1024 * 1024
 class CandidateImportRequest(BaseModel):
     candidate_indexes: list[int] = Field(default_factory=list)
     fact_indexes: list[int] = Field(default_factory=list)
+    auto_assess: bool = Field(
+        default=True,
+        description="Queue a provisional assessment run of the revision after the import (see /assessment-runs).",
+    )
 
 
 @router.post("/document-reviews")
@@ -551,8 +556,29 @@ def review_fact(
 def import_extraction(
     extraction_id: uuid.UUID,
     payload: CandidateImportRequest,
+    background: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    return ai.import_approved_candidates(
+    result = ai.import_approved_candidates(
         db, extraction_id, payload.candidate_indexes, payload.fact_indexes
     )
+    if payload.auto_assess and (result["imported_count"] or result["imported_fact_count"]):
+        # Approved data is in the design structure: assess the revision automatically (provisional, so more
+        # sources can still be added). A failure to queue never undoes the import.
+        try:
+            revision_id = ai.get_extraction(db, extraction_id).revision_id
+            options = workflow.RunOptions(trigger="candidate_import")
+            run, created = workflow.queue_run(db, revision_id, options)
+            if created:
+                background.add_task(
+                    workflow.run_in_background,
+                    sessionmaker(bind=db.get_bind(), autoflush=False, expire_on_commit=False),
+                    run.id,
+                    options,
+                )
+            result["assessment_run"] = {**workflow.run_summary(run), "created": created}
+        except Exception:  # noqa: BLE001
+            logger.exception("Could not queue the assessment run after import %s", extraction_id)
+            db.rollback()
+            result["assessment_run"] = {"status": "not_queued"}
+    return result

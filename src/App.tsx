@@ -131,13 +131,13 @@ function App() {
           <nav className="desktop-nav" aria-label="Main navigation">
             <a href="#challenge">The challenge</a>
             <a href="#inspection">Vessel inspection</a>
-            <a href="#evidence" onClick={openEvidence}>Add evidence</a>
+            <a href="#evidence" onClick={openEvidence}>Upload</a>
             <a href="#findings">Findings</a>
             <a href="#ai-settings" onClick={openAiSettings}>AI Providers</a>
             <a href="#workflow">How it works</a>
             <a href="#architecture">Deployment</a>
           </nav>
-          <a className="nav-cta" href="#evidence" onClick={openEvidence}>Add evidence <ArrowUpRight size={14} /></a>
+          <a className="nav-cta" href="#evidence" onClick={openEvidence}>Upload <ArrowUpRight size={14} /></a>
           <button
             type="button"
             className="menu-toggle"
@@ -152,7 +152,7 @@ function App() {
         <nav id="mobile-navigation" className={`mobile-nav${menuOpen ? ' menu-open' : ''}`} aria-label="Mobile navigation" aria-hidden={!menuOpen}>
           <a href="#challenge" onClick={closeMenu}>The challenge <ArrowRight size={16} /></a>
           <a href="#inspection" onClick={closeMenu}>Vessel inspection <ArrowRight size={16} /></a>
-          <a href="#evidence" onClick={openEvidence}>Add evidence <ArrowRight size={16} /></a>
+          <a href="#evidence" onClick={openEvidence}>Upload <ArrowRight size={16} /></a>
           <a href="#findings" onClick={closeMenu}>Findings <ArrowRight size={16} /></a>
           <a href="#ai-settings" onClick={openAiSettings}>AI Providers <ArrowRight size={16} /></a>
           <a href="#workflow" onClick={closeMenu}>How it works <ArrowRight size={16} /></a>

@@ -443,6 +443,7 @@ class ImportResponse(BaseModel):
     fact_ids: list[uuid.UUID] = Field(default_factory=list)
     imported_fact_count: int = 0
     ambiguous_matches: list[dict[str, Any]] = Field(default_factory=list)
+    assessment_run: dict[str, Any] | None = None
 
 
 class SourceDocumentOut(BaseModel):
