@@ -44,9 +44,10 @@ class ToolRegistry:
 
 
 class GeometryInput(BaseModel):
-    operation: Literal["distance", "bounding_box_distance", "area", "volume", "clearance"]
+    operation: Literal["distance", "bounding_box_distance", "area", "volume", "clearance", "intersection", "containment"]
     first: dict[str, Any] | None = None
     second: dict[str, Any] | None = None
+    tolerance: float | None = None
 
 
 def build_registry() -> ToolRegistry:
