@@ -160,7 +160,7 @@ trusted administrator IPs, and keep port 8080 private. CORS limits browser acces
 For a temporary Cloudflare Quick Tunnel without a domain, leave `DOMAIN` empty, set `CADDY_BIND_ADDRESS=127.0.0.1` and `TRUST_CLOUDFLARE_TUNNEL=true`, then deploy. Caddy stays on loopback, and the tunnel provides the public HTTPS edge. After deployment, run on the VM:
 
 ```bash
-docker run -d --name shipcheck-cloudflared --restart unless-stopped --network host cloudflare/cloudflared:latest tunnel --no-autoupdate --url http://127.0.0.1:80
+docker run -d --name shipcheck-cloudflared --restart unless-stopped --network host cloudflare/cloudflared:latest tunnel --no-autoupdate --metrics 127.0.0.1:20241 --url http://127.0.0.1:80
 docker logs --tail 50 shipcheck-cloudflared
 ```
 
