@@ -1,33 +1,26 @@
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { readZipEntry } from './zip-entry.mjs';
 
-const execFileAsync = promisify(execFile);
 const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_XML_BYTES = 16 * 1024 * 1024;
 const XML_PARAGRAPH = /<w:p(?:\s[^>]*)?>([\s\S]*?)<\/w:p>/g;
 const XML_TEXT = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g;
 const decodeXml = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
 
-async function extractDocxText(buffer) {
+export async function extractDocxText(buffer) {
   if (buffer.length > MAX_BYTES) throw Object.assign(new Error('Document is larger than the 8 MB demo limit.'), { status: 413 });
-  const temp = path.join(os.tmpdir(), `shipcheck-review-${process.pid}-${Date.now()}.docx`);
+  let xml;
   try {
-    fs.writeFileSync(temp, buffer, { flag: 'wx' });
-    const { stdout } = await execFileAsync('unzip', ['-p', temp, 'word/document.xml'], { maxBuffer: 16 * 1024 * 1024, timeout: 10_000 });
-    const paragraphs = [...stdout.matchAll(XML_PARAGRAPH)].map((paragraph) =>
-      [...paragraph[1].matchAll(XML_TEXT)].map((part) => decodeXml(part[1])).join(' ').replace(/[\t\r ]+/g, ' ').trim(),
-    ).filter(Boolean);
-    const text = paragraphs.join('\n');
-    if (!text) throw Object.assign(new Error('No readable text was found in this DOCX.'), { status: 422 });
-    return text;
-  } catch (e) {
-    if (e.status) throw e;
+    xml = (await readZipEntry(buffer, 'word/document.xml', { maxBytes: MAX_XML_BYTES })).toString('utf8');
+  } catch {
     throw Object.assign(new Error('Could not read this DOCX. Try a text-based PDF or DOCX file.'), { status: 422 });
-  } finally {
-    try { fs.unlinkSync(temp); } catch {}
   }
+  const paragraphs = [...xml.matchAll(XML_PARAGRAPH)].map((paragraph) =>
+    [...paragraph[1].matchAll(XML_TEXT)].map((part) => decodeXml(part[1])).join(' ').replace(/[\t\r ]+/g, ' ').trim(),
+  ).filter(Boolean);
+  const text = paragraphs.join('\n');
+  if (!text) throw Object.assign(new Error('No readable text was found in this DOCX.'), { status: 422 });
+  return text;
 }
 
 const unique = (values) => [...new Set(values)];
