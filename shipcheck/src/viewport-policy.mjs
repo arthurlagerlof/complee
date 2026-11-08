@@ -12,6 +12,14 @@ export function intersectsPlanes(bounds, planes) {
 const distanceSq = (b, p) =>
   b.min.reduce((s, x, k) => s + Math.max(x - p[k], 0, p[k] - b.max[k]) ** 2, 0);
 const cost = (c) => c.resident_bytes ?? c.decoded_bytes ?? c.bytes;
+const diagonal = (b) => Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
+// On-screen size of a tile in CSS pixels: its diagonal at its nearest distance from the eye. screenScale is
+// viewportHeightPx / (2 · tan(fov / 2)). Infinity when the eye is unknown or inside the tile.
+export function projectedPixels(bounds, eye, screenScale) {
+  if (!eye || !screenScale) return Infinity;
+  const d = Math.sqrt(distanceSq(bounds, eye));
+  return d > 0 ? (diagonal(bounds) * screenScale) / d : Infinity;
+}
 export function selectViewportTiles(manifest, options) {
   const {
     planes = [],
@@ -22,11 +30,18 @@ export function selectViewportTiles(manifest, options) {
     ruleDbs = null,
     selectedDb = null,
     cutHeight = Infinity,
+    eye = null,
+    screenScale = null,
+    resident = null,
   } = options;
   const cfg = {
     max_resident_bytes: 512e6,
     max_detail_triangles: 1500000,
     detail_span_mm: 24000,
+    // Detail tiles smaller than this on screen wait until the view comes closer (the exterior overview still
+    // covers the ship). Tiles already loaded stay down to keep_ratio of it, so zooming does not make them flicker.
+    min_detail_screen_px: 56,
+    detail_keep_ratio: 0.6,
     ...manifest.streaming,
     ...options.budget,
   };
@@ -61,6 +76,7 @@ export function selectViewportTiles(manifest, options) {
       candidates: tiles.length + context.candidates,
       deferred: context.deferred,
       overviewDeferred: context.overviewDeferred || 0,
+      smallDeferred: context.smallDeferred || 0,
       detail: true,
       detailTriangles: tiles.reduce((s, c) => s + c.triangles, 0) + (context.detailTriangles || 0),
       componentTiles: tiles.length,
@@ -80,6 +96,15 @@ export function selectViewportTiles(manifest, options) {
     filterDbs !== null ||
     ruleDbs !== null ||
     Number.isFinite(cutHeight);
+  // Selected parts (rule or findings filter) always load; everything else must be large enough on screen.
+  const sizeRule = ruleDbs === null && filterDbs === null;
+  let smallDeferred = 0;
+  const bigEnough = (c) => {
+    const limit = cfg.min_detail_screen_px * (resident?.has(c.name) ? cfg.detail_keep_ratio : 1);
+    if (projectedPixels(c.bounds_mm, eye, screenScale) >= limit) return true;
+    smallDeferred++;
+    return false;
+  };
   const extras = detail
     ? manifest.chunks.filter((c) => {
         if (!visible(c) || (!exterior && c.group === "context")) return false;
@@ -92,14 +117,17 @@ export function selectViewportTiles(manifest, options) {
           return false;
         if (filterDbs !== null && !c.dbIds.some((d) => filterDbs.has(d)))
           return false;
-        return true; // Do not reject frustum-visible geometry with an unrelated target-distance cutoff.
+        // Frustum-visible geometry is not cut by distance to the target, only by its own size on screen.
+        return !sizeRule || bigEnough(c);
       })
     : [];
   const near = (a, b) =>
     distanceSq(a.bounds_mm, target) - distanceSq(b.bounds_mm, target) ||
     a.name.localeCompare(b.name);
   base.sort(near);
-  extras.sort(near);
+  // The detail budget goes to what is largest on screen first, so small parts are the last to load.
+  const size = new Map(extras.map((c) => [c, projectedPixels(c.bounds_mm, eye, screenScale)]));
+  extras.sort((a, b) => (Number.isFinite(size.get(a)) && Number.isFinite(size.get(b)) ? size.get(b) - size.get(a) : 0) || near(a, b));
   const tiles = [];
   let bytes = 0,
     detailTriangles = 0,
@@ -128,6 +156,7 @@ export function selectViewportTiles(manifest, options) {
     candidates: base.length + extras.length,
     deferred: base.length + extras.length - tiles.length,
     overviewDeferred,
+    smallDeferred,
     detail,
     detailTriangles,
     hasExterior: !!exterior,

@@ -466,7 +466,7 @@ export async function createLocalViewer(
       desired.size > 0 &&
       [...desired].every((n) => cache.has(n)) &&
       failed.size === 0;
-    badge.textContent = `Local 3D viewer · ${cache.size}/${desired.size} tiles · ${(stats.residentBytes / 1e6).toFixed(0)} MB geometry estimate${requests.size ? " · loading visible parts…" : selectedDb !== null ? " · component" : camera.position.distanceTo(controls.target) * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) > manifest.streaming.detail_span_mm ? " · overview; zoom in for detail" : ""}${stats.deferred ? " · " + stats.deferred + " detail tiles deferred; zoom in" : ""}${stats.overviewDeferred ? " · overview incomplete: memory budget" : ""}${geometryNotice ? " · " + geometryNotice : ""}${failed.size ? " · some tiles unavailable; move view to retry" : ""}`;
+    badge.textContent = `Local 3D viewer · ${cache.size}/${desired.size} tiles · ${(stats.residentBytes / 1e6).toFixed(0)} MB geometry estimate${requests.size ? " · loading visible parts…" : selectedDb !== null ? " · component" : camera.position.distanceTo(controls.target) * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) > manifest.streaming.detail_span_mm ? " · overview; zoom in for detail" : ""}${stats.deferred ? " · " + stats.deferred + " detail tiles deferred; zoom in" : ""}${stats.smallDeferred ? " · " + stats.smallDeferred + " small-part tiles appear closer up" : ""}${stats.overviewDeferred ? " · overview incomplete: memory budget" : ""}${geometryNotice ? " · " + geometryNotice : ""}${failed.size ? " · some tiles unavailable; move view to retry" : ""}`;
   }
   function colorState(db, isRest) {
     const id = dbToId.get(db);
@@ -785,6 +785,12 @@ export async function createLocalViewer(
         : null,
       selectedDb,
       cutHeight: clipping[0]?.constant ?? Infinity,
+      // Screen-size rule: small detail tiles load only when they appear large enough (or are selected).
+      eye: camera.position.toArray(),
+      screenScale:
+        (renderer.domElement.clientHeight || 1) /
+        (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))),
+      resident: new Set(cache.keys()),
     };
   }
   function schedule() {
@@ -797,6 +803,7 @@ export async function createLocalViewer(
     const plan = selectViewportTiles(manifest, viewOptions());
     stats.deferred = plan.deferred;
     stats.overviewDeferred = plan.overviewDeferred || 0;
+    stats.smallDeferred = plan.smallDeferred || 0;
     if (plan.componentUnavailable) geometryNotice = plan.componentUnavailable;
     stats.coverageComplete = plan.deferred === 0;
     desired.clear();

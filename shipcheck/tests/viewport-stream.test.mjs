@@ -40,3 +40,24 @@ test('exterior coverage manifest references original-quality overview assets', {
  assert.ok(m.overview.chunks.length>0);assert.ok(m.overview.chunks.some(c=>c.source_chunk.startsWith('rest-')),'exterior includes equipment/superstructure outside the hull-only context');
  for(const c of m.overview.chunks){assert.equal(c.group,'overview');assert.equal(fs.statSync(new URL('../model/stream/'+c.file,import.meta.url)).size,c.bytes);}
 });
+test('small detail tiles wait until they are large on screen, unless selected; loaded tiles have hysteresis', () => {
+  // Diagonal of every fixture tile is sqrt(3) ≈ 1.73 mm. screenScale 100 → at distance 2 mm ≈ 87 px, at 4 mm ≈ 43 px.
+  const near = { ...view, span: 10, eye: [0.5, 0.5, 3], screenScale: 100 };
+  const far = { ...view, span: 10, eye: [0.5, 0.5, 5], screenScale: 100 };
+  const names = (p) => p.tiles.map((c) => c.name);
+  assert.deepEqual(names(selectViewportTiles(manifest, near)), ['shell', 'door', 'equipment'], 'close up: details load');
+  const p = selectViewportTiles(manifest, far);
+  assert.deepEqual(names(p), ['shell'], 'far away: the context stays, small details wait');
+  assert.equal(p.smallDeferred, 2);
+  assert.deepEqual(names(selectViewportTiles(manifest, { ...far, resident: new Set(['door']) })), ['shell', 'door'], 'an already loaded tile stays above keep_ratio');
+  assert.deepEqual(names(selectViewportTiles(manifest, { ...far, filterDbs: new Set([2]) })), ['shell', 'door'], 'a filtered (selected) part loads at any size');
+  assert.deepEqual(names(selectViewportTiles(manifest, { ...far, selectedDb: 3 })), ['equipment', 'shell'], 'a selected component loads at any size');
+  assert.deepEqual(names(selectViewportTiles(manifest, { ...far, eye: null })), ['shell', 'door', 'equipment'], 'without camera data the rule is off');
+});
+test('the detail budget is spent on the tiles largest on screen first', () => {
+  const big = { ...tile('big', 'checked', 0, 5), bounds_mm: { min: [0, 0, 0], max: [4, 4, 4] } };
+  const small = { ...tile('small', 'checked', 0, 6), bounds_mm: { min: [0, 0, 0], max: [1, 1, 1] } };
+  const m = { chunks: [small, big], streaming: { ...manifest.streaming, max_resident_bytes: 200 } };
+  const p = selectViewportTiles(m, { ...view, span: 10, eye: [0.5, 0.5, 8], screenScale: 400, budget: { max_resident_bytes: 200 } });
+  assert.deepEqual(p.tiles.map((c) => c.name), ['big'], 'only one tile fits: the larger one on screen wins');
+});
