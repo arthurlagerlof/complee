@@ -1,13 +1,14 @@
 import uuid
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.database import get_db
 from app.schemas.assessment import AssessmentCreate, AssessmentOut, FindingCreate, FindingOut, FindingUpdate
 from app.schemas.assessment import AssessmentRunRequest
-from app.services.assessment import checks, service
+from app.services.assessment import checks, service, workflow
 from app.services.assessment.orchestrator import run_assessment
 from app.services.common import InvalidReference
 from app.services.retrieval.service import EmbeddingProviderError, VectorSearchUnavailable
@@ -31,6 +32,79 @@ def assess_design(payload: AssessmentRunRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+class WorkflowRunRequest(BaseModel):
+    retrieval_mode: Literal["hybrid", "vector", "full_text"] = "hybrid"
+    per_type_limit: int = Field(default=4, ge=1, le=10)
+    max_provisions: int = Field(default=12, ge=0, le=40)
+    ai_interpretation: Literal["auto", "off"] = "auto"
+    max_ai_provisions: int = Field(default=3, ge=0, le=10)
+    extra_requirement_ids: list[uuid.UUID] = Field(default_factory=list, max_length=10)
+    force: bool = False
+
+
+def _session_factory(db: Session):
+    """Background runs get their own session on the same database as the request (tests included)."""
+    return sessionmaker(bind=db.get_bind(), autoflush=False, expire_on_commit=False)
+
+
+def _options(payload: WorkflowRunRequest, trigger: str) -> workflow.RunOptions:
+    data = payload.model_dump()
+    data["extra_requirement_ids"] = [str(i) for i in payload.extra_requirement_ids]
+    return workflow.RunOptions(**data, trigger=trigger)
+
+
+@router.post("/design-revisions/{revision_id}/assessment-runs", status_code=status.HTTP_202_ACCEPTED)
+def start_assessment_run(
+    revision_id: uuid.UUID,
+    background: BackgroundTasks,
+    payload: WorkflowRunRequest | None = None,
+    wait: bool = Query(default=False, description="Run in the request instead of in the background."),
+    db: Session = Depends(get_db),
+):
+    """Assess a revision end to end: structured checks, retrieval, optional AI interpretation, scores. The run is
+    provisional (the revision stays editable) until it is finalized. An identical or active run is returned instead
+    of starting a duplicate unless force is set."""
+    options = _options(payload or WorkflowRunRequest(), "manual")
+    assessment, created = workflow.queue_run(db, revision_id, options)
+    if created and wait:
+        return workflow.execute_run(db, assessment.id, options)
+    if created:
+        background.add_task(workflow.run_in_background, _session_factory(db), assessment.id, options)
+    return {**workflow.run_summary(assessment), "created": created}
+
+
+@router.get("/design-revisions/{revision_id}/assessment-runs")
+def list_assessment_runs(revision_id: uuid.UUID, db: Session = Depends(get_db)):
+    return workflow.list_runs(db, revision_id)
+
+
+@router.get("/assessment-runs/{assessment_id}")
+def get_assessment_run(assessment_id: uuid.UUID, db: Session = Depends(get_db)):
+    return workflow.run_summary(workflow.get_run(db, assessment_id))
+
+
+@router.post("/assessment-runs/{assessment_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+def retry_assessment_run(
+    assessment_id: uuid.UUID,
+    background: BackgroundTasks,
+    payload: WorkflowRunRequest | None = None,
+    wait: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
+    assessment = workflow.prepare_retry(db, assessment_id)
+    options = _options(payload or WorkflowRunRequest(), "retry")
+    if wait:
+        return workflow.execute_run(db, assessment.id, options)
+    background.add_task(workflow.run_in_background, _session_factory(db), assessment.id, options)
+    return workflow.run_summary(assessment)
+
+
+@router.post("/assessment-runs/{assessment_id}/finalize")
+def finalize_assessment_run(assessment_id: uuid.UUID, db: Session = Depends(get_db)):
+    """Complete the run if the design data is unchanged since it ran; the revision then becomes immutable."""
+    return workflow.finalize_run(db, assessment_id)
 
 
 class EngineeringCheckRunRequest(BaseModel):

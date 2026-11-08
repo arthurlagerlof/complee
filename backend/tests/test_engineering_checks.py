@@ -178,7 +178,7 @@ def test_ai_review_calculates_only_verbatim_quoted_conditions_with_design_values
     assert response.status_code == 201, response.text
     finding = response.json()["findings"][0]
     assert "PROVISION (ADA 404.2.3" in seen["prompt"] and '"D-7"' in seen["prompt"] and "ENGINEERING REFERENCE CONTEXT" in seen["prompt"]
-    assert seen["versions"]["prompt_template_version"] == "requirement-design-review.v1"
+    assert seen["versions"]["prompt_template_version"] == "requirement-design-review.v2"
     assert finding["finding_type"] == "needs_engineering_review" and finding["status"] == "open" and finding["component_ids"] == [door]
     calc = finding["calculation_results"]["calculations"]
     assert len(calc) == 1 and calc[0]["result"]["measured"] == 762.0 and calc[0]["result"]["satisfied"] is False

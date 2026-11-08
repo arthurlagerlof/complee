@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 SCORING_VERSION = "shipcheck-scoring.v1"
-AMBIGUITY_METHOD = "rule-ambiguity.lexical-and-applicability.v1"
+AMBIGUITY_METHOD = "rule-ambiguity.lexical-and-applicability.v2"
 LIKELIHOOD_METHOD = "compliance-likelihood.heuristic.v1"
 
 # Longest phrases first so "other approved" is counted once, not again as "approved".
@@ -49,6 +49,10 @@ _MEASURABLE = re.compile(
     r"min(?:utes)?|s|seconds?|m2|m²|m3|m³|l|litres?|degrees?)\b|\b\d+\s*:\s*\d+\b",
     re.IGNORECASE,
 )
+
+
+AI_FACTOR_CAP = 20
+_AI_FACTORS = {"exception_reported_by_ai", "applicability_question", "alternative_interpretation", "undefined_term"}
 
 
 def _band(score: int) -> str:
@@ -150,6 +154,15 @@ def rule_ambiguity(ctx: ScoringContext) -> dict[str, Any]:
     for term in ctx.undefined_terms[:2]:
         add("undefined_term", 5, f"Term without a definition in the retrieved text: {term}")
 
+    # Uncertainty reported by the AI (questions, readings, undefined terms) is heuristic and tends to be verbose:
+    # together it adds at most AI_FACTOR_CAP points; the rest stay listed with 0 points.
+    budget = AI_FACTOR_CAP
+    for factor in factors:
+        if factor["factor"] in _AI_FACTORS:
+            counted = min(factor["points"], budget)
+            if counted < factor["points"]:
+                factor["detail"] += f" (not counted: AI-reported factors are capped at {AI_FACTOR_CAP} points)"
+            factor["points"], budget = counted, budget - counted
     score = max(0, min(100, sum(f["points"] for f in factors)))
     top = sorted((f for f in factors if f["factor"] != "baseline"), key=lambda f: -f["points"])[:3]
     explanation = (

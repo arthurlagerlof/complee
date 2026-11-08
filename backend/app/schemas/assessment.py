@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 
 class AssessmentCreate(BaseModel):
@@ -116,6 +116,38 @@ class FindingOut(BaseModel):
     review_notes: str | None
     reviewed_at: datetime | None
     created_at: datetime
+
+    # Convenience views of the stored record (nothing extra is stored): the assessment status, the provision reference
+    # and the two scores kept in calculation_results.scores. The scores never change the status or review state.
+    @computed_field
+    @property
+    def assessment_status(self) -> str:
+        return self.finding_type
+
+    @computed_field
+    @property
+    def review_status(self) -> str:
+        if self.finding_type == "verified_by_engineer":
+            return "verified_by_engineer"
+        return "reviewed" if self.reviewed_by else "pending"
+
+    @computed_field
+    @property
+    def provision_reference(self) -> dict[str, Any]:
+        snapshot = self.requirement_snapshot or {}
+        return {"provision_id": snapshot.get("id"), "source": snapshot.get("instrument_code"),
+                "chapter": snapshot.get("heading_path"), "clause": snapshot.get("clause_key"),
+                "edition": snapshot.get("edition")}
+
+    @computed_field
+    @property
+    def rule_ambiguity(self) -> dict[str, Any] | None:
+        return ((self.calculation_results or {}).get("scores") or {}).get("rule_ambiguity")
+
+    @computed_field
+    @property
+    def compliance_likelihood(self) -> dict[str, Any] | None:
+        return ((self.calculation_results or {}).get("scores") or {}).get("compliance_likelihood")
 
 
 class AssessmentOut(AssessmentCreate):

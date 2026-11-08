@@ -237,7 +237,10 @@ def _evaluate(check: StructuredRequirement, component: DesignComponent, facts: l
             "suggested_action": action}
 
 
-def run_engineering_checks(session: Session, revision_id: uuid.UUID, check_ids: list[str] | None = None) -> dict[str, Any]:
+def prepare_engineering_checks(
+    session: Session, revision_id: uuid.UUID, check_ids: list[str] | None = None
+) -> tuple[DesignRevision, list[tuple[StructuredRequirement, Any, DesignComponent, dict[str, Any]]], list[dict[str, Any]]]:
+    """Evaluate the structured checks for a revision without storing anything: (revision, outcomes, skipped)."""
     revision = session.get(DesignRevision, revision_id)
     if revision is None:
         raise EntityNotFound("Design revision not found.")
@@ -261,6 +264,11 @@ def run_engineering_checks(session: Session, revision_id: uuid.UUID, check_ids: 
             skipped.append({"check_id": check.id, "reason": f"no {check.component_type.replace('_', ' ')} in this revision"})
         for component in applicable:
             prepared.append((check, requirement, component, _evaluate(check, component, facts, vessel.vessel_type if vessel else None)))
+    return revision, prepared, skipped
+
+
+def run_engineering_checks(session: Session, revision_id: uuid.UUID, check_ids: list[str] | None = None) -> dict[str, Any]:
+    revision, prepared, skipped = prepare_engineering_checks(session, revision_id, check_ids)
 
     assessment = Assessment(revision_id=revision.id, status="in_progress")
     session.add(assessment)

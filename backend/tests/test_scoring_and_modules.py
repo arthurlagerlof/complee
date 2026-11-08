@@ -46,6 +46,16 @@ def test_no_measurable_condition_and_ai_alternatives_raise_ambiguity():
     assert with_ai["score"] >= 61
 
 
+def test_ai_reported_uncertainty_is_capped():
+    many = rule_ambiguity(ScoringContext(provision_text=CLEAR, edition="2010", structured_condition=True, applicability_confirmed=True,
+                                         applicability_questions=["q1", "q2", "q3"], alternative_interpretations=["a1", "a2"],
+                                         undefined_terms=["t1", "t2"]))
+    ai_points = sum(f["points"] for f in many["factors"] if f["factor"] in
+                    {"applicability_question", "alternative_interpretation", "undefined_term", "exception_reported_by_ai"})
+    assert ai_points == 20
+    assert any("capped" in f["detail"] for f in many["factors"])
+
+
 @pytest.mark.parametrize("ctx, needed_word", [
     (ScoringContext(provision_text=CLEAR, missing_information=["clear_width"], method="deterministic"), "clear_width"),
     (ScoringContext(provision_text=CLEAR, method="deterministic", conflicts=[{"as_written": ["900 mm"]}, {"as_written": ["760 mm"]}]),
