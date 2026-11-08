@@ -275,6 +275,10 @@ The AI gateway is provider-neutral at the service boundary. Ollama uses its HTTP
 
 The **Settings → AI Providers** page shows exactly two environment-managed built-ins: Ollama and Gemini. It reads their configured endpoint/model IDs and provides a connection test. It does not create, edit or delete providers, models, API keys or secrets. Configure them in `backend/.env` (or the deployment's secret/environment manager) and restart the backend to load changes. `GET /api/v1/ai/built-in-providers` masks credentials; `POST /api/v1/ai/built-in-providers/{ollama|gemini}/test` checks reachability/model availability. Test status is held in backend process memory.
 
+### Document review against TigerData
+
+The Evidence Intake **Review with Gemini + TigerData** action posts DOCX/TXT files to `POST /api/v1/ai/document-reviews`. The backend parses text, runs hybrid regulation retrieval against TigerData (including vector search), and compares the retrieved provisions with the source text using the built-in Gemini configured in the backend environment. This document-only review does not persist source files or create compliance findings. Its quotations are checked against the original document and TigerData provision text; the result is advisory and is not a compliance decision. The endpoint accepts at most five files, 10 MB each and 30 MB combined. Design-revision extraction remains a separate flow at `/api/v1/ai/extractions/upload`.
+
 Configure these backend environment values before using AI routes:
 
 - `AI_ENCRYPTION_KEY`: a Fernet key used to encrypt API keys at rest. Generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and keep it in the backend secret store. Losing/changing the key makes saved credentials unreadable; users must enter them again.

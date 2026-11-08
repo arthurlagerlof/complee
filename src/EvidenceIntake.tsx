@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, FileText, FolderUp, Search, Ship, Trash2, X } from 'lucide-react'
 import VesselViewer from './VesselViewer'
 
-type Review = { filename: string; extracted_characters: number; message: string; findings: { topic: string; evidence: string[]; candidates: { provision_reference: string; title: string; text: string; source?: { kind?: string; pages?: number[] } }[] }[] }
+type Review = { filename: string; extracted_characters: number; message: string; execution_id?: string | null; findings: { topic: string; relevance?: string; summary?: string; evidence: string[]; missing_information?: string[]; applicability_questions?: string[]; warnings?: string[]; candidates: { id?: string; provision_reference: string; title: string; text: string; source?: { kind?: string; pages?: number[]; edition?: string | null }; relevance?: string; review_summary?: string; provision_quotes?: string[] }[] }[] }
 type DesignRevision = { id: string; revision_name: string; revision_number: number; status: string }
 type Candidate = {
   component_type: string
@@ -68,7 +68,7 @@ export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () 
   const input = useRef<HTMLInputElement>(null)
   const [files, setFiles] = useState<File[]>([])
   const [dragging, setDragging] = useState(false)
-  const [provider, setProvider] = useState('Connecting to local source…')
+  const [provider, setProvider] = useState('Connecting to Gemini and TigerData…')
   const [query, setQuery] = useState('')
   const [sourceResults, setSourceResults] = useState<any[]>([])
   const [sourceMessage, setSourceMessage] = useState('Source matches are passages for review, not compliance decisions.')
@@ -85,9 +85,20 @@ export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () 
   const [relationshipEdits, setRelationshipEdits] = useState<Record<string, { source_component_name: string; target_component_name: string; relationship_type: string }>>({})
 
   useEffect(() => {
-    fetch('/api/evidence/provider').then((response) => response.json()).then((data) => {
-      setProvider(`${data.id} · ${data.metadata?.record_count ?? 0} passages · ${data.metadata?.retrieval || 'source retrieval'}`)
-    }).catch((error) => setProvider(`Local source unavailable · ${error.message}`))
+    Promise.all([
+      fetch(`${API_BASE}/health/database`).then(async (response) => {
+        const data = await response.json()
+        if (!response.ok || data.status !== 'ok') throw new Error('TigerData database is unavailable')
+        return data
+      }),
+      fetch(`${API_BASE}/api/v1/ai/built-in-providers`).then(async (response) => {
+        if (!response.ok) throw new Error('Could not check Gemini configuration')
+        return response.json()
+      }),
+    ]).then(([, providers]) => {
+      const gemini = providers.find((item: { id: string }) => item.id === 'gemini')
+      setProvider(`${gemini?.configured ? 'Gemini configured' : 'Gemini needs configuration'} · TigerData hybrid search`)
+    }).catch((error) => setProvider(`Review services unavailable · ${error.message}`))
   }, [])
 
   useEffect(() => {
@@ -251,31 +262,33 @@ export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () 
   }
   const search = async () => {
     if (!query.trim()) { setSourceMessage('Enter a topic or provision reference to search.'); return }
-    setSourceMessage('Searching the local reference source…')
+    setSourceMessage('Searching TigerData regulations…')
     try {
-      const response = await fetch(`/api/evidence/search?q=${encodeURIComponent(query)}&limit=6`)
+      const response = await fetch(`${API_BASE}/api/v1/regulations/search?query=${encodeURIComponent(query)}&mode=hybrid&limit=6`)
       const data = await response.json()
-      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`)
-      setSourceResults(data.results || [])
-      setSourceMessage(data.results?.length ? '' : 'No matches. Try shorter key terms.')
-    } catch (error) { setSourceResults([]); setSourceMessage(`Could not search source: ${(error as Error).message}`) }
+      if (!response.ok) throw new Error(data?.error?.message || data?.detail || `HTTP ${response.status}`)
+      const results = (data.results || []).map((item: any) => ({
+        id: item.id,
+        provision_reference: item.clause_reference || item.document_code || 'Provision',
+        title: item.regulatory_document || item.document_code || 'Regulatory provision',
+        text: item.text,
+        source: { kind: 'TigerData', pages: item.page_number ? [item.page_number] : [], edition: item.edition },
+      }))
+      setSourceResults(results)
+      setSourceMessage(results.length ? '' : 'No matches. Try shorter key terms.')
+    } catch (error) { setSourceResults([]); setSourceMessage(`Could not search TigerData: ${(error as Error).message}`) }
   }
   const reviewDocuments = async () => {
-    const docs = files.filter((file) => ext(file.name) === '.docx')
-    if (!docs.length) { setReviewMessage('DOCX text review is available in this demo. Other selected files are listed as evidence, but need format-specific review support.'); return }
-    setBusy(true); setReviewMessage('Reading DOCX files and finding candidate source passages…'); setReviews([])
+    const docs = files.filter((file) => ['.docx', '.txt'].includes(ext(file.name)))
+    if (!docs.length) { setReviewMessage('Select a DOCX or TXT file for document review.'); return }
+    setBusy(true); setReviewMessage('Parsing documents, retrieving TigerData provisions, and asking Gemini to compare source evidence…'); setReviews([])
     try {
-      const results: Review[] = []
-      for (const file of docs) {
-        const bytes = new Uint8Array(await file.arrayBuffer())
-        let binary = ''
-        for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000))
-        const response = await fetch('/api/evidence/review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: file.name, dataBase64: btoa(binary) }) })
-        const data = await response.json()
-        if (!response.ok) throw new Error(data.error || `Review failed (${response.status})`)
-        results.push(data)
-      }
-      setReviews(results); setReviewMessage('')
+      const form = new FormData()
+      docs.forEach((file) => form.append('files', file))
+      const response = await fetch(`${API_BASE}/api/v1/ai/document-reviews`, { method: 'POST', body: form })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data?.error?.message || data?.detail || `Review failed (${response.status})`)
+      setReviews(data.results || []); setReviewMessage('')
     } catch (error) { setReviewMessage((error as Error).message) }
     finally { setBusy(false) }
   }
@@ -290,9 +303,9 @@ export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () 
   }
 
   return <div className="evidence-app">
-    <header className="evidence-header"><a className="brand" href="#top" onClick={returnToMain} aria-label="Complee home"><span className="brand-mark"><Ship size={17} strokeWidth={1.8} /></span>Complee</a><a className="evidence-return-link" href="#top" onClick={returnToMain}><ArrowLeft size={14} />Back to main page</a><nav className="evidence-steps" aria-label="Review workflow"><b><span>01</span>Add evidence</b><i /><span><span>02</span>Review design</span><i /><span><span>03</span>Manage findings</span></nav><span className="evidence-local"><i />LOCAL WORKSPACE</span></header>
+    <header className="evidence-header"><a className="brand" href="#top" onClick={returnToMain} aria-label="Complee home"><span className="brand-mark"><Ship size={17} strokeWidth={1.8} /></span>Complee</a><a className="evidence-return-link" href="#top" onClick={returnToMain}><ArrowLeft size={14} />Back to main page</a><nav className="evidence-steps" aria-label="Review workflow"><b><span>01</span>Upload</b><i /><span><span>02</span>Review design</span><i /><span><span>03</span>Manage findings</span></nav><span className="evidence-local"><i />LOCAL WORKSPACE</span></header>
     <main className="evidence-workspace" id="top">
-      <div className="evidence-title"><div><span className="evidence-kicker">VESSEL DESIGN REVIEW / STEP 01</span><h1>Add design evidence</h1><p>Start with your evidence. The R/V Taani model is a visual preview; design review continues with the OSU RCRV.</p></div><div className="evidence-vessel-tag"><Ship size={15} /><span><small>REVIEW VESSEL</small>OSU RCRV · Demo model</span><Check size={15} /></div></div>
+      <div className="evidence-title"><div><span className="evidence-kicker">VESSEL DESIGN REVIEW / STEP 01</span><h1>Add design documentation</h1><p>Upload the design documents, drawings, and models to prepare the OSU RCRV review.</p></div><div className="evidence-vessel-tag"><Ship size={15} /><span><small>REVIEW VESSEL</small>OSU RCRV · Demo model</span><Check size={15} /></div></div>
       <div className="evidence-layout">
         <section className="evidence-main-col">
           <label className={`evidence-dropzone${dragging ? ' is-dragging' : ''}`} htmlFor="evidence-file-input" onDragOver={(event) => { event.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); addFiles(event.dataTransfer.files) }}>
@@ -301,7 +314,7 @@ export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () 
           </label>
           <section className="evidence-file-card"><div className="evidence-card-header"><div><span className="evidence-kicker">PROJECT FILES</span><h2>Selected evidence</h2></div><div className="evidence-card-actions"><span>{files.length} file{files.length === 1 ? '' : 's'}</span><button type="button" onClick={() => { setFiles([]); setReviews([]); setReviewMessage('') }} disabled={!files.length}><Trash2 size={13} />Clear all</button></div></div>
             {files.length ? <div className="evidence-file-list">{files.map((file) => { const info = fileKind(file.name); return <article className="evidence-file-row" key={`${file.name}:${file.size}:${file.lastModified}`}><span className={`evidence-file-type ${info.kind}`}>{info.label}</span><span className="evidence-file-info"><b>{file.name}</b><small>{formatBytes(file.size)} · {info.support}</small></span><button type="button" className="evidence-remove" aria-label={`Remove ${file.name}`} onClick={() => setFiles((current) => current.filter((entry) => entry !== file))}><X size={16} /></button></article> })}</div> : <div className="evidence-empty"><FileText size={18} /><span>No evidence added yet. Add a document, drawing, or model to start.</span></div>}
-            <div className="evidence-review-action"><span>DOCX text review is enabled for this demo.</span><button type="button" onClick={() => void reviewDocuments()} disabled={!files.length || busy}>{busy ? 'Reviewing…' : 'Review selected DOCX files'}</button></div>
+            <div className="evidence-review-action"><span>Gemini compares document text with provisions retrieved from TigerData. Review output is advisory.</span><button type="button" onClick={() => void reviewDocuments()} disabled={!files.some((file) => ['.docx', '.txt'].includes(ext(file.name))) || busy}>{busy ? 'Reviewing…' : 'Review with Gemini + TigerData'}</button></div>
           </section>
           <section className="evidence-file-card evidence-extraction-card">
             <div className="evidence-card-header"><div><span className="evidence-kicker">AI-ASSISTED ENGINEERING DATA</span><h2>Extract review candidates</h2></div></div>
@@ -418,15 +431,15 @@ export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () 
               </article>
             })}
           </section>
-          {(reviews.length > 0 || reviewMessage) && <section className="evidence-review-results"><div className="evidence-kicker">DOCUMENT REVIEW · SOURCE CANDIDATES</div>{reviewMessage && <p className="evidence-review-message">{reviewMessage}</p>}{reviews.map((review) => <div className="evidence-reviewed-file" key={review.filename}><p><b>{review.filename}</b> · {review.extracted_characters.toLocaleString()} characters read</p><p>{review.message}</p>{review.findings.map((finding) => <article key={`${review.filename}:${finding.topic}`} className="evidence-finding"><h3>{finding.topic}</h3><ul>{finding.evidence.map((line) => <li key={line}>{line}</li>)}</ul>{finding.candidates.map((candidate) => <div className="evidence-candidate" key={candidate.provision_reference}><b>{candidate.provision_reference} · {candidate.title}</b><small>{candidate.source?.kind || 'source'} · pages {(candidate.source?.pages || []).join(', ') || 'n/a'} · applicability unverified</small><p>{candidate.text.slice(0, 600)}{candidate.text.length > 600 ? '…' : ''}</p></div>)}</article>)}</div>)}</section>}
+          {(reviews.length > 0 || reviewMessage) && <section className="evidence-review-results"><div className="evidence-kicker">GEMINI DOCUMENT REVIEW · TIGERDATA SOURCES</div>{reviewMessage && <p className="evidence-review-message">{reviewMessage}</p>}{reviews.map((review) => <div className="evidence-reviewed-file" key={review.filename}><p><b>{review.filename}</b> · {review.extracted_characters.toLocaleString()} characters read · AI-assisted, not a compliance decision</p><p>{review.message}</p>{review.findings.map((finding, index) => <article key={`${review.filename}:${finding.topic}:${index}`} className="evidence-finding"><h3>{finding.topic} <small>· {finding.relevance || 'uncertain'}</small></h3>{finding.summary && <p>{finding.summary}</p>}{finding.evidence.length > 0 && <><b>Document evidence</b><ul>{finding.evidence.map((line, quoteIndex) => <li key={quoteIndex}>{line}</li>)}</ul></>}{finding.missing_information?.length ? <p><b>Missing information:</b> {finding.missing_information.join('; ')}</p> : null}{finding.applicability_questions?.length ? <p><b>Applicability questions:</b> {finding.applicability_questions.join('; ')}</p> : null}{finding.warnings?.map((warning, warningIndex) => <p key={warningIndex} className="evidence-review-message">{warning}</p>)}{finding.candidates.map((candidate, candidateIndex) => <div className="evidence-candidate" key={candidate.id || `${candidate.provision_reference}:${candidateIndex}`}><b>{candidate.provision_reference} · {candidate.title}</b><small>{candidate.source?.kind || 'TigerData'} · edition {candidate.source?.edition || 'n/a'} · pages {(candidate.source?.pages || []).join(', ') || 'n/a'} · {candidate.relevance || 'unreviewed'}</small>{candidate.provision_quotes?.length ? <ul>{candidate.provision_quotes.map((line, quoteIndex) => <li key={quoteIndex}>{line}</li>)}</ul> : null}<p>{candidate.text.slice(0, 600)}{candidate.text.length > 600 ? '…' : ''}</p></div>)}</article>)}</div>)}</section>}
           <div className="evidence-next"><span>Continue opens the OSU RCRV design review.</span><button type="button" onClick={continueToReview}>Continue to design review <ArrowRight size={15} /></button></div>
         </section>
         <aside className="evidence-aside">
           <section className="evidence-side-card evidence-vessel-card"><div className="workspace-bar"><span><span className="live-dot" /> R/V TAANI · MODEL PREVIEW</span><span>HOMEPAGE MODEL</span></div><VesselViewer className="taani-evidence-viewer" initialAutoRotate /><div className="evidence-vessel-summary"><span className="evidence-kicker">VISUAL PREVIEW</span><h2>R/V Taani</h2><p>This is the same vessel model used on the Complee homepage.</p><dl><div><dt>Vessel type</dt><dd>Research vessel</dd></div><div><dt>Workflow use</dt><dd>Preview only</dd></div></dl><p className="evidence-side-note">The preview shows R/V Taani. Continue to design review opens the OSU RCRV model.</p></div></section>
-          <section className="evidence-side-card evidence-source-card"><span className="evidence-kicker">REGULATORY SOURCE</span><h2>Find SOLAS II-2 passages</h2><p>{provider}</p><form className="evidence-search" onSubmit={(event) => { event.preventDefault(); void search() }}><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="e.g. fire detection alarms" aria-label="Search regulatory provisions" /><button aria-label="Search"><Search size={15} /></button></form><div className="evidence-source-list">{sourceResults.map((item) => <article key={item.id}><b>{item.provision_reference} · {item.title}</b><small>{item.source?.kind || 'source'} · pp. {(item.source?.pages || []).join(', ') || 'n/a'} · applicability unverified</small><p>{item.text}</p></article>)}{sourceMessage && <div className="evidence-source-empty">{sourceMessage}</div>}</div><p className="evidence-source-disclaimer">Passage matches are references for engineer review, not a compliance decision.</p></section>
+          <section className="evidence-side-card evidence-source-card"><span className="evidence-kicker">REGULATORY SOURCE</span><h2>Search TigerData provisions</h2><p>{provider}</p><form className="evidence-search" onSubmit={(event) => { event.preventDefault(); void search() }}><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="e.g. fire detection alarms" aria-label="Search regulatory provisions" /><button aria-label="Search"><Search size={15} /></button></form><div className="evidence-source-list">{sourceResults.map((item) => <article key={item.id}><b>{item.provision_reference} · {item.title}</b><small>{item.source?.kind || 'TigerData'} · edition {item.source?.edition || 'n/a'} · pp. {(item.source?.pages || []).join(', ') || 'n/a'} · applicability unverified</small><p>{item.text}</p></article>)}{sourceMessage && <div className="evidence-source-empty">{sourceMessage}</div>}</div><p className="evidence-source-disclaimer">Passage matches are references for engineer review, not a compliance decision.</p></section>
         </aside>
       </div>
-      <footer className="evidence-footnote">Local demo · DOCX text is processed by the local dev server. File names carry into the design demo; source files remain local to this browser session.</footer>
+      <footer className="evidence-footnote">DOCX/TXT review sends document text to the configured Gemini service and searches TigerData regulations. Uploads are not stored by the document review endpoint.</footer>
     </main>
   </div>
 }
