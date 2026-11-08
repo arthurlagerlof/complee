@@ -1,7 +1,7 @@
 # Reverse proxy for ShipCheck.
 # DOMAIN set (e.g. shipcheck.example.com, DNS A record -> server): automatic HTTPS (Let's Encrypt).
 # DOMAIN empty: plain HTTP on port 80 (e.g. http://<server-ip>/ for a first test).
-{$DOMAIN::80} {
+{$DOMAIN} {
 	# Compress text responses (JSON, JS, CSS, HTML). Model chunks are already meshopt-compressed.
 	# Caddy ships gzip and zstd; brotli needs a custom Caddy build, browsers fall back to gzip/zstd.
 	encode {

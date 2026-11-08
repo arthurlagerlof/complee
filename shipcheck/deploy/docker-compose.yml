@@ -35,7 +35,7 @@ services:
       - "${CADDY_BIND_ADDRESS:-0.0.0.0}:443:443"
       - "${CADDY_BIND_ADDRESS:-0.0.0.0}:443:443/udp"
     environment:
-      DOMAIN: ${DOMAIN:-}
+      DOMAIN: "${DOMAIN:-:80}"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
