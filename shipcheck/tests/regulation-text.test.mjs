@@ -1,15 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { createRegulationText } from '../src/regulation-text.mjs';
+import { fetchCatalog } from '../src/catalog-api.mjs';
 
-const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const linksFile = path.join(ROOT, 'regulation-links.json');
-const links = JSON.parse(fs.readFileSync(linksFile, 'utf8'));
-const rulesJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'rules.json'), 'utf8'));
-const ruleIds = (rulesJson.rules || rulesJson).map((r) => r.id);
+const [links, rulesJson] = await Promise.all([fetchCatalog('regulation-links'), fetchCatalog('rules')]);
+const ruleIds = rulesJson.rules.map((r) => r.id);
+const catalogOptions = { linksProvider: () => links, ruleIds: () => ruleIds };
 
 test('regulation links: every link names an existing rule, a provision UUID, a clause and a match kind', () => {
   for (const [ruleId, entry] of Object.entries(links.rules)) {
@@ -35,7 +31,7 @@ test('regulation text: linked provisions come from the backend lookup by id and 
     const id = url.split('/').pop();
     return new Response(JSON.stringify(provision(id, '404.2.3', 'Clear Width. 32 inches (815 mm) minimum.')), { status: 200 });
   };
-  const rt = createRegulationText({ linksFile, ruleIds: () => ruleIds, apiBase: 'http://backend:8000/', fetchImpl });
+  const rt = createRegulationText({ ...catalogOptions, apiBase: 'http://backend:8000/', fetchImpl });
   for (let i = 0; i < 2; i++) {
     const out = await rt.forRule('ADA-404.2.3');
     assert.equal(out.linked, true);
@@ -52,7 +48,7 @@ test('regulation text: linked provisions come from the backend lookup by id and 
 
 test('regulation text: rules without links, unknown rules and an unreachable backend are reported, nothing invented', async () => {
   const down = async () => { throw new TypeError('fetch failed'); };
-  const rt = createRegulationText({ linksFile, ruleIds: () => ruleIds, fetchImpl: down });
+  const rt = createRegulationText({ ...catalogOptions, fetchImpl: down });
   const unlinked = await rt.forRule('IACS-W11-HULL-GRADE');
   assert.equal(unlinked.linked, false);
   assert.deepEqual(unlinked.provisions, []);
@@ -63,6 +59,6 @@ test('regulation text: rules without links, unknown rules and an unreachable bac
   assert.equal(out.provisions[0].clause, 'II-2/13/3.1.2');
   assert.equal(out.provisions[0].text, null);
   assert.match(out.note, /no 13 m figure/);
-  const notFound = createRegulationText({ linksFile, ruleIds: () => ruleIds, fetchImpl: async () => new Response('{}', { status: 404 }) });
+  const notFound = createRegulationText({ ...catalogOptions, fetchImpl: async () => new Response('{}', { status: 404 }) });
   assert.match((await notFound.forRule('ADA-405.2')).error, /returned 404/);
 });

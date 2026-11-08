@@ -12,6 +12,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { streamArray } from '../../src/json-stream.mjs';
 import { readTree } from './read-tree.mjs';
+import { fetchCatalog } from '../../src/catalog-api.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const WORK = path.join(HERE, 'work');
@@ -129,7 +130,7 @@ async function main() {
   fs.writeFileSync(ID_BIN, Buffer.from(toSvf2.buffer));
   fs.writeFileSync(PARENT_BIN, Buffer.from(parent.buffer));
   fs.writeFileSync(ID_MAP, JSON.stringify({ generated: new Date().toISOString(), key: 'source file + DWG entity handle + name, then parent, then tree position', svf_nodes: svf.size, svf2_nodes: svf2.size, matched: map.size, by_handle: byHandle, by_parent: byParent, by_tree: byTree, ambiguous_keys: ambiguous, conflicts }));
-  const parts = JSON.parse(fs.readFileSync(path.join(SC, 'ships/rcrv/parts.json'), 'utf8')).parts;
+  const parts = (await fetchCatalog('model-rcrv-parts')).parts;
   const partsMapped = parts.filter((p) => back.has(p.objectid)).length;
   log(`Matched ${map.size.toLocaleString('en')} of ${svf.size.toLocaleString('en')} SVF nodes (${byHandle.toLocaleString('en')} by file + handle, ${byTree.toLocaleString('en')} by tree position); ambiguous keys ${ambiguous}; conflicts ${conflicts}`);
   log(`parts.json parts found in the SVF copy: ${partsMapped.toLocaleString('en')} of ${parts.length.toLocaleString('en')}`);

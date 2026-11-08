@@ -1,50 +1,56 @@
-// CLI: checks scenarios against the rule set.
-// Usage: node scripts/check.mjs                  all scenarios, summary + findings
-//        node scripts/check.mjs <id|model.json>   one scenario; also writes results.json
-//        node scripts/check.mjs --precompute     writes the offline results (ships/rcrv/results-3d.json)
-//        node scripts/check.mjs --report [id]    writes reports/<id>.html, .csv and -traceability.csv (same as the UI export)
+// CLI: run deterministic checks against the active database-backed ShipCheck catalog.
+// Usage: node scripts/check.mjs [scenario-id]
+//        node scripts/check.mjs --report [scenario-id]
 import fs from 'node:fs';
 import path from 'node:path';
 import { findingsOf } from '../src/checker.mjs';
 import { scoreLine } from '../src/score.mjs';
-import { ROOT, loadScenarios, runCheck, precompute, loadModel, loadRules } from '../src/load.mjs';
+import { ROOT, loadScenarios, runCheck, loadModel, loadRules } from '../src/load.mjs';
 import { reportRows, toCSV, toHTML } from '../src/report.mjs';
 import { traceMatrix, traceCSV } from '../src/trace.mjs';
 
-if (process.argv[2] === '--report') {
-  const ids = process.argv[3] ? [process.argv[3]] : loadScenarios().map((s) => s.id);
-  fs.mkdirSync(path.join(ROOT, 'reports'), { recursive: true });
-  for (const id of ids) {
-    const sc = loadScenarios().find((s) => s.id === id);
-    if (!sc) { console.error(`Unknown scenario ${id}`); process.exit(1); }
-    const out = runCheck(id);
-    const model = loadModel(sc), rules = loadRules();
-    fs.writeFileSync(path.join(ROOT, 'reports', `${id}.html`), toHTML({ title: model.name, scenario: id, results: out, model, rules, score: out.score }));
-    fs.writeFileSync(path.join(ROOT, 'reports', `${id}.csv`), toCSV(reportRows(out, model, rules)));
-    fs.writeFileSync(path.join(ROOT, 'reports', `${id}-traceability.csv`), traceCSV(traceMatrix(out, rules)));
-    console.log(`Wrote reports/${id}.html and .csv (${findingsOf(out).length} findings)${out.score ? ` - ${scoreLine(out.score)}` : ''}`);
+try {
+  if (process.argv[2] === '--precompute') {
+    throw new Error('Precomputed results are stored in the database; local JSON precompute is no longer supported.');
   }
-  process.exit(0);
-}
+  const scenarios = await loadScenarios();
+  const report = process.argv[2] === '--report';
+  const targetArg = report ? process.argv[3] : process.argv[2];
+  const targets = targetArg ? [targetArg] : scenarios.map((scenario) => scenario.id);
 
-if (process.argv[2] === '--precompute') {
-  for (const w of precompute()) console.log(`Wrote ${w.file}: ${w.findings} findings ${JSON.stringify(w.summary)}${w.score ? `\n  Ground truth: ${w.score}` : ''}`);
-  process.exit(0);
-}
+  if (report) fs.mkdirSync(path.join(ROOT, 'reports'), { recursive: true });
+  for (const id of targets) {
+    const scenario = scenarios.find((entry) => entry.id === id);
+    if (!scenario) throw new Error(`Unknown scenario ${id}`);
+    const [out, model, rules] = await Promise.all([runCheck(id), loadModel(scenario), loadRules()]);
+    const findings = findingsOf(out);
+    if (report) {
+      fs.writeFileSync(
+        path.join(ROOT, 'reports', `${id}.html`),
+        toHTML({ title: model.name, scenario: id, results: out, model, rules, score: out.score }),
+      );
+      fs.writeFileSync(path.join(ROOT, 'reports', `${id}.csv`), toCSV(reportRows(out, model, rules)));
+      fs.writeFileSync(
+        path.join(ROOT, 'reports', `${id}-traceability.csv`),
+        traceCSV(traceMatrix(out, rules)),
+      );
+      console.log(`Wrote reports/${id}.html and .csv (${findings.length} findings)${out.score ? ` - ${scoreLine(out.score)}` : ''}`);
+      continue;
+    }
 
-const targets = process.argv[2] ? [process.argv[2]] : loadScenarios().map((s) => s.id);
-for (const t of targets) {
-  const out = runCheck(t, process.argv[3]);
-  const s = out.summary;
-  const f = findingsOf(out);
-  console.log(`\n${out.model}: ${out.rule_count} rules (${out.rules_verified} verified)${out.draft_rules?.length ? `, ${out.draft_rules.length} draft (not run)` : ''}`);
-  console.log(`  compliant: ${s.compliant}  non-compliant: ${s.non_compliant}  not enough info: ${s.not_enough_info}`);
-  const shown = f.length > 40 ? f.filter((x) => x.status === 'non_compliant').slice(0, 40) : f;
-  for (const x of shown) console.log(`  [${x.status}] ${x.element} ${x.rule_id}: ${x.explanation}`);
-  if (shown.length < f.length) console.log(`  ... ${f.length - shown.length} more findings${targets.length === 1 ? ' (all in results.json)' : ''}`);
-  if (out.score) console.log(`  Ground truth: ${scoreLine(out.score)}`);
-  if (targets.length === 1) {
-    fs.writeFileSync(path.join(ROOT, 'results.json'), JSON.stringify(out, null, 2));
-    console.log('Wrote results.json');
+    const summary = out.summary;
+    console.log(`\n${out.model}: ${out.rule_count} rules (${out.rules_verified} verified)${out.draft_rules?.length ? `, ${out.draft_rules.length} draft (not run)` : ''}`);
+    console.log(`  compliant: ${summary.compliant}  non-compliant: ${summary.non_compliant}  not enough info: ${summary.not_enough_info}`);
+    const shown = findings.length > 40 ? findings.filter((finding) => finding.status === 'non_compliant').slice(0, 40) : findings;
+    for (const finding of shown) console.log(`  [${finding.status}] ${finding.element} ${finding.rule_id}: ${finding.explanation}`);
+    if (shown.length < findings.length) console.log(`  ... ${findings.length - shown.length} more findings`);
+    if (out.score) console.log(`  Ground truth: ${scoreLine(out.score)}`);
+    if (targets.length === 1) {
+      fs.writeFileSync(path.join(ROOT, 'results.json'), JSON.stringify(out, null, 2));
+      console.log('Wrote results.json');
+    }
   }
+} catch (error) {
+  console.error(error.message);
+  process.exitCode = 1;
 }

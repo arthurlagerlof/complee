@@ -106,6 +106,28 @@ blockquote { margin: 6px 0 0; padding: 2px 0 2px 8px; border-left: 3px solid var
 
 
 @media print { .top, #view, #side { display: none; } main { display: block; } }
+@media (min-width: 761px) and (max-width: 1100px) {
+  main {
+    grid-template-columns: minmax(250px, .8fr) minmax(320px, 1.2fr);
+    grid-template-rows: minmax(360px, 1fr) minmax(260px, 35vh);
+    grid-template-areas: "side view" "detail detail";
+    overflow: auto;
+  }
+  #side { grid-area: side; }
+  #view { grid-area: view; min-height: 360px; }
+  #detail { grid-area: detail; border-left: 0; border-top: 1px solid var(--line); }
+}
+@media (max-width: 760px) {
+  main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(320px, 45vh) minmax(360px, auto) minmax(260px, auto);
+    grid-template-areas: "view" "side" "detail";
+    overflow: auto;
+  }
+  #view { grid-area: view; min-height: 320px; }
+  #side { grid-area: side; border-right: 0; border-bottom: 1px solid var(--line); }
+  #detail { grid-area: detail; border-left: 0; border-top: 1px solid var(--line); }
+}
 .accbadge { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 12px; background: #e3f4ea; color: #1d6b3d; border: 1px solid #b7dfc5; white-space: nowrap; }
 .accbadge.bad { background: #fde8e8; color: #9b2c2c; border-color: #f1c1c1; }
 

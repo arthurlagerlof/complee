@@ -28,15 +28,16 @@ export async function createLocalViewer(
   container,
   { onPick, onPickRest } = {},
 ) {
-  const cfg = await fetch("api/model/config")
-    .then((r) => (r.ok ? r.json() : {}))
-    .catch(() => ({}));
+  const configResponse = await fetch("api/model/config", { cache: "no-store" });
+  const cfg = await configResponse.json().catch(() => ({}));
+  if (!configResponse.ok)
+    throw new Error(cfg.error || `Model gateway configuration failed (${configResponse.status})`);
   const base = new URL(cfg.base_url || "model/", document.baseURI),
     manifestUrl = new URL(cfg.manifest || "stream/manifest.json", base);
   const response = await fetch(manifestUrl, { cache: "no-store" });
   if (!response.ok)
     throw Error(
-      `Viewport tiles unavailable (${response.status}); run tools/export/tile-model.mjs`,
+      `Model gateway could not provide viewport tiles (${response.status})`,
     );
   const manifest = await response.json();
   if (manifest.kind !== "viewport-tiles" || !manifest.chunks?.length)

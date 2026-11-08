@@ -32,7 +32,7 @@ test('server: CORS headers for an allowed and a disallowed origin, preflight, he
   const h = await ok.json();
   assert.equal(h.status, 'ok');
   assert.equal(typeof h.version, 'string');
-  assert.equal(h.parts_loaded, true);
+  assert.equal(h.catalog_source, 'database');
   assert.equal(typeof h.chunks, 'number');
 
   const bad = await fetch(`${base}/api/health`, { headers: { Origin: 'https://evil.example' } });

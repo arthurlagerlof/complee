@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 
-from app.api.routes import ai, assessments, calculations, design, knowledge, regulations
+from app.api.routes import ai, assessments, calculations, design, knowledge, regulations, shipcheck
 from app.core.config import settings
 from app.db.database import engine
 from app.services.common import ConflictError, EntityNotFound, InvalidReference
@@ -37,6 +37,7 @@ app.include_router(regulations.router, prefix="/api/v1")
 app.include_router(calculations.router, prefix="/api/v1")
 app.include_router(ai.router, prefix="/api/v1")
 app.include_router(knowledge.router, prefix="/api/v1")
+app.include_router(shipcheck.router, prefix="/api/v1")
 
 
 def _error(code: str, message: str, status_code: int) -> JSONResponse:

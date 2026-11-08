@@ -6,13 +6,44 @@ import { partsToModel } from './src/parts-model.mjs';
 import { reportRows, toCSV, toHTML } from './src/report.mjs';
 import { traceMatrix, traceCSV, cellLabel } from './src/trace.mjs';
 import { createViewer } from './viewer3d.js';
-import { createApsViewer, createFallbackViewer } from './viewer-aps.js';
+import { createFallbackViewer } from './viewer-fallback.js';
 import { createLocalViewer } from './viewer-stream.js';
 import { loadOfficialText } from './regulation-text.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const fetchJSON = (u, opt) => fetch(u, { cache: 'no-store', ...opt }).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`${u}: ${r.status}`))));
+const fetchJSON = async (u, opt) => {
+  const response = await fetch(u, { cache: 'no-store', ...opt });
+  if (!response.ok) {
+    const body = await response.text();
+    let detail = '';
+    try {
+      const error = JSON.parse(body);
+      detail = error?.error?.message || error?.detail || (typeof error?.error === 'string' ? error.error : '');
+    } catch { /* use the status when the server does not return JSON */ }
+    throw new Error(`${u}: ${response.status}${detail ? ` (${detail})` : ''}`);
+  }
+  return response.json();
+};
+const CATALOG_BY_FILE = {
+  'rules.json': 'rules',
+  'scenarios.json': 'scenarios',
+  'ships/rcrv/parts.json': 'model-rcrv-parts',
+  'ships/rcrv/rcrv-3d.meta.json': 'model-rcrv-meta',
+  'ships/rcrv/results-3d.json': 'model-rcrv-precomputed',
+  'ships/rcrv/inside.json': 'model-rcrv-inside',
+  'ships/cruise/deck.json': 'model-cruise-deck',
+  'ships/rcrv/layout.json': 'model-rcrv-layout',
+  'tests/expected/rcrv-3d.json': 'expected-rcrv-3d',
+  'tests/expected/rcrv-inside.json': 'expected-rcrv-inside',
+  'tests/expected/cruise.json': 'expected-cruise',
+  'tests/expected/rcrv-layout.json': 'expected-rcrv-layout',
+};
+const fetchCatalog = (file, opt) => {
+  const sourceKey = CATALOG_BY_FILE[file];
+  if (!sourceKey) return Promise.reject(new Error(`No database catalog is configured for ${file}`));
+  return fetchJSON(`api/catalog/${sourceKey}`, opt);
+};
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const LABEL = { compliant: 'Compliant', non_compliant: 'Non-compliant', not_enough_info: 'Not enough info', null: 'No rule' };
@@ -57,10 +88,10 @@ const deckName = (id) => S.norm.decks.find((d) => d.id === id)?.name ?? id;
 // Scenario requests and viewer ownership use monotonic generations: A -> B -> A is still a new load.
 let scenarioGeneration = 0, scenarioController = null, scenarioPending = false;
 let viewerGeneration = 0, activeViewerGeneration = 0;
-let localInitialization = null, apsInitialization = null;
+let localInitialization = null;
 const canPick = () => !scenarioPending && activeViewerGeneration === viewerGeneration;
 const onPick = (id) => { if (canPick() && S.results?.elements[id]) select(id, { fly: viewer?.kind === 'local' }); };
-const views = { three: createViewer($('#threeView'), { onPick: (id) => { if (viewer === views.three) onPick(id); } }), aps: null, fallback: null };
+const views = { three: createViewer($('#threeView'), { onPick: (id) => { if (viewer === views.three) onPick(id); } }), local: null, fallback: null };
 let viewer = views.three;
 const LIST_PAGE = 400;
 let listLimit = LIST_PAGE;
@@ -82,16 +113,6 @@ function getLocalViewer() {
   return localInitialization;
 }
 
-function getApsViewer() {
-  if (views.aps) return Promise.resolve(views.aps);
-  if (!apsInitialization) {
-    apsInitialization = createApsViewer($('#apsView'), { onPick: (id) => { if (viewer === views.aps) onPick(id); } })
-      .then((aps) => { views.aps = aps; return aps; })
-      .catch((e) => { apsInitialization = null; throw e; });
-  }
-  return apsInitialization;
-}
-
 function clearCutControl() { $('#cutSel').value = ''; }
 function showOverview() { clearCutControl(); viewer.overview(); }
 
@@ -100,9 +121,9 @@ const NOOP_VIEWER = { build() {}, update() {}, paintNeutral() {}, select() {}, f
 function useViewer(sc) {
   const generation = ++viewerGeneration;
   const current = () => generation === viewerGeneration && !scenarioPending;
-  const want = sc.viewer === 'aps' ? 'aps' : 'three';
+  const want = sc.viewer === 'local' ? 'local' : 'three';
   // Staying in the real-model viewer (real ship <-> corridor scene): keep its geometry and keep it on screen.
-  const stayLocal = want === 'aps' && !$('#localView').hidden;
+  const stayLocal = want === 'local' && !$('#localView').hidden;
   views.local?.setActive?.(false, { keepTiles: stayLocal });
   $('#threeView').hidden = want !== 'three';
   $('#apsView').hidden = true;
@@ -126,7 +147,7 @@ function useViewer(sc) {
   views.fallback ??= createFallbackViewer($('#fallbackView'));
   views.fallback.setImages(sc.fallback_images || []);
   viewer = NOOP_VIEWER;
-  // Order: local -> APS -> screenshots. ?viewer=aps keeps APS; ?noaps goes straight to screenshots.
+  // The RCRV uses the local model gateway; if it is unavailable, show saved screenshots with an explicit reason.
   const params = new URLSearchParams(location.search);
   const showControls = () => {
     $('#simpleBtn').classList.toggle('on', !!viewer.simple);
@@ -139,56 +160,27 @@ function useViewer(sc) {
     clearCutControl();
   };
   S.viewerReady = (async () => {
-    const notes = [];
-    if (!params.has('noaps') && (params.get('viewer') || 'local') === 'local') {
-      try {
-        $('#localView').hidden = false;
-        const local = await getLocalViewer();
-        if (!current()) return 'stale';
-        local.build(S.norm, S.results);
-        await local.load();
-        if (!current()) return 'stale';
-        viewer = local;
-        activeViewerGeneration = generation;
-        viewer.build(S.norm, S.results);
-        showControls();
-        renderList();
-        if (S.selected) select(S.selected);
-        return 'local';
-      } catch (e) {
-        if (!current()) return 'stale'; // an old failure must not stop a viewer claimed by a newer load
-        views.local?.setActive?.(false);
-        console.warn('Local viewer unavailable, trying the Autodesk viewer:', e.message);
-        notes.push(`local viewer: ${e.message}`);
-        $('#localView').hidden = true;
-      }
-    }
-    if (!current()) return 'stale';
     try {
-      if (params.has('noaps')) throw new Error('disabled with ?noaps');
-      $('#apsView').hidden = false;
-      if (params.has('clearcache')) {
-        const root = await navigator.storage?.getDirectory?.().catch(() => null);
-        if (!current()) return 'stale';
-        await root?.removeEntry('otg_cache', { recursive: true }).catch(() => null);
-        if (!current()) return 'stale';
-      }
-      const aps = await getApsViewer();
+      if (params.has('noaps')) throw new Error('3D model loading disabled by ?noaps');
+      $('#localView').hidden = false;
+      const local = await getLocalViewer();
       if (!current()) return 'stale';
-      await aps.load();
+      local.build(S.norm, S.results);
+      await local.load();
       if (!current()) return 'stale';
-      viewer = aps;
+      viewer = local;
       activeViewerGeneration = generation;
       viewer.build(S.norm, S.results);
       showControls();
       renderList();
       if (S.selected) select(S.selected);
-      return 'aps';
+      return 'local';
     } catch (e) {
-      if (!current()) return 'stale';
-      console.warn('APS viewer unavailable, using fallback:', e.message);
-      views.fallback.setReason([...notes, e.message].join('; '));
-      $('#apsView').hidden = true;
+      if (!current()) return 'stale'; // an old failure must not stop a viewer claimed by a newer load
+      views.local?.setActive?.(false);
+      console.warn('Model gateway unavailable; using saved screenshots:', e.message);
+      views.fallback.setReason(e.message);
+      $('#localView').hidden = true;
       $('#fallbackView').hidden = false;
       viewer = views.fallback;
       activeViewerGeneration = generation;
@@ -202,8 +194,8 @@ function useViewer(sc) {
 // ---------- loading ----------
 
 async function init() {
-  const [scen, core] = await Promise.all([fetchJSON('api/scenarios'), fetchJSON('rules.json')]);
-  S.scenarios = scen;
+  const [scenarioCatalog, core] = await Promise.all([fetchCatalog('scenarios.json'), fetchCatalog('rules.json')]);
+  S.scenarios = scenarioCatalog.scenarios;
   S.coreRules = core.rules;
   $('#scenario').innerHTML = S.scenarios.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
   const want = new URLSearchParams(location.search).get('scenario');
@@ -214,15 +206,15 @@ async function init() {
 // in the browser. If the parts file cannot be loaded, the precomputed results are shown read-only.
 async function fetchModel(sc, { signal } = {}) {
   const options = { signal };
-  if (sc.kind !== 'parts') return { model: await fetchJSON(sc.model, options) };
+  if (sc.kind !== 'parts') return { model: await fetchCatalog(sc.model, options) };
   try {
-    const [parts, meta] = await Promise.all([fetchJSON(sc.model, options), sc.meta ? fetchJSON(sc.meta, options) : {}]);
+    const [parts, meta] = await Promise.all([fetchCatalog(sc.model, options), sc.meta ? fetchCatalog(sc.meta, options) : {}]);
     return { model: partsToModel(parts, meta) };
   } catch (e) {
     if (signal?.aborted || e.name === 'AbortError' || !sc.precomputed) throw e;
     const [pre, meta] = await Promise.all([
-      fetchJSON(sc.precomputed, options),
-      sc.meta ? fetchJSON(sc.meta, options).catch((error) => { if (signal?.aborted) throw error; return {}; }) : {},
+      fetchCatalog(sc.precomputed, options),
+      sc.meta ? fetchCatalog(sc.meta, options).catch((error) => { if (signal?.aborted) throw error; return {}; }) : {},
     ]);
     return { model: modelFromPrecomputed(pre, meta), precomputed: pre };
   }
@@ -261,7 +253,7 @@ async function loadScenario(id) {
   try {
     const [{ model, precomputed }, expected] = await Promise.all([
       fetchModel(sc, { signal: controller.signal }),
-      sc.expected ? fetchJSON(sc.expected, { signal: controller.signal }).catch((e) => {
+      sc.expected ? fetchCatalog(sc.expected, { signal: controller.signal }).catch((e) => {
         if (controller.signal.aborted) throw e;
         return null;
       }) : null,
@@ -394,9 +386,9 @@ function renderScore() {
   }
   const verified = S.coreRules.filter((r) => r.verified).length;
   $('#score').innerHTML = (b ? `
-    <div class="scorebox ${b.pass ? 'pass' : 'fail'}" id="scorebox" title="Computed on the unedited design against tests/expected/${esc(S.sc.id)}.json (also run by npm test)">
+    <div class="scorebox ${b.pass ? 'pass' : 'fail'}" id="scorebox" title="Computed on the unedited design using the active database catalog (also run by npm test)">
       <b>${b.pass ? '✓' : '✗'} ${esc(scoreLine(b))}</b>
-      <span class="muted">Ground truth for the unedited design (tests/expected/${esc(S.sc.id)}.json)</span>
+      <span class="muted">Ground truth for the unedited design (database catalog)</span>
     </div>` : '') +
     `<div class="muted" style="margin-top:6px">${allRules().length} rules · ${verified}/${S.coreRules.length} values verified against official text <a href="#" id="verifyLink" title="See VERIFY.md">(why?)</a></div>` +
     (relevantDrafts().length ? `<div class="drafts note">${relevantDrafts().map((d) =>
@@ -500,7 +492,7 @@ function renderDetail(id) {
     <h1>${esc(id)} · ${esc(el.name)}</h1>
     <div class="muted">${esc(el.type)} · ${esc(deckName(el.deck))}${el.objectid != null ? ` · viewer dbId ${el.objectid}` : ''} · source: ${prov(el.source || S.model.source || 'not stated')}</div>
     <div id="dStatus" style="margin-top:6px"></div>
-    ${S.sc.viewer === 'aps' ? '<button id="backOverview" class="tiny" style="margin-top:6px">← Back to the whole ship</button>' : ''}
+    ${S.sc.viewer === 'local' ? '<button id="backOverview" class="tiny" style="margin-top:6px">← Back to the whole ship</button>' : ''}
     ${el.note ? `<div class="note"><b>Model note:</b> ${esc(el.note)}</div>` : ''}
     <div id="dComponent"></div>
     <div id="dResults"></div>

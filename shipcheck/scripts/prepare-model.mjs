@@ -1,6 +1,6 @@
-// Streams the APS property dump of the real OSU RCRV model and writes a compact parts file.
+// Streams the APS property dump of the real OSU RCRV model into an external catalog staging file.
 // Usage: node scripts/prepare-model.mjs [path/to/model-properties.json] [out.json]
-//   defaults: 3D_Since_AI/model-properties.json -> ships/rcrv/parts.json
+//   defaults: 3D_Since_AI/model-properties.json -> OS temp directory/shipcheck-catalog/ships/rcrv/parts.json
 //
 // The input (~150 MB, 330,760 objects) is never loaded whole. Kept per part: objectid (= viewer dbId),
 // name, source file, the ShipConstructor fields (Material, Stock Thickness, Stock Desc, SWBS, Part Name,
@@ -8,6 +8,7 @@
 // Lengths are converted from inches to mm and weights from lb to kg; the original strings are kept.
 // Nothing is guessed: a value that cannot be parsed is kept as text and flagged in `unparsed`.
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { streamArray } from '../src/json-stream.mjs';
@@ -15,7 +16,10 @@ import { parseFeetInch, inchToMM, parseWeightKg, parseOpening } from '../src/uni
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const IN = path.resolve(ROOT, process.argv[2] || '3D_Since_AI/model-properties.json');
-const OUT = path.resolve(ROOT, process.argv[3] || 'ships/rcrv/parts.json');
+const OUT = path.resolve(
+  ROOT,
+  process.argv[3] || process.env.SHIPCHECK_CATALOG_STAGING_FILE || path.join(os.tmpdir(), 'shipcheck-catalog', 'shipcheck', 'ships', 'rcrv', 'parts.json'),
+);
 const URN_FILE = path.join(path.dirname(IN), 'urn.txt');
 
 const GENERIC = /^(Subentity|3D Solid|MESH|_Part|0|Layer|Block|Insert|Region|SURFACE|PLANESURFACE|SWEPTSURFACE|EXTRUDEDSURFACE|PolyFace Mesh)$/i;

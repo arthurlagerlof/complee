@@ -138,13 +138,14 @@ export function createS3ModelSource(cfg, { cacheDir, fetchImpl = fetch, now = ()
     // Same rule as the local folder: the high-precision tiles only once their source audit has passed.
     async streamManifest() {
       if (manifestChoice && manifestChoice.until > Date.now()) return manifestChoice.value;
-      let value = 'stream/manifest.json';
       try {
         const audit = JSON.parse((await getBuffer('stream-hp/audit.json')).toString('utf8'));
-        if (audit.pass === true) value = 'stream-hp/manifest.json';
-      } catch { /* no audit in the bucket */ }
-      manifestChoice = { value, until: Date.now() + 5 * 60_000 };
-      return value;
+        if (audit.pass !== true) throw new Error('audit did not pass');
+      } catch {
+        throw Object.assign(new Error('Vultr storage has no passing stream-hp audit; refusing to use the legacy stream manifest.'), { status: 503 });
+      }
+      manifestChoice = { value: 'stream-hp/manifest.json', until: Date.now() + 5 * 60_000 };
+      return manifestChoice.value;
     },
     async serve(key, req, res) {
       if (!isServableKey(key)) {

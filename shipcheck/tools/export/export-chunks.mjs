@@ -20,6 +20,7 @@ import { partsToModel } from '../../src/parts-model.mjs';
 import { checkModel } from '../../src/checker.mjs';
 import { loadIdMap } from './map-ids.mjs';
 import { readTree } from './read-tree.mjs';
+import { fetchCatalog } from '../../src/catalog-api.mjs';
 
 const require = createRequire(import.meta.url);
 const { SVFReader } = require('svf-utils');
@@ -29,7 +30,6 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SC = path.resolve(HERE, '../..');
 const WORK = path.join(HERE, 'work');
 const OUT = path.join(SC, 'model');
-const readJSON = (p) => JSON.parse(fs.readFileSync(path.join(SC, p), 'utf8'));
 const log = (...a) => console.log(...a);
 
 // ---------- chunks (load order = array order) ----------
@@ -106,8 +106,13 @@ export async function ensureSvf() {
 
 // Parts, checker results, and leaf node -> checked part (geometry often sits on child nodes).
 export async function mapParts() {
-  const model = partsToModel(readJSON('ships/rcrv/parts.json'), readJSON('ships/rcrv/rcrv-3d.meta.json'));
-  const results = checkModel(model, readJSON('rules.json').rules);
+  const [parts, meta, rules] = await Promise.all([
+    fetchCatalog('model-rcrv-parts'),
+    fetchCatalog('model-rcrv-meta'),
+    fetchCatalog('rules'),
+  ]);
+  const model = partsToModel(parts, meta);
+  const results = checkModel(model, rules.rules);
   const tree = await readTree(path.join(SC, '3D_Since_AI/model-tree.json'));
   const nodeById = new Map();
   (function walk(nodes) { for (const n of nodes || []) { nodeById.set(n.objectid, n); walk(n.objects); } })(tree.data.objects);
@@ -357,7 +362,7 @@ function keepRest() {
   try { return JSON.parse(fs.readFileSync(path.join(OUT, 'manifest.json'), 'utf8')).chunks.filter((c) => c.group === 'rest'); } catch { return []; }
 }
 
-export { OUT, WORK, SC, HERE, readJSON, log };
+export { OUT, WORK, SC, HERE, log };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   main().catch((e) => { console.error(e.stack || e.message); process.exit(1); });

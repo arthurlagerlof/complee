@@ -4,9 +4,9 @@ Since AI Hackathon 2026 (Turku), Meyer Turku challenge. ShipCheck checks a ship 
 for every part, which rules apply, whether it passes, **why**, and where every value comes from.
 
 - **Deterministic checker.** Pass/fail comes from plain code, never from an LLM. Same input, same result.
-- **Real 3D model.** The OSU RCRV ShipConstructor production model (330,760 objects, inches) converted with Autodesk APS and shown in the APS viewer:
-  parts are coloured red (non-compliant), amber (not enough info) or green (compliant). Clicking a finding isolates the part and flies to it.
-- **Views on the real model** (APS viewer; the model is only hidden, ghosted, coloured, cut and framed, never changed):
+- **Real 3D model.** The OSU RCRV ShipConstructor production model (330,760 objects, inches) is streamed through ShipCheck's `/model/...` gateway.
+  Parts are coloured red (non-compliant), amber (not enough info) or green (compliant). Clicking a finding requests and frames its tile.
+- **Views on the real model** (local Three.js viewer; the source model is never changed):
   *Simple view* (shell, decks and checked parts only) with a *deck cut*; *component view* (click a part: isolated, outlined,
   3D label with the key value, card with every rule, missing data and what-if editing labelled "what-if, not in model");
   *rule view* (click a rule: all its parts with counts, e.g. "22 hatches: 4 pass, 0 fail, 18 not enough info");
@@ -19,7 +19,7 @@ for every part, which rules apply, whether it passes, **why**, and where every v
 - **Ground truth.** `npm test` checks every planted and hand-checked finding; the top bar shows the score, e.g. *✓ 7/7 expected findings, 0 false alarms*.
 
 > ShipCheck lives in the `shipcheck/` folder of the `dev` branch, next to the Complee site at the repository root (which links here).
-> Included: the checker, the real RCRV model, the cruise deck, the evidence intake, the demo run-through ([DEMO_SCRIPT.md](DEMO_SCRIPT.md)) and the HTML/CSV report.
+> Included: the checker, database-backed RCRV and cruise catalogs, the evidence intake, the demo run-through ([DEMO_SCRIPT.md](DEMO_SCRIPT.md)) and the HTML/CSV report.
 > The optional AI rule drafting and the viewer role switch remain on the branch `shipcheck-full`.
 
 ## Run (Node 20+)
@@ -38,28 +38,31 @@ From the repository root, `npm run dev` serves ShipCheck at http://localhost:517
 npm test
 ```
 
+The browser UI reads rules, scenarios, models, expected results, and precomputed results from the FastAPI database API. The catalog JSON has been removed from this repository; the database is the active source of truth. Start FastAPI at `http://127.0.0.1:8000` before opening ShipCheck. The Node server proxies only fixed catalog keys to FastAPI and never falls back to local catalog files. Production deployments must set `SHIPCHECK_DATA_API_URL` in `deploy/deploy.env` to the FastAPI base URL reachable from the ShipCheck container. Offline tests using the real catalog also require this API.
+
 Use **Add evidence** in the top bar to attach files to the selected scenario. The intake accepts documents, drawings, and model files for session-level review organization; DOCX is the document format with text extraction enabled in this demo. The review retrieves candidate SOLAS II-2 passages through a replaceable provider adapter. It does not decide applicability or compliance. The SinceAI JSONL corpus is local and ignored by Git; provide it at `integrations/sinceai/data/solas_ii2_revised_mca.jsonl`, or set `EVIDENCE_PROVIDER=none` to disable source retrieval. The `src/evidence-provider.mjs` interface can be replaced without changing the checker.
 
 | Command | What it does |
 | --- | --- |
-| `npm start` | Local server on port 8080 (static files from a whitelist, check API, APS token). |
-| `npm test` | All tests (checker, real-model ground truth, unit parsing, server whitelist). |
-| `npm run check` | Checks every scenario in the terminal. `node scripts/check.mjs rcrv-3d` also writes `results.json`. |
-| `npm run prepare-model` | Streams `3D_Since_AI/model-properties.json` (150 MB, never loaded whole) into `ships/rcrv/parts.json`. Needs the local APS export. |
-| `npm run report` | Writes `reports/<scenario>.html` and `.csv`, the same as the Report and CSV buttons. |
-| `npm run precompute` | Rewrites `ships/rcrv/results-3d.json` (offline results). Run it after changing rules or parts; `npm test` fails if it is stale. |
+| `npm start` | Local server on port 8080 (static files from a whitelist, check API and model gateway). |
+| `npm test` | Tests checker, imported model ground truth, unit parsing, and server routes. Requires the backend catalog API. |
+| `npm run check` | Checks every active database scenario in the terminal. `node scripts/check.mjs rcrv-3d` also writes `results.json`. |
+| `npm run prepare-model` | Streams the APS property dump into a temporary catalog staging file; import it with `SHIPCHECK_CATALOG_SOURCE_ROOT=<staging directory> python -m app.scripts.import_shipcheck_catalog model-rcrv-parts` from `backend`. |
+| `npm run report` | Writes `reports/<scenario>.html` and `.csv` from the active database catalog. |
 
-### 3D viewer (Autodesk APS)
+### 3D viewer (local model gateway)
 
-`server.mjs` reads `APS_CLIENT_ID` and `APS_CLIENT_SECRET` from `3D_Since_AI/.env` (gitignored: ask the team for the keys) and gives the browser a
-short-lived read-only token (`/api/aps/token`, scope `viewables:read`, localhost only). The model URN is in `3D_Since_AI/urn.txt`.
-Without keys or internet, the app shows saved screenshots (`public/fallback/`) next to the locally computed findings. `?noaps` forces that fallback.
+The browser uses ShipCheck's local Three.js viewer and requests model assets from the same-origin `/model/...` routes.
+Set `MODEL_SOURCE=vultr` with the `VULTR_S3_*` settings to stream from private Vultr Object Storage, or deploy the
+audited `stream-hp/` model under `MODEL_DIR` for local serving. The server signs Vultr requests, restricts accessible
+model paths, and caches tiles on disk; browser code never receives bucket credentials or Vultr URLs. The server requires
+the `stream-hp/audit.json` pass and will not silently select the legacy `stream/manifest.json`. If no audited tile source
+is configured, the findings remain available and saved screenshots are shown with an actionable gateway error. The
+review does not fall back to APS.
 
-### Local 3D viewer (default) and the APS fallback
-
-The real RCRV model is shown by ShipCheck's own Three.js viewer from glTF chunks on our server (`model/`), with the same
-colours, component card, rule view, labels, deck cut and what-if as before. `?viewer=aps` switches to the Autodesk viewer,
-`?noaps` to the saved screenshots. If `model/manifest.json` is missing the app falls back to APS automatically.
+The viewport viewer loads coarse overview tiles first and detail tiles on demand. See the [Vultr model serving notes](docs/model-serving.md)
+and [viewport streaming guide](docs/viewport/README.md) for deployment settings and behavior. `?noaps` is retained as a
+legacy query switch that skips model loading and shows the screenshots; no APS service is contacted by the review UI.
 
 The chunks are exported once from the Autodesk model (needs the APS keys; the files are gitignored, 226.5 MB of GLBs plus 56.7 MB of on-demand properties):
 
@@ -123,7 +126,7 @@ are tens of MB). **Firewall:** allow TCP 22 (SSH), 80 (HTTP) and 443 (HTTPS, plu
 ```bash
 curl -s https://shipcheck.example.com/api/health
 ```
-should print `{"status":"ok","version":"…","model_manifest":true,"chunks":7,"parts_loaded":true,…}`.
+should print `{"status":"ok","version":"…","model_manifest":true,"chunks":7,"catalog_source":"database",…}`.
 
 ```bash
 curl -sI https://shipcheck.example.com/model/context.glb
@@ -146,29 +149,23 @@ Logs and restart on the server: `cd /opt/shipcheck && docker compose -f deploy/d
 
 ```
 server.mjs                 local server: whitelisted static files, /api/check, /api/aps/*
-rules.json                 rule database (all verified:false, see VERIFY.md)
-scenarios.json             the scenarios shown in the UI
 src/                       checker and data code (pure modules run in the browser and in Node, except load.mjs)
   checker.mjs              deterministic checker: units to mm, applicability, check types, governing value on overlap
-  parts-model.mjs          parts.json -> checker model (material family, steel grade, SWBS group, oil fuel systems, openings)
+  parts-model.mjs          database parts catalog -> checker model (material family, steel grade, SWBS group, oil fuel systems, openings)
   units.mjs                feet-inch / inch / lb parsing (unknown text -> null, never a guess)
   json-stream.mjs          streams a huge JSON array (Node only)
-  score.mjs                compares results with the ground truth (tests/expected)
-  load.mjs                 Node: loads rules, scenarios, models; runs and precomputes checks
+  score.mjs                compares results with the database ground-truth catalogs
+  load.mjs                 Node: loads database catalogs and runs checks
 public/                    the web UI
   app.js                   sidebar, findings list, detail panel, live editing
   viewer3d.js              Three.js deck view (cruise scenario)
-  viewer-aps.js            Autodesk APS viewer + screenshot fallback (real RCRV model)
+  viewer-aps.js            legacy Autodesk APS viewer (not used by the review UI)
+  viewer-fallback.js       saved-image fallback when model gateway tiles are unavailable
   fallback/                screenshots used when APS is unreachable
-ships/
-  rcrv/parts.json          69,993 prepared parts of the real model (mm/kg + original inch text, objectid = viewer dbId)
-  rcrv/rcrv-3d.meta.json   ship particulars with provenance
-  rcrv/results-3d.json     precomputed results (offline fallback)
-  cruise/deck.json         fictional cruise deck with planted findings
 scripts/
-  check.mjs                CLI check / precompute
-  prepare-model.mjs        APS property dump -> ships/rcrv/parts.json
-tests/                     node:test suites, ground truth (expected/), fixtures/
+  check.mjs                database-backed CLI check / report
+  prepare-model.mjs        APS property dump -> temporary catalog staging file
+tests/                     node:test suites, database-backed ground truth, small independent fixtures
 3D_Since_AI/               APS pipeline scripts (upload, status, extract, analyze), urn.txt, model-summary.txt.
                            Local only (gitignored): .env with the keys, the .nwd model, the large JSON exports.
 VERIFY.md                  unverified values, interpretations, mentor questions
@@ -187,11 +184,11 @@ VERIFY.md                  unverified values, interpretations, mentor questions
 
 ## How to add a rule
 
-1. Add an entry to `rules.json` (`id`, `source`, `clause`, `text`, `text_status`, `check`, parameters, `applies_to`, `verified: false`).
+1. Prepare an updated rules catalog in a private source directory and import it with `python -m app.scripts.import_shipcheck_catalog rules`.
    Check types: `min`, `max`, `in_set`, `table_lookup`, `data_quality`, `not_adjacent_zone`, `distance_min_hull`, `count_min`, `requires`.
    `applies_to.where` takes a value or `{ "prefix" }`, `{ "in" }`, `{ "not_in" }`, `{ "exists" }`.
 2. Add the rule id to `VERIFY.md` (`npm test` fails otherwise).
-3. If it produces new findings, add them to `tests/expected/<scenario>.json` (otherwise they count as false alarms) and run `npm run precompute`.
+3. If it produces new findings, update that scenario's expected-result catalog in the private source directory and import it with `python -m app.scripts.import_shipcheck_catalog expected-<scenario>`.
 
 ## Data provenance policy
 
@@ -220,13 +217,13 @@ layer `ENV_` is 96 % transparent. The viewer draws them in a see-through pass wi
 clickable); the audit checks the opacity of every part against the source. Browser regressions:
 `cd tools/export && node --test --test-concurrency=1 browser-regressions.cjs` (app running).
 
-**Corridor scene inside the real ship.** Scenario `rcrv-inside` (`ships/rcrv/inside.json`) places a simplified, estimated
-example (one corridor, its door, a stair, a guard rail; fictional values, ground truth in `tests/expected/rcrv-inside.json`)
+**Corridor scene inside the real ship.** Scenario `rcrv-inside` (database catalog `model-rcrv-inside`) places a simplified, estimated
+example (one corridor, its door, a stair, a guard rail; fictional values, ground truth in `expected-rcrv-inside`)
 at its real position in the deckhouse (deck level 4, located from the real geometry). It opens in the real-model viewer:
 the ship is cut open 1.5 m above the deck, the camera dives in, and only the four components carry status colours
 (`public/viewer-scene.js`). The demo shows the whole real ship first, then this scene.
 
-Model files can live on a different host: see [separate model server](docs/model-serving.md) for `MODEL_BASE_URL`, CORS and read-only server commands. The original merged viewer code and APS/screenshot fallbacks remain in the repository.
+Model files can live on a different host: see [separate model server](docs/model-serving.md) for `MODEL_BASE_URL`, CORS and read-only server commands. Legacy APS viewer code remains in the repository but is not used by the review UI.
 
 **Model from Vultr Object Storage.** `MODEL_SOURCE=vultr` plus `VULTR_S3_ENDPOINT`, `VULTR_S3_BUCKET`, `VULTR_S3_ACCESS_KEY`,
 `VULTR_S3_SECRET_KEY` (optional `VULTR_S3_REGION`, `VULTR_S3_PREFIX`; in the environment or in the gitignored

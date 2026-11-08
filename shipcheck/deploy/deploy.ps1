@@ -42,6 +42,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
   $modelSource = if ($FromBucket) { 'vultr' } else { 'local' }
   Set-Content -Encoding ascii -Path (Join-Path $Tmp 'server.env') -Value @("DOMAIN=$($cfg['DOMAIN'])", "ALLOWED_ORIGINS=$($cfg['ALLOWED_ORIGINS'])",
+    "SHIPCHECK_DATA_API_URL=$($cfg['SHIPCHECK_DATA_API_URL'])",
     "MODEL_SOURCE=$modelSource", "VULTR_S3_ENDPOINT=$($cfg['VULTR_S3_ENDPOINT'])", "VULTR_S3_BUCKET=$($cfg['VULTR_S3_BUCKET'])",
     "VULTR_S3_ACCESS_KEY=$($cfg['VULTR_S3_ACCESS_KEY'])", "VULTR_S3_SECRET_KEY=$($cfg['VULTR_S3_SECRET_KEY'])", "VULTR_S3_REGION=$($cfg['VULTR_S3_REGION'])")
   $appMB = [math]::Round((Get-Item (Join-Path $Tmp 'app.tgz')).Length / 1MB, 1)

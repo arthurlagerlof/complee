@@ -16,6 +16,7 @@ from app.db.models.design import (
     Vessel,
 )
 from app.db.models.legacy import LegacyBase
+from app.db.models.shipcheck import ShipCheckActiveDataset, ShipCheckDatasetRecord, ShipCheckDatasetVersion
 
 __all__ = [
     "AIExecution",
@@ -33,5 +34,8 @@ __all__ = [
     "LegacyBase",
     "Project",
     "SourceDocument",
+    "ShipCheckActiveDataset",
+    "ShipCheckDatasetRecord",
+    "ShipCheckDatasetVersion",
     "Vessel",
 ]
