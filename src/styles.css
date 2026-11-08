@@ -434,15 +434,9 @@ button:focus-visible, a:focus-visible { outline: 2px solid #5eb4aa; outline-offs
 .evidence-vessel-tag > svg:last-child { color: #94d9d0; }
 .evidence-vessel-card { padding: 13px; color: #e8f0ed; border-color: #39545d; background: #102638; }
 .evidence-vessel-card .workspace-bar { padding-bottom: 9px; color: #8ca5a5; }
-.taani-preview { position: relative; overflow: hidden; border: 1px solid #314c58; background: radial-gradient(ellipse at center, #2b5062 0, #17364b 51%, #102b40 100%); }
-.taani-preview-canvas { position: relative; width: 100%; height: 195px; overflow: hidden; touch-action: none; }
-.taani-preview-canvas canvas { display: block; width: 100%; height: 100%; }
-.taani-preview-state { position: absolute; z-index: 2; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 16px; color: #d5e0dc; background: radial-gradient(ellipse at center, #27485a 0, #102b40 100%); font-size: 9px; text-align: center; }
-.taani-preview-state strong { color: #f1f5f1; font: 600 12px var(--display); }
-.taani-preview-state span:not(.loading-spinner) { color: #a9bfbc; }
-.taani-preview-controls { right: 7px; bottom: 7px; left: 7px; gap: 5px; }
-.taani-preview-controls button { min-height: 27px; padding: 0 7px; border-color: #67828a; color: #d8e4de; background: #0c2439cf; font-size: 8px; }
-.taani-preview-hint { position: absolute; top: 8px; left: 9px; padding: 3px 6px; color: #d8e4de; background: #0c2439bb; font-size: 8px; }
+.evidence-vessel-card .vessel-stage { height: 195px; }
+.evidence-vessel-card .viewer-controls { right: 7px; bottom: 7px; left: 7px; gap: 5px; }
+.evidence-vessel-card .viewer-controls button { min-height: 27px; padding: 0 7px; font-size: 8px; }
 .evidence-vessel-summary { padding: 13px 2px 1px; }
 .evidence-vessel-summary h2 { color: #f1f5f1; font-size: 16px; }
 .evidence-vessel-summary > p { color: #a9b9b8; }
@@ -451,7 +445,7 @@ button:focus-visible, a:focus-visible { outline: 2px solid #5eb4aa; outline-offs
 .evidence-vessel-summary dd { color: #d1ded7; }
 .evidence-vessel-summary .evidence-side-note { color: #9db3ad !important; background: #1a3444; }
 @media (max-width: 780px) { .evidence-title { width: calc(100% + 36px); margin: 0 -18px 20px; padding: 30px 18px; } }
-@media (max-width: 540px) { .evidence-title { width: calc(100% + 28px); margin: 0 -14px 17px; padding: 27px 14px; } .evidence-vessel-tag { min-width: 0; } .taani-preview-canvas { height: 220px; } }
+@media (max-width: 540px) { .evidence-title { width: calc(100% + 28px); margin: 0 -14px 17px; padding: 27px 14px; } .evidence-vessel-tag { min-width: 0; } .evidence-vessel-card .vessel-stage { height: 220px; } }
 
 .ai-workspace { min-height: 100vh; color: #233238; background: #f3f6f2; }
 .ai-topbar { position: sticky; z-index: 20; top: 0; height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 0 max(24px, calc((100% - 1220px)/2)); border-bottom: 1px solid #dce4df; background: #f8faf7f2; backdrop-filter: blur(14px); }
