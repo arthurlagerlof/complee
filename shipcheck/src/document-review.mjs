@@ -32,7 +32,9 @@ async function extractDocxText(buffer) {
 
 const unique = (values) => [...new Set(values)];
 
-export async function reviewDocumentEvidence({ filename, dataBase64, provider }) {
+// productName is a server-side option (not part of the request body) so the
+// root Complee dev server can reuse this module with its own name.
+export async function reviewDocumentEvidence({ filename, dataBase64, provider }, { productName = 'ShipCheck' } = {}) {
   const ext = path.extname(String(filename || '')).toLowerCase();
   if (ext !== '.docx') throw Object.assign(new Error('This demo reviewer currently extracts DOCX files only.'), { status: 415 });
   if (typeof dataBase64 !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(dataBase64)) {
@@ -58,7 +60,7 @@ export async function reviewDocumentEvidence({ filename, dataBase64, provider })
     filename: path.basename(String(filename || 'document.docx')),
     extracted_characters: text.length,
     status: findings.length ? 'source_candidates_found' : 'text_extracted_no_topic_matches',
-    message: 'Potential source passages only. ShipCheck has not decided whether any requirement applies or whether the design is compliant.',
+    message: `Potential source passages only. ${productName} has not decided whether any requirement applies or whether the design is compliant.`,
     findings,
   };
 }

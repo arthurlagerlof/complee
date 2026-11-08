@@ -2,8 +2,8 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-import { createEvidenceProvider } from './src/evidence-provider.mjs'
-import { reviewDocumentEvidence } from './src/document-review.mjs'
+import { createEvidenceProvider } from './shipcheck/src/evidence-provider.mjs'
+import { reviewDocumentEvidence } from './shipcheck/src/document-review.mjs'
 
 const evidenceProvider = await createEvidenceProvider({ kind: process.env.EVIDENCE_PROVIDER || 'sinceai' })
 
@@ -33,7 +33,7 @@ function evidenceApi() {
               if (Buffer.byteLength(raw) > 12_000_000) throw Object.assign(new Error('Request too large'), { status: 413 })
             }
             const body = JSON.parse(raw || '{}')
-            const result = await reviewDocumentEvidence({ ...body, provider: evidenceProvider })
+            const result = await reviewDocumentEvidence({ ...body, provider: evidenceProvider }, { productName: 'Complee' })
             res.end(JSON.stringify(result))
             return
           }
