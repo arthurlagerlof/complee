@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isAllowedOrigin, parseAllowedOrigins, corsHeaders } from '../src/cors.mjs';
 
-test('CORS rules: default localhost only; ALLOWED_ORIGINS list; "*"', () => {
+test('CORS rules: default localhost only; configured exact origins; wildcard is rejected', () => {
   assert.ok(isAllowedOrigin('http://localhost:5173', []));
   assert.ok(isAllowedOrigin('http://127.0.0.1:8080', []));
   assert.ok(!isAllowedOrigin('https://evil.example', []));
@@ -11,7 +11,8 @@ test('CORS rules: default localhost only; ALLOWED_ORIGINS list; "*"', () => {
   assert.deepEqual(list, ['https://complee.example.com', 'https://team.example']);
   assert.ok(isAllowedOrigin('https://complee.example.com', list));
   assert.ok(!isAllowedOrigin('http://localhost:5173', list), 'an explicit list replaces the localhost default');
-  assert.ok(isAllowedOrigin('https://anything.example', ['*']));
+  assert.throws(() => parseAllowedOrigins('*'), /exact website origins/);
+  assert.throws(() => parseAllowedOrigins('https://example.com/path'), /exact HTTP\(S\) origins/);
   assert.equal(corsHeaders('https://evil.example', list), null);
 });
 
@@ -33,7 +34,9 @@ test('server: CORS headers for an allowed and a disallowed origin, preflight, he
   assert.equal(h.status, 'ok');
   assert.equal(typeof h.version, 'string');
   assert.equal(h.catalog_source, 'database');
-  assert.equal(typeof h.chunks, 'number');
+  assert.equal(typeof h.model_available, 'boolean');
+  assert.equal('model_requests' in h, false, 'health does not expose internal S3 request diagnostics');
+  assert.equal(ok.headers.get('x-content-type-options'), 'nosniff');
 
   const bad = await fetch(`${base}/api/health`, { headers: { Origin: 'https://evil.example' } });
   assert.equal(bad.status, 200, 'the request itself is answered; the browser blocks it without CORS headers');
@@ -47,7 +50,7 @@ test('server: CORS headers for an allowed and a disallowed origin, preflight, he
   assert.equal(preBad.headers.get('access-control-allow-origin'), null);
 
   // Model files: served with the glTF MIME type, long cache and Range support when a model is deployed.
-  if (h.model_manifest) {
+  if (h.model_available) {
     const m = await (await fetch(`${base}/model/manifest.json`)).json();
     const file = `${base}/model/${m.chunks[0].file}`;
     const full = await fetch(file, { method: 'HEAD' });

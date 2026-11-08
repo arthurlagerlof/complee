@@ -39,6 +39,8 @@ On Windows, start or recover both pages without keeping a terminal open:
 
 The helper uses port 5173, checks the inspection health endpoint, and preserves startup logs in the gitignored `.run/` directory. It reuses a running project server and refuses to stop unrelated applications. Model files are served by the same app in local development unless `MODEL_BASE_URL` explicitly selects a separate model host. `npm run dev` remains available for a foreground terminal session; stopping that session stops the app.
 
+For a Netlify landing-page deployment, set `VITE_API_BASE_URL` to the public Render API URL and `VITE_SHIPCHECK_REVIEW_URL` to the public Vultr ShipCheck URL, for example `https://shipcheck.example.com/index.html?scenario=rcrv-3d`. The viewer is served by the Vultr Node service so its relative `/api` and `/model` requests stay same-origin; Netlify need not proxy model bytes. Configure the Render API's existing frontend-origin setting for the Netlify site. The Vultr viewer remains public and requires no login; set its `ALLOWED_ORIGINS` to the exact Netlify origin for any cross-origin browser calls.
+
 Create a production build with `npm run build`.
 
 ## Stack

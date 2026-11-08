@@ -26,7 +26,7 @@ test('S3 source: only files the viewer needs are servable', () => {
   }
   for (const key of ['old_model/12100-RCRV-199_07-08-2021.nwd', 'browser-check.json', 'full-overview.png', '.env',
     '../.env', 'stream-hp/../.env', 'props/3056(1).json', 'stream-hp-prev/access--1_-1_-1-0-b036aaf845ff.glb',
-    'stream/rest-01--3_-3_0-7-18711bd16a7b.glb', 'stream/manifest.json', '', null]) {
+    'stream/rest-01--3_-3_0-7-18711bd16a7b.glb', 'stream/manifest.json', 'stream-hp/%2e%2e/.env', 'stream-hp\\..\\.env', '', null]) {
     assert.ok(!isServableKey(key), String(key));
   }
 });
@@ -40,6 +40,8 @@ test('S3 source: selected only by MODEL_SOURCE=vultr; settings from the environm
   fs.writeFileSync(file, 'MODEL_SOURCE=vultr\nVULTR_S3_ENDPOINT=https://ams1.example.com\nVULTR_S3_BUCKET="models"\nVULTR_S3_ACCESS_KEY=ak\nVULTR_S3_SECRET_KEY=sk\nOTHER_SECRET=x\n');
   const cfg = s3ConfigFrom({ VULTR_S3_BUCKET: 'from-env' }, file);
   assert.deepEqual(cfg, { endpoint: 'https://ams1.example.com', bucket: 'from-env', accessKey: 'ak', secretKey: 'sk', region: 'us-east-1', prefix: '' });
+  assert.throws(() => s3ConfigFrom({ MODEL_SOURCE: 'vultr', VULTR_S3_ENDPOINT: 'https://ams1.example.com', VULTR_S3_BUCKET: 'b', VULTR_S3_ACCESS_KEY: 'ak', VULTR_S3_SECRET_KEY: 'sk', VULTR_S3_PREFIX: 'safe/../outside' }), /safe object-key prefix/);
+  assert.throws(() => createS3ModelSource({ endpoint: 'http://ams1.example.com', bucket: 'b', accessKey: 'ak', secretKey: 'sk', region: 'us-east-1', prefix: '' }), /HTTPS origin/);
   assert.equal(process.env.VULTR_S3_SECRET_KEY === 'sk', false, 'not copied into process.env');
   fs.rmSync(dir, { recursive: true, force: true });
 });

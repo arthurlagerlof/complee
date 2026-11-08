@@ -16,7 +16,9 @@
 	}
 
 	# Everything (UI, /api, /model with Range + long cache + glTF MIME types, CORS) is handled by the app.
-	reverse_proxy app:8080
+	reverse_proxy app:8080 {
+		header_up X-Real-IP {http.request.remote.host}
+	}
 
 	header {
 		-Server

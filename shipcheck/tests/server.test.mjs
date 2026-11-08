@@ -30,8 +30,8 @@ test('server serves the app and API but never .env, keys or files outside the wh
   assert.equal(await code('/3D_Since_AI/.env'), 404);
   assert.equal(await code('/3D_Since_AI/urn.txt'), 404);
   const statusText = await (await fetch(`${base}/api/aps/status`)).text();
-  assert.deepEqual(Object.keys(JSON.parse(statusText)).sort(), ['configured', 'reason', 'urn']);
-  assert.doesNotMatch(statusText, /secret|client_id/i);
+  assert.deepEqual(Object.keys(JSON.parse(statusText)), ['configured']);
+  assert.doesNotMatch(statusText, /secret|client_id|urn/i);
   const bad = await fetch(`${base}/api/aps/fallback`, { method: 'POST', body: JSON.stringify({ name: '../x', dataUrl: 'data:image/png;base64,AAAA' }) });
   assert.equal(bad.status, 400, 'fallback file names are restricted to [a-z0-9-]');
 });

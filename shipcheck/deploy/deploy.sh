@@ -39,8 +39,8 @@ if [ "${MODEL_SOURCE:-}" = "vultr" ]; then
 else
   tar -cf "$TMP/model.tar" --exclude=model/source-coverage.json --exclude=model/tile-integrity.json -C "$SC" model
 fi
-printf 'DOMAIN=%s\nALLOWED_ORIGINS=%s\nSHIPCHECK_DATA_API_URL=%s\nMODEL_SOURCE=%s\nVULTR_S3_ENDPOINT=%s\nVULTR_S3_BUCKET=%s\nVULTR_S3_ACCESS_KEY=%s\nVULTR_S3_SECRET_KEY=%s\nVULTR_S3_REGION=%s\n' \
-  "${DOMAIN:-}" "${ALLOWED_ORIGINS:-}" "${SHIPCHECK_DATA_API_URL:-}" "${MODEL_SOURCE:-local}" "${VULTR_S3_ENDPOINT:-}" "${VULTR_S3_BUCKET:-}" \
+printf 'DOMAIN=%s\nALLOWED_ORIGINS=%s\nSHIPCHECK_DATA_API_URL=%s\nREGULATION_API_URL=%s\nMODEL_SOURCE=%s\nVULTR_S3_ENDPOINT=%s\nVULTR_S3_BUCKET=%s\nVULTR_S3_ACCESS_KEY=%s\nVULTR_S3_SECRET_KEY=%s\nVULTR_S3_REGION=%s\n' \
+  "${DOMAIN:-}" "${ALLOWED_ORIGINS:-}" "${SHIPCHECK_DATA_API_URL:-}" "${REGULATION_API_URL:-}" "${MODEL_SOURCE:-local}" "${VULTR_S3_ENDPOINT:-}" "${VULTR_S3_BUCKET:-}" \
   "${VULTR_S3_ACCESS_KEY:-}" "${VULTR_S3_SECRET_KEY:-}" "${VULTR_S3_REGION:-}" > "$TMP/server.env"
 # model/ = the 6 main chunks, the rest sub-chunks (rest-NN.glb, Full model), manifest.json and props/ (rest part data)
 [ "${MODEL_SOURCE:-}" = "vultr" ] && echo "Model: streamed from bucket ${VULTR_S3_BUCKET} (not uploaded)" || echo "Model: $(ls "$SC"/model/*.glb | wc -l | tr -d ' ') chunk files ($(ls "$SC"/model/rest-*.glb 2>/dev/null | wc -l | tr -d ' ') rest sub-chunks), $(ls "$SC"/model/props 2>/dev/null | wc -l | tr -d ' ') property files"
@@ -49,9 +49,13 @@ echo "Total upload: $(( ( $(wc -c < "$TMP/app.tgz") + $(wc -c < "$TMP/model.tar"
 
 ssh "${SSH_OPTS[@]}" "$TARGET" "mkdir -p '$REMOTE_DIR'"
 scp "${SSH_OPTS[@]}" "$TMP/app.tgz" "$TMP/model.tar" "$TMP/server.env" "$TARGET:$REMOTE_DIR/"
+MODEL_PREP='rm -rf model'
+[ "${MODEL_SOURCE:-}" = "vultr" ] && MODEL_PREP=true
 ssh "${SSH_OPTS[@]}" "$TARGET" "set -e; cd '$REMOTE_DIR' \
-  && tar -xzf app.tgz && rm -rf model && tar -xf model.tar && mv server.env deploy/server.env && rm -f app.tgz model.tar \
+  && tar -xzf app.tgz && $MODEL_PREP && tar -xf model.tar && mv server.env deploy/server.env && rm -f app.tgz model.tar \
   && docker compose --env-file deploy/server.env -f deploy/docker-compose.yml up -d --build \
   && sleep 5 && curl -fsS http://127.0.0.1/api/health || curl -fsS -H 'Host: ${DOMAIN:-localhost}' http://127.0.0.1/api/health"
 echo
-echo "Deployed. Check: curl -s http://${DOMAIN:-$SERVER_HOST}/api/health"
+CHECK_SCHEME=https
+[ -n "${DOMAIN:-}" ] || CHECK_SCHEME=http
+echo "Deployed. Check: curl -s ${CHECK_SCHEME}://${DOMAIN:-$SERVER_HOST}/api/health"

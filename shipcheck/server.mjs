@@ -13,6 +13,8 @@ import { createEvidenceProvider } from './src/evidence-provider.mjs';
 import { reviewDocumentEvidence } from './src/document-review.mjs';
 import { s3ConfigFrom, createS3ModelSource } from './src/model-source-s3.mjs';
 import { createRegulationText } from './src/regulation-text.mjs';
+import { createRateLimiter } from './src/rate-limit.mjs';
+import { isIP } from 'node:net';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8080);
@@ -22,6 +24,34 @@ const SHIPCHECK_DATA_API_URL = process.env.SHIPCHECK_DATA_API_URL
 // CORS: ALLOWED_ORIGINS="https://a.example,https://b.example" (default: localhost on any port only).
 const ALLOWED_ORIGINS = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
 const MODEL_DIR = path.resolve(ROOT, process.env.MODEL_DIR || 'model');
+const apiRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 120 });
+const modelRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 360 });
+const staticRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 600 });
+const checkRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 30 });
+
+function clientAddress(req) {
+  const cloudflareIp = process.env.TRUST_CLOUDFLARE_TUNNEL === 'true'
+    ? String(req.headers['cf-connecting-ip'] || '').trim()
+    : '';
+  const forwarded = cloudflareIp || String(req.headers['x-real-ip'] || '').trim();
+  const address = forwarded.startsWith('::ffff:') ? forwarded.slice(7) : forwarded;
+  if (isIP(address)) return address;
+  const remote = String(req.socket?.remoteAddress || 'unknown');
+  return remote.startsWith('::ffff:') ? remote.slice(7) : remote;
+}
+
+function applyRateLimit(req, res, pathname) {
+  if (req.method === 'OPTIONS') return true;
+  const limiter = pathname === '/api/check'
+    ? checkRateLimit
+    : pathname.startsWith('/model/') ? modelRateLimit
+      : pathname.startsWith('/api/') ? apiRateLimit : staticRateLimit;
+  const result = limiter.check(clientAddress(req));
+  if (result.allowed) return true;
+  res.setHeader('Retry-After', String(result.retryAfter));
+  sendJSON(res, 429, { error: 'Too many requests. Please retry shortly.' });
+  return false;
+}
 
 async function databaseCatalog(sourceKey) {
   if (!SHIPCHECK_DATA_API_URL) {
@@ -53,17 +83,22 @@ const s3Model = s3Config ? createS3ModelSource(s3Config, { cacheDir: path.resolv
 const regulationText = createRegulationText({
   linksProvider: () => databaseCatalog('regulation-links'),
   ruleIds: async () => (await databaseCatalog('rules')).rules.map((r) => r.id),
-  apiBase: process.env.REGULATION_API_URL || 'http://127.0.0.1:8000',
+  apiBase: process.env.REGULATION_API_URL || SHIPCHECK_DATA_API_URL || 'http://127.0.0.1:8000',
 });
 
 function health() {
-  if (s3Model) return { status: 'ok', version: VERSION, model_source: 'vultr', viewer: 'local', catalog_source: 'database', model_requests: s3Model.stats };
-  let chunks = 0, restChunks = 0, manifest = false;
+  let manifest = false;
   try {
-    const m = JSON.parse(fs.readFileSync(path.join(MODEL_DIR, 'manifest.json'), 'utf8'));
-    manifest = true; chunks = m.chunks?.length ?? 0; restChunks = m.chunks?.filter((c) => c.group === 'rest').length ?? 0;
-  } catch { /* no model deployed */ }
-  return { status: 'ok', version: VERSION, model_manifest: manifest, chunks, rest_chunks: restChunks, catalog_source: 'database', viewer: manifest ? 'local' : 'model-or-screenshot-fallback' };
+    if (s3Model) manifest = true;
+    else manifest = fs.existsSync(path.join(MODEL_DIR, 'manifest.json'));
+  } catch { /* report basic service health without internal details */ }
+  return {
+    status: 'ok',
+    version: VERSION,
+    model_source: s3Model ? 'vultr' : 'local',
+    model_available: manifest,
+    catalog_source: 'database',
+  };
 }
 const evidenceProvider = await createEvidenceProvider({ kind: process.env.EVIDENCE_PROVIDER || 'sinceai' });
 
@@ -79,7 +114,6 @@ if (fs.existsSync(path.join(APS_DIR, '.env'))) {
 }
 aps.APS_CLIENT_ID ??= process.env.APS_CLIENT_ID;
 aps.APS_CLIENT_SECRET ??= process.env.APS_CLIENT_SECRET;
-const apsUrn = () => (fs.existsSync(path.join(APS_DIR, 'urn.txt')) ? fs.readFileSync(path.join(APS_DIR, 'urn.txt'), 'utf8').trim() : null);
 let apsToken = null;
 async function apsViewerToken() {
   if (apsToken && apsToken.expires > Date.now() + 60_000) return apsToken;
@@ -231,10 +265,7 @@ const routes = {
     return reviewDocumentEvidence({ ...body, provider: evidenceProvider });
   },
   // APS 3D viewer (real RCRV model).
-  'GET /api/aps/status': () => {
-    const configured = !!(aps.APS_CLIENT_ID && aps.APS_CLIENT_SECRET);
-    return { configured, urn: apsUrn(), reason: configured ? null : 'no APS keys in 3D_Since_AI/.env' };
-  },
+  'GET /api/aps/status': () => ({ configured: !!(aps.APS_CLIENT_ID && aps.APS_CLIENT_SECRET) }),
   'GET /api/aps/token': async (q, b, req) => {
     localOnly(req);
     if (!aps.APS_CLIENT_ID || !aps.APS_CLIENT_SECRET) throw Object.assign(new Error('APS not configured'), { status: 503 });
@@ -259,8 +290,15 @@ export function addRoute(key, handler) { routes[key] = handler; }
 // The request handler is exported so other servers can mount ShipCheck under a path prefix
 // (the Vite dev server serves it at /inspection/, see ../vite.config.ts).
 export async function handleRequest(req, res) {
-  const url = new URL(req.url, 'http://localhost');
-  const p = decodeURIComponent(url.pathname);
+  let url;
+  let p;
+  try {
+    url = new URL(req.url, 'http://localhost');
+    p = decodeURIComponent(url.pathname);
+  } catch {
+    return sendJSON(res, 400, { error: 'Invalid request path.' });
+  }
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   // CORS: headers only for allowed origins; preflight answered here (204 allowed, 403 not allowed).
   const origin = req.headers.origin;
   const cors = corsHeaders(origin, ALLOWED_ORIGINS);
@@ -269,6 +307,7 @@ export async function handleRequest(req, res) {
     res.writeHead(origin && !cors ? 403 : 204, cors ? {} : { Vary: 'Origin' });
     return res.end();
   }
+  if (!applyRateLimit(req, res, p)) return;
   const catalogMatch = /^\/api\/catalog\/([a-z0-9-]+)$/.exec(p);
   if (req.method === 'GET' && catalogMatch) {
     if (!SHIPCHECK_DATA_API_URL) {
@@ -287,8 +326,8 @@ export async function handleRequest(req, res) {
         'Content-Length': body.length,
       });
       return res.end(body);
-    } catch (e) {
-      return sendJSON(res, 502, { error: `ShipCheck database API request failed: ${e.message}` });
+    } catch {
+      return sendJSON(res, 502, { error: 'ShipCheck database API is temporarily unavailable.' });
     }
   }
   const handler = routes[`${req.method} ${p}`];
@@ -298,7 +337,8 @@ export async function handleRequest(req, res) {
       const body = req.method === 'POST' ? await readBody(req, limit) : undefined;
       return sendJSON(res, 200, await handler(url.searchParams, body, req));
     } catch (e) {
-      return sendJSON(res, e.status || 500, { error: e.message });
+      const code = e.status || 500;
+      return sendJSON(res, code, { error: code >= 500 ? 'Service temporarily unavailable.' : e.message });
     }
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') return sendJSON(res, 405, { error: 'Method not allowed' });

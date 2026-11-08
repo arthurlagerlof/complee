@@ -10,6 +10,8 @@ services:
     environment:
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       SHIPCHECK_DATA_API_URL: ${SHIPCHECK_DATA_API_URL:-}
+      REGULATION_API_URL: ${REGULATION_API_URL:-}
+      TRUST_CLOUDFLARE_TUNNEL: ${TRUST_CLOUDFLARE_TUNNEL:-false}
       EVIDENCE_PROVIDER: ${EVIDENCE_PROVIDER:-sinceai}
       MODEL_BASE_URL: ${MODEL_BASE_URL:-model/}
       MODEL_SOURCE: ${MODEL_SOURCE:-local}
@@ -29,9 +31,9 @@ services:
     restart: unless-stopped
     depends_on: [app]
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - "${CADDY_BIND_ADDRESS:-0.0.0.0}:80:80"
+      - "${CADDY_BIND_ADDRESS:-0.0.0.0}:443:443"
+      - "${CADDY_BIND_ADDRESS:-0.0.0.0}:443:443/udp"
     environment:
       DOMAIN: ${DOMAIN:-}
     volumes:

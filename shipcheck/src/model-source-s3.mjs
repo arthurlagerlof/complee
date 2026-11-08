@@ -66,11 +66,17 @@ export function s3ConfigFrom(env = process.env, envFile = null) {
   };
   const missing = ['endpoint', 'bucket', 'accessKey', 'secretKey'].filter((k) => !cfg[k]);
   if (missing.length) throw new Error(`MODEL_SOURCE=vultr needs VULTR_S3_${missing.map((k) => k.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()).join(', VULTR_S3_')}`);
+  if (cfg.prefix && cfg.prefix.split('/').some((segment) => !segment || segment === '.' || segment === '..' || segment.includes('\\') || segment.includes('\0'))) {
+    throw new Error('VULTR_S3_PREFIX must be a safe object-key prefix without empty, traversal, or backslash segments.');
+  }
   return cfg;
 }
 
 export function createS3ModelSource(cfg, { cacheDir, fetchImpl = fetch, now = () => new Date() } = {}) {
   const base = new URL(cfg.endpoint);
+  if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash || (base.pathname !== '/' && base.pathname !== '')) {
+    throw new Error('VULTR_S3_ENDPOINT must be an HTTPS origin without credentials, path, query, or fragment.');
+  }
   const inflight = new Map();
   const stats = { requests: 0, cacheHits: 0, bytesFromBucket: 0, errors: 0 };
 

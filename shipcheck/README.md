@@ -109,12 +109,18 @@ are tens of MB). **Firewall:** allow TCP 22 (SSH), 80 (HTTP) and 443 (HTTPS, plu
    ```bash
    ufw allow 22/tcp && ufw allow 80/tcp && ufw allow 443 && ufw --force enable
    ```
-2. Optional: point a domain's DNS A record at the server; Caddy then gets an HTTPS certificate automatically.
-3. On your laptop: copy `deploy/deploy.env.example` to `deploy/deploy.env` (gitignored) and fill in `SERVER_HOST`,
-   `SERVER_USER`, optionally `DOMAIN` and `ALLOWED_ORIGINS` (sites allowed to call the API from a browser).
-4. Commit your changes (the scripts upload the last commit of `shipcheck/` plus `model/`), then deploy:
+2. Point a domain's DNS A record at the server for public HTTPS; Caddy obtains and renews the certificate automatically. Without a domain, Caddy serves HTTP only, suitable for a temporary test.
+3. On your laptop: copy `deploy/deploy.env.example` to `deploy/deploy.env` (gitignored) and set `SERVER_HOST`,
+   `SERVER_USER`, `DOMAIN`, `ALLOWED_ORIGINS`, `SHIPCHECK_DATA_API_URL`, and `MODEL_SOURCE=vultr` with the four required
+   `VULTR_S3_*` settings. The regulation-text API uses `SHIPCHECK_DATA_API_URL` too; only set `REGULATION_API_URL` if it is hosted separately.
+   `ALLOWED_ORIGINS` is a comma-separated list of exact HTTPS site origins, without paths;
+   wildcard origins are rejected. The API and viewer are public and require no login. Keep the Object Storage bucket
+   private; the Node service uses its server-side credentials to fetch only allow-listed viewer assets. No user-auth or
+   AI credentials are required by this deployment.
+4. Commit your changes (the scripts upload the last committed `shipcheck/` plus an empty model directory when using
+   Vultr Object Storage), then deploy:
    ```powershell
-   powershell -ExecutionPolicy Bypass -File deploydeploy.ps1
+   powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1
    ```
    or on Linux/macOS:
    ```bash
@@ -126,12 +132,13 @@ are tens of MB). **Firewall:** allow TCP 22 (SSH), 80 (HTTP) and 443 (HTTPS, plu
 ```bash
 curl -s https://shipcheck.example.com/api/health
 ```
-should print `{"status":"ok","version":"…","model_manifest":true,"chunks":7,"catalog_source":"database",…}`.
+should print basic service health such as `{"status":"ok","version":"…","model_source":"vultr","model_available":true,"catalog_source":"database"}` without storage credentials or request diagnostics.
 
 ```bash
-curl -sI https://shipcheck.example.com/model/context.glb
+curl -s https://shipcheck.example.com/api/model/config
+curl -sI https://shipcheck.example.com/model/stream-hp/manifest.json
 ```
-should show `content-type: model/gltf-binary`, `cache-control: public, max-age=31536000, immutable` and `accept-ranges: bytes`.
+The first response selects the audited `stream-hp/manifest.json` from the private bucket; the second should return JSON without exposing bucket credentials. Fetch a tile filename listed in that manifest through `/model/<tile-name>` to verify tile streaming.
 
 CORS: an allowed origin gets `access-control-allow-origin`, any other origin does not, and its preflight gets 403:
 
@@ -141,6 +148,14 @@ curl -si -X OPTIONS -H "Origin: https://allowed.example" -H "Access-Control-Requ
 ```bash
 curl -si -X OPTIONS -H "Origin: https://not-allowed.example" -H "Access-Control-Request-Method: GET" https://shipcheck.example.com/api/health
 ```
+
+The public read-only viewer surface includes the app's static files, `/api/health`, `/api/model/config`, catalog-backed
+`/api/*` data routes, and `/model/*` viewer assets. These routes require no login. `/model/*` accepts only the existing
+allow-listed reference-model assets; the private bucket and credentials are never sent to the browser. Mutating local
+maintenance endpoints remain loopback-only. The Node service applies in-memory limits of 600 static requests/minute, 120 general API requests/minute,
+30 `/api/check` requests/minute, and 360 model requests/minute per client IP; rate limits reset on restart and are not a
+substitute for an upstream DDoS/WAF service. Keep the app container reachable only through Caddy, restrict SSH (22) to
+trusted administrator IPs, and keep port 8080 private. CORS limits browser access, not direct HTTP callers.
 
 Logs and restart on the server: `cd /opt/shipcheck && docker compose -f deploy/docker-compose.yml logs -f` /
 `… up -d --build`. The app also runs without Docker: `npm ci --omit=dev && MODEL_DIR=/path/to/model node server.mjs`.
