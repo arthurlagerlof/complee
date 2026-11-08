@@ -21,6 +21,7 @@ test('rate limiter bounds tracked clients', () => {
 
 test('public API endpoints enforce the configured per-IP limit without login', async (t) => {
   process.env.ALLOWED_ORIGINS = 'https://demo.example';
+  process.env.TRUST_CLOUDFLARE_TUNNEL = 'true';
   const log = console.log;
   console.log = () => {};
   const { server } = await import('../server.mjs');
@@ -32,4 +33,12 @@ test('public API endpoints enforce the configured per-IP limit without login', a
   for (let i = 0; i < 121; i++) last = await fetch(url);
   assert.equal(last.status, 429);
   assert.ok(Number(last.headers.get('retry-after')) > 0);
+
+  let cloudflareLast;
+  for (let i = 0; i < 121; i++) {
+    cloudflareLast = await fetch(url, { headers: { 'CF-Connecting-IP': '203.0.113.10', 'X-Real-IP': '203.0.113.11' } });
+  }
+  assert.equal(cloudflareLast.status, 429);
+  const distinctVisitor = await fetch(url, { headers: { 'CF-Connecting-IP': '203.0.113.12', 'X-Real-IP': '203.0.113.10' } });
+  assert.equal(distinctVisitor.status, 200, 'tunnel mode trusts Cloudflare client IP rather than the Caddy/container address or spoofed X-Real-IP');
 });

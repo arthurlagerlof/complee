@@ -157,6 +157,15 @@ maintenance endpoints remain loopback-only. The Node service applies in-memory l
 substitute for an upstream DDoS/WAF service. Keep the app container reachable only through Caddy, restrict SSH (22) to
 trusted administrator IPs, and keep port 8080 private. CORS limits browser access, not direct HTTP callers.
 
+For a temporary Cloudflare Quick Tunnel without a domain, leave `DOMAIN` empty, set `CADDY_BIND_ADDRESS=127.0.0.1` and `TRUST_CLOUDFLARE_TUNNEL=true`, then deploy. Caddy stays on loopback, and the tunnel provides the public HTTPS edge. After deployment, run on the VM:
+
+```bash
+docker run -d --name shipcheck-cloudflared --restart unless-stopped --network host cloudflare/cloudflared:latest tunnel --no-autoupdate --url http://127.0.0.1:80
+docker logs --tail 50 shipcheck-cloudflared
+```
+
+Copy the generated `https://…trycloudflare.com` URL from the logs. Quick Tunnel URLs are temporary and may change after container recreation; this mode needs no Cloudflare account or DNS. Because Caddy is loopback-bound, close inbound UFW rules for 80/443 (keep SSH/22); the tunnel makes outbound connections. To open the viewer from the existing Netlify page, set its existing `VITE_SHIPCHECK_REVIEW_URL` build setting to `<quick-tunnel-url>/index.html?scenario=rcrv-3d` and rebuild Netlify; otherwise use the tunnel URL directly. The Render API stays where it is, and the Node catalog/regulation proxy uses `SHIPCHECK_DATA_API_URL` by default.
+
 Logs and restart on the server: `cd /opt/shipcheck && docker compose -f deploy/docker-compose.yml logs -f` /
 `… up -d --build`. The app also runs without Docker: `npm ci --omit=dev && MODEL_DIR=/path/to/model node server.mjs`.
 
