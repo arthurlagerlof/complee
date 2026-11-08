@@ -160,7 +160,11 @@ def list_runs(session: Session, revision_id: uuid.UUID) -> list[dict[str, Any]]:
     assessments = session.scalars(
         select(Assessment).where(Assessment.revision_id == revision_id).order_by(Assessment.created_at.desc())
     ).all()
-    return [run_summary(a) for a in assessments]
+    # Newest first; runs created in the same instant are ordered by state so the current run comes first.
+    rank = {"running": 0, "queued": 0, "provisional": 1, "completed": 1, "failed": 2, "superseded": 3}
+    ordered = sorted(assessments, key=lambda a: (-(_aware(a.created_at) or datetime.min.replace(tzinfo=timezone.utc)).timestamp(),
+                                                 rank.get(a.status, 2)))
+    return [run_summary(a) for a in ordered]
 
 
 def get_run(session: Session, assessment_id: uuid.UUID) -> Assessment:

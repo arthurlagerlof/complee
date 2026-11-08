@@ -78,6 +78,8 @@ export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () 
   const [busy, setBusy] = useState(false)
   const [revisions, setRevisions] = useState<DesignRevision[]>([])
   const [revisionId, setRevisionId] = useState('')
+  const [assessmentQueued, setAssessmentQueued] = useState(false)
+  useEffect(() => { try { if (revisionId) localStorage.setItem('complee.revisionId', revisionId) } catch { /* storage unavailable */ } }, [revisionId])
   const [sourceUploads, setSourceUploads] = useState<SourceUpload[]>([])
   const [extractionMessage, setExtractionMessage] = useState('')
   const [candidateEdits, setCandidateEdits] = useState<Record<string, { name: string; component_type: string }>>({})
@@ -109,7 +111,9 @@ export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () 
         if (!response.ok) throw new Error(body?.error?.message || 'Could not load design revisions.')
         const available = body as DesignRevision[]
         setRevisions(available)
-        if (available.length) setRevisionId((current) => current || available[0].id)
+        let remembered = ''
+        try { remembered = localStorage.getItem('complee.revisionId') || '' } catch { /* storage unavailable */ }
+        if (available.length) setRevisionId((current) => current || available.find((r) => r.id === remembered)?.id || available[0].id)
       })
       .catch((error) => setExtractionMessage(error instanceof Error ? error.message : 'Could not load design revisions.'))
   }, [])
@@ -238,6 +242,7 @@ export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () 
         ? ` Ambiguous matches need engineer review: ${body.ambiguous_matches.map((match: { candidate_name?: string; component_name?: string; reason: string }) => `${match.candidate_name || match.component_name || 'fact'} (${match.reason})`).join('; ')}.`
         : ''
       setExtractionMessage(`Imported ${body.imported_count} component(s) and ${body.imported_fact_count} fact(s).${ambiguous}`)
+      setAssessmentQueued(Boolean(body.assessment_run?.assessment_id))
     } catch (error) {
       setExtractionMessage(error instanceof Error ? error.message : 'Could not import approved candidates.')
     }
@@ -332,6 +337,7 @@ export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () 
               </button>
             </div>
             {extractionMessage && <p className="evidence-extraction-message" role="status">{extractionMessage}</p>}
+            {assessmentQueued && <p className="evidence-extraction-message">The design is being assessed automatically. <a href="#findings">Open the results in Manage findings →</a></p>}
             {sourceUploads.map((item) => {
               const document = item.source_document
               const extraction = item.extraction

@@ -132,7 +132,8 @@ def rule_ambiguity(ctx: ScoringContext) -> dict[str, Any]:
     extra_reported = [e for e in ctx.exceptions_reported if e][: max(0, 3 - len(exceptions))]
     for item in extra_reported:
         add("exception_reported_by_ai", 4, f"Exception reported by the AI interpretation: {item}")
-    refs = list(dict.fromkeys(m.group(0) for m in _CROSS_REFERENCE.finditer(text)))
+    # Upper-case matches ("CHAPTER 4") are headings of the stored text, not references.
+    refs = list(dict.fromkeys(m.group(0) for m in _CROSS_REFERENCE.finditer(text) if not m.group(0).isupper()))
     for i, ref in enumerate(refs[:3]):
         add("cross_reference", 4, f"Depends on another provision or definition (“{ref}”).")
     if text.strip() and not ctx.structured_condition and not _MEASURABLE.search(text):
@@ -235,7 +236,7 @@ def compliance_likelihood(ctx: ScoringContext, ambiguity_score: int) -> dict[str
 
     final = int(round(max(5.0, min(95.0, score))))
     label = "likely_satisfied" if final >= 70 else "likely_not_satisfied" if final <= 30 else "uncertain"
-    reasons = "; ".join(f["detail"] for f in factors[1:]) or "no reducing factors"
+    reasons = "; ".join(f["detail"].rstrip(".") for f in factors[1:]) or "no reducing factors"
     return {"score": final, "scale": "0-100", "label": label, "calibration": "not_calibrated", "estimate_type": "heuristic",
             "explanation": f"Estimated compliance likelihood (heuristic, not a calibrated probability). {factors[0]['detail']} "
                            f"Adjustments: {reasons}.",

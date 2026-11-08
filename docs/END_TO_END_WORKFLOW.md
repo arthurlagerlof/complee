@@ -69,3 +69,65 @@ Each section says what already exists (and is kept), and what is actually missin
   completes the assessment, which makes the revision immutable as before.
 - **AI never decides.** Pass/fail-type results come only from executed deterministic tools; AI output without an
   executed comparison yields `not_estimable`. A score never changes a finding's status or review state.
+
+## 4. How the stages connect
+
+```
+Step 01 Upload (EvidenceIntake)      POST /ai/extractions/upload  ── parser per format ── AI candidates (gateway)
+        review candidates            PATCH /ai/extractions/{id}/components|facts|relationships/{i}
+        import approved              POST /ai/extractions/{id}/import  ──► components, facts, relationships
+                                                                        └─► queued assessment run (background)
+Step 03 Manage findings              GET  /design-revisions/{id}/assessment-runs   (polls while queued/running)
+        run (or re-run)              POST /design-revisions/{id}/assessment-runs   {extra_requirement_ids, force}
+          1 structured checks        completeness → source consistency → properties.numeric_comparison
+          2 retrieval                per catalogue component type: hybrid (BGE-M3 + full text) or full text
+          3 AI interpretation        top N provisions: evidence, conditions (verbatim quote → calculation),
+                                     exceptions, alternative readings, undefined terms
+          4 review candidates        remaining provisions, not interpreted
+          5 scores                   rule ambiguity + estimated compliance likelihood per finding
+        matrix + review              GET /assessments/{run}/findings, PATCH /findings/{id}
+        finalize                     POST /assessment-runs/{id}/finalize  (locks the revision)
+```
+
+The original reference model stays in ShipCheck (`/inspection`, streamed from private Vultr storage) and is
+opened from the workspace as its own selection. An uploaded GLB is shown in a separate viewer
+(`src/UploadedModelViewer.tsx`) that loads the stored file from the backend and highlights the glTF nodes in a
+component's geometry reference; uploads never touch the reference model. Without an uploaded model the matrix is
+the complete experience.
+
+## 5. Acceptance scenarios and where they are covered
+
+| Scenario | Covered by |
+|---|---|
+| A — document only | `tests/test_workflow.py::test_document_only_run_scores_every_finding_and_stays_provisional`, `test_import_of_approved_candidates_queues_an_assessment_run`; live check against the regulation database (rolled back) |
+| B — document + glTF | `tests/test_parsers_pdf_groups.py` (branch groups, grounding, node mapping); viewer checked in the browser with a GLB |
+| C — document + drawing + model on one component | import reconciliation by type+name/tag keeps each source's value as a fact; `test_rerun_…` shows a second source's conflicting value flagged and the likelihood `not_estimable` |
+| D — ambiguous rule | `test_document_only_…` (summary text, vague wording: ambiguity ≥ 61, engineering review) and `test_ai_interpretation_is_scored_…` (AI alternative readings, undefined terms) |
+| E — insufficient evidence | missing `clear_width` / dead-end length → `missing_information`, likelihood `not_estimable` with the information needed |
+| F — regression | full backend suite (existing extraction, retrieval, assessment, AI, knowledge tests), ShipCheck suite, `tsc` and `vite build` |
+
+## 6. Status
+
+| Implemented | Partial | Future |
+|---|---|---|
+| Upload, parse and store TXT, DOCX, text PDF, DXF, GLB/glTF per revision with status, method, provider/model | DXF: deterministic geometry and text; symbol meaning is left to AI candidates and engineer review | DWG, IFC, STEP, scanned PDF (OCR) |
+| Candidate review and import of approved data only; per-source values kept, conflicts flagged | Reconciliation across sources matches by component type + name or tag; differently named duplicates must be merged by the engineer | Assisted cross-source matching (geometry + names) |
+| Automatic provisional assessment after import; manual run, retry, finalize; change tracking against the previous run | Background runs execute in the API process (FastAPI background tasks); a run interrupted by a restart shows as stalled after 15 min and can be retried | Dedicated job queue worker |
+| Retrieval per component type with recorded mode and fallback | Hybrid/vector needs `requirements-retrieval.txt` and a BGE-M3 cache; without it full text is used and the run says so | Semantic search over design components (needs an embedding column) |
+| AI interpretation with exceptions, alternative readings, undefined terms; thresholds verbatim-checked before calculation | Up to `max_ai_provisions` (default 3) provisions per run are interpreted, to bound cost | Engineer approval workflow for interpreted requirements as their own records |
+| Rule ambiguity and estimated compliance likelihood with factors, method and version | Likelihood is a heuristic, labelled `not_calibrated` | Calibration against engineer-reviewed historical assessments |
+| Geometry modules (distance, clearance, intersection, containment, volume) on bounding boxes | No structured requirement uses a geometry module yet (no verified provision figure for one) | Geometry checks driven from model geometry references |
+| Compliance matrix, scores, evidence, calculations, review; uploaded-model viewer with node highlighting | Highlighting needs a GLB or self-contained glTF (external `.bin` files are not served) | — |
+| — | — | User accounts and project-level authorization (no accounts exist yet) |
+
+## 7. Deployment
+
+1. Backend dependencies: `python -m pip install -r backend/requirements.txt` (adds `pypdf` for PDF text). Optional
+   semantic retrieval: `requirements-retrieval.txt` plus a cached BGE-M3 snapshot.
+2. No database migration is needed for this change (existing JSON columns only).
+3. AI: configure the `engineering_assistance` and `text_component_extraction` tasks in the AI gateway, or set
+   `GEMINI_API_KEY` and `GEMINI_MODEL` for the built-in fallback. Without AI the workflow still runs (checks,
+   retrieval, scores) and reports the AI stage as skipped.
+4. Several API workers are fine: run state is in the database, so any worker reports it. A run interrupted by a
+   restart becomes retryable after 15 minutes.
+5. Frontend: `VITE_API_BASE_URL` must point at the API; `FRONTEND_ORIGINS` on the API must include the site origin.
