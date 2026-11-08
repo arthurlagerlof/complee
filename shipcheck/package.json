@@ -9,10 +9,9 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test --test-concurrency=1 tests/",
+    "test": "node --test --test-concurrency=1",
     "check": "node scripts/check.mjs",
     "prepare-model": "node scripts/prepare-model.mjs",
-    "precompute": "node scripts/check.mjs --precompute",
     "report": "node scripts/check.mjs --report"
   },
   "dependencies": {

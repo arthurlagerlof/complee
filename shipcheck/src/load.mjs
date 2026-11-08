@@ -1,64 +1,43 @@
-// Node-side loading: rules, scenarios and models from disk, and a full check run.
-// Used by the server (server.mjs), the CLI (scripts/check.mjs) and the tests. Not used by the browser.
+// Node-side loading of the database-backed ShipCheck catalog for the CLI and model tools.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { checkModel, findingsOf } from './checker.mjs';
-import { scoreResults, scoreLine } from './score.mjs';
+import { checkModel } from './checker.mjs';
+import { scoreResults } from './score.mjs';
 import { partsToModel } from './parts-model.mjs';
+import { CATALOG_KEY_BY_MODEL, fetchCatalog } from './catalog-api.mjs';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const readJSON = (p) => JSON.parse(fs.readFileSync(path.resolve(ROOT, p), 'utf8'));
 
-export function loadRules(rulesPath = 'rules.json') {
-  return readJSON(rulesPath).rules;
+export async function loadRules() {
+  return (await fetchCatalog('rules')).rules;
 }
 
-// Scenarios whose model file exists on disk.
-export function loadScenarios() {
-  return readJSON('scenarios.json').scenarios.filter((s) => fs.existsSync(path.join(ROOT, s.model)));
+export async function loadScenarios() {
+  return (await fetchCatalog('scenarios')).scenarios;
 }
 
-// A scenario model is either a ship.json/deck.json file or a prepared parts file (kind "parts").
-export function loadModel(sc) {
-  if (sc.kind === 'parts') return partsToModel(readJSON(sc.model), sc.meta ? readJSON(sc.meta) : {});
-  return readJSON(sc.model);
+export async function loadModel(sc) {
+  const sourceKey = CATALOG_KEY_BY_MODEL[sc.model];
+  if (!sourceKey) throw new Error(`No database catalog is configured for model ${sc.model}`);
+  const [raw, meta] = await Promise.all([
+    fetchCatalog(sourceKey),
+    sc.meta ? fetchCatalog(CATALOG_KEY_BY_MODEL[sc.meta]) : {},
+  ]);
+  return sc.kind === 'parts' ? partsToModel(raw, meta) : raw;
 }
 
-// Checks a scenario (by id) or a model file; adds the ground-truth score when the scenario has one.
-export function runCheck(target, rulesPath = 'rules.json') {
-  const sc = loadScenarios().find((s) => s.id === target);
-  const model = sc ? loadModel(sc) : readJSON(target);
-  const out = { generated: new Date().toISOString(), scenario: sc?.id ?? target, ...checkModel(model, loadRules(rulesPath)) };
-  if (sc?.expected && fs.existsSync(path.join(ROOT, sc.expected))) out.score = scoreResults(out, readJSON(sc.expected));
+export async function runCheck(target) {
+  const scenarios = await loadScenarios();
+  const sc = scenarios.find((s) => s.id === target);
+  if (!sc) throw new Error(`Unknown scenario: ${target}`);
+  const [model, rules, expected] = await Promise.all([
+    loadModel(sc),
+    loadRules(),
+    sc.expected ? fetchCatalog(CATALOG_KEY_BY_MODEL[sc.expected]) : null,
+  ]);
+  const out = { generated: new Date().toISOString(), scenario: sc.id, ...checkModel(model, rules) };
+  if (expected) out.score = scoreResults(out, expected);
   return out;
-}
-
-// Compact results for the offline fallback: every finding with its evidence, and the worst status per
-// viewer dbId (objectid) for colouring. Rule texts stay in rules.json.
-export function compactResults(out, model) {
-  const objOf = Object.fromEntries(model.elements.map((e) => [e.id, e.objectid ?? null]));
-  const status_by_objectid = {};
-  for (const e of Object.values(out.elements)) if (e.worst && objOf[e.id] != null) status_by_objectid[objOf[e.id]] = e.worst;
-  return {
-    generated: out.generated, scenario: out.scenario, model: out.model, rule_count: out.rule_count,
-    rules_verified: out.rules_verified, draft_rules: out.draft_rules, summary: out.summary, element_summary: out.element_summary,
-    score: out.score ? { ...out.score, line: scoreLine(out.score) } : null,
-    findings: findingsOf(out).map(({ rule_text, related, ...f }) => ({ ...f, objectid: objOf[f.element] })),
-    status_by_objectid,
-  };
-}
-
-// Writes the precomputed results of every scenario that names a "precomputed" file.
-export function precompute() {
-  const written = [];
-  for (const sc of loadScenarios().filter((s) => s.precomputed)) {
-    const model = loadModel(sc);
-    const out = { generated: new Date().toISOString(), scenario: sc.id, ...checkModel(model, loadRules()) };
-    if (sc.expected) out.score = scoreResults(out, readJSON(sc.expected));
-    const c = compactResults(out, model);
-    fs.writeFileSync(path.resolve(ROOT, sc.precomputed), JSON.stringify(c));
-    written.push({ file: sc.precomputed, findings: c.findings.length, summary: c.summary, score: c.score?.line });
-  }
-  return written;
 }

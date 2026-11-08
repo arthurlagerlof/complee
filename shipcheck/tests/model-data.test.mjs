@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseFeetInch, inchToMM, parseWeightKg, parseOpening } from '../src/units.mjs';
 import { streamArray } from '../src/json-stream.mjs';
+import { fetchCatalog } from '../src/catalog-api.mjs';
 
 test('feet-inch strings are parsed exactly, unknown text gives null', () => {
   assert.equal(parseFeetInch(`5'-4 9/16"`), 64.5625);
@@ -38,9 +39,8 @@ test('streamArray yields every object across chunk boundaries, including braces 
   assert.deepEqual(got, items);
 });
 
-const PARTS = new URL('../ships/rcrv/parts.json', import.meta.url);
-test('prepared parts file: counts match the parts and values keep their original text', { skip: !fs.existsSync(PARTS) && 'run npm run prepare-model first' }, () => {
-  const j = JSON.parse(fs.readFileSync(PARTS, 'utf8'));
+test('database parts catalog: counts match and values keep their original text', async () => {
+  const j = await fetchCatalog('model-rcrv-parts');
   assert.equal(j.parts.length, j.counts.kept);
   assert.equal(j.source.model_unit, 'in');
   const ids = new Set(j.parts.map((p) => p.objectid));

@@ -39,8 +39,8 @@ if [ "${MODEL_SOURCE:-}" = "vultr" ]; then
 else
   tar -cf "$TMP/model.tar" --exclude=model/source-coverage.json --exclude=model/tile-integrity.json -C "$SC" model
 fi
-printf 'DOMAIN=%s\nALLOWED_ORIGINS=%s\nMODEL_SOURCE=%s\nVULTR_S3_ENDPOINT=%s\nVULTR_S3_BUCKET=%s\nVULTR_S3_ACCESS_KEY=%s\nVULTR_S3_SECRET_KEY=%s\nVULTR_S3_REGION=%s\n' \
-  "${DOMAIN:-}" "${ALLOWED_ORIGINS:-}" "${MODEL_SOURCE:-local}" "${VULTR_S3_ENDPOINT:-}" "${VULTR_S3_BUCKET:-}" \
+printf 'DOMAIN=%s\nALLOWED_ORIGINS=%s\nSHIPCHECK_DATA_API_URL=%s\nMODEL_SOURCE=%s\nVULTR_S3_ENDPOINT=%s\nVULTR_S3_BUCKET=%s\nVULTR_S3_ACCESS_KEY=%s\nVULTR_S3_SECRET_KEY=%s\nVULTR_S3_REGION=%s\n' \
+  "${DOMAIN:-}" "${ALLOWED_ORIGINS:-}" "${SHIPCHECK_DATA_API_URL:-}" "${MODEL_SOURCE:-local}" "${VULTR_S3_ENDPOINT:-}" "${VULTR_S3_BUCKET:-}" \
   "${VULTR_S3_ACCESS_KEY:-}" "${VULTR_S3_SECRET_KEY:-}" "${VULTR_S3_REGION:-}" > "$TMP/server.env"
 # model/ = the 6 main chunks, the rest sub-chunks (rest-NN.glb, Full model), manifest.json and props/ (rest part data)
 [ "${MODEL_SOURCE:-}" = "vultr" ] && echo "Model: streamed from bucket ${VULTR_S3_BUCKET} (not uploaded)" || echo "Model: $(ls "$SC"/model/*.glb | wc -l | tr -d ' ') chunk files ($(ls "$SC"/model/rest-*.glb 2>/dev/null | wc -l | tr -d ' ') rest sub-chunks), $(ls "$SC"/model/props 2>/dev/null | wc -l | tr -d ' ') property files"

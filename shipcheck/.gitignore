@@ -11,7 +11,7 @@ node_modules/
 integrations/sinceai/data/*.jsonl
 
 # APS model folder: the source model and the large extracted JSON stay local
-# (regenerate parts.json with: npm run prepare-model)
+# Staged outside the repository; import into the database via the backend catalog importer.
 3D_Since_AI/*.nwd
 3D_Since_AI/model-properties.json
 3D_Since_AI/model-tree.json

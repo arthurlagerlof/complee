@@ -1,7 +1,7 @@
 # VERIFY: values that are not yet checked against the official text
 
 Policy: no rule value is trusted until a team member has compared it with the official source.
-Until then the rule keeps `"verified": false` in `rules.json`, and the UI shows the tag
+Until then the rule in the database-backed `rules` catalog keeps `"verified": false`, and the UI shows the tag
 *"Rule value not yet verified against official text"* on every result that uses it.
 `npm test` fails if a rule with `verified: false` is missing from this file.
 
@@ -35,7 +35,7 @@ How to verify a rule:
 | `DNV-GUARDRAIL` | guard rail ≥ 1.0 m | DNV Rules for Classification of Ships (Veracity portal), hull equipment chapter | Part/chapter/section unknown. Example of a class rule overlapping a statutory rule. |
 | `MARPOL-I-12-SLUDGE` | sludge tank required from 400 GT | MARPOL Annex I, Reg. 12 | Only checks that a sludge tank exists, not its capacity. |
 
-Reference URLs in `rules.json` point to the convention overview pages (IMO, US Access Board, DNV) and must also be checked.
+Reference URLs in the database-backed `rules` catalog point to the convention overview pages (IMO, US Access Board, DNV) and must also be checked.
 
 ### Rules for the real RCRV 3D model (`rcrv-3d`, ShipConstructor data via APS)
 
@@ -77,7 +77,7 @@ Reference URLs in `rules.json` point to the convention overview pages (IMO, US A
 5. Does SOLAS II-2 apply to the RCRV, and are the 5083 aluminium oil fuel pipes approved?
 6. Is "AIR AIR" the placeholder material of superpanel plates, or a modelling error?
 
-## Ship particulars (RCRV: `ships/rcrv/rcrv-3d.meta.json`, and the layout test fixture `tests/fixtures/rcrv-layout.json`)
+## Ship particulars (RCRV: database catalog `model-rcrv-meta`, and the layout test fixture `tests/fixtures/rcrv-layout.json`)
 
 | Value | Used | Check against |
 | --- | --- | --- |
@@ -94,4 +94,4 @@ Reference URLs in `rules.json` point to the convention overview pages (IMO, US A
 All deck outlines, rooms, corridors, stairs, doors and tanks are `"source": "estimated"`: no GA drawing PDF was available
 when the model was built. To improve: put the GA sheets into `source/`, take dimensions from them, and change the
 element's `source` to `"GA drawing <sheet>"`. Planted values (`"source": "planted test case (fictional value)"`) are
-deliberate test cases and must stay as they are, or `tests/expected/rcrv-layout.json` must be updated with them.
+deliberate test cases and must stay as they are, or the database catalog `expected-rcrv-layout` must be updated with them.

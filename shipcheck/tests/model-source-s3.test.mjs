@@ -88,3 +88,11 @@ test('S3 source: signed requests, disk cache for content-addressed tiles, remote
   assert.equal((await fetch(base + 'old_model/x.nwd')).status, 404);
   assert.equal(calls.length, before, 'blocked keys never reach the bucket');
 });
+
+test('S3 source: refuses an unaudited bucket instead of selecting the legacy viewport manifest', async () => {
+  const source = createS3ModelSource({
+    endpoint: 'https://ams1.example.com', bucket: 'bucket-1', accessKey: 'ak', secretKey: 'sk',
+    region: 'us-east-1', prefix: '',
+  }, { fetchImpl: async () => new Response('missing', { status: 404 }) });
+  await assert.rejects(source.streamManifest(), { status: 503, message: /no passing stream-hp audit/ });
+});

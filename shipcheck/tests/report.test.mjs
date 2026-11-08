@@ -5,13 +5,17 @@ import fs from 'node:fs';
 import { checkModel } from '../src/checker.mjs';
 import { scoreResults } from '../src/score.mjs';
 import { reportRows, toCSV, toHTML, badgeText } from '../src/report.mjs';
+import { fetchCatalog } from '../src/catalog-api.mjs';
 
-const read = (p) => JSON.parse(fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8'));
-const RULES = read('rules.json').rules;
-const CRUISE = read('ships/cruise/deck.json');
+const [rulesCatalog, CRUISE, expectedCruise] = await Promise.all([
+  fetchCatalog('rules'),
+  fetchCatalog('model-cruise-deck'),
+  fetchCatalog('expected-cruise'),
+]);
+const RULES = rulesCatalog.rules;
 
 test('accuracy badge: "7/7 expected findings, 0 false alarms" for the cruise deck', () => {
-  const s = scoreResults(checkModel(CRUISE, RULES), read('tests/expected/cruise.json'));
+  const s = scoreResults(checkModel(CRUISE, RULES), expectedCruise);
   assert.equal(badgeText(s), '7/7 expected findings, 0 false alarms');
   assert.equal(badgeText(null), 'No ground truth for this scenario');
 });
@@ -27,7 +31,7 @@ test('CSV: one row per finding, quotes escaped, BOM for Excel, deck name resolve
 
 test('HTML report: badge, findings, edits and rule texts are included and escaped', () => {
   const out = checkModel(CRUISE, RULES);
-  const score = scoreResults(out, read('tests/expected/cruise.json'));
+  const score = scoreResults(out, expectedCruise);
   const html = toHTML({ title: 'Deck <5>', scenario: 'cruise', results: out, model: CRUISE, rules: RULES, score,
     edits: [{ id: 'C2', key: 'clear_width', before: '800', after: '1000 mm' }] });
   assert.match(html, /✓ Accuracy: 7\/7 expected findings, 0 false alarms/);

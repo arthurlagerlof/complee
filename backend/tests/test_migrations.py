@@ -28,6 +28,9 @@ APPLICATION_TABLES = {
     "sc_ai_extractions",
     "sc_ai_executions",
     "sc_source_documents",
+    "sc_shipcheck_dataset_versions",
+    "sc_shipcheck_dataset_records",
+    "sc_shipcheck_active_datasets",
 }
 
 

@@ -8,10 +8,11 @@ This is a hackathon concept, not a working compliance tool. Interface findings a
 
 ```sh
 npm install
+npm ci --prefix shipcheck
 npm run dev
 ```
 
-The navigation opens the single evidence intake in the same app. Its optional regulatory passage review remains a local Vite demo and supports DOCX. The **Extract review candidates** workflow uses the FastAPI backend and the existing design revision and AI configuration: implemented parser support is DOCX/TXT, DXF, and glTF 2.0 (`.glb`/`.gltf`, including uploaded `.bin` sidecars). Other listed formats are not parsed. Source files and deterministic parser output are retained in the application database; AI candidates remain separate until an engineer approves and imports them. See [backend/README.md](./backend/README.md) for setup, limits, and API routes. Continuing still opens the illustrative R/V Taani model inspection. The extracted regulatory source corpus is ignored by Git and can be placed at `integrations/sinceai/data/solas_ii2_revised_mca.jsonl`; set `EVIDENCE_PROVIDER=none` to disable that separate source-retrieval demo.
+The navigation opens the single evidence intake in the same app. Continuing opens the OSU RCRV design review in ShipCheck. ShipCheck has its own locked dependencies, so install them before starting Vite. Its optional regulatory passage review remains a local Vite demo and supports DOCX. The **Extract review candidates** workflow uses the FastAPI backend and the existing design revision and AI configuration: implemented parser support is DOCX/TXT, DXF, and glTF 2.0 (`.glb`/`.gltf`, including uploaded `.bin` sidecars). Other listed formats are not parsed. Source files and deterministic parser output are retained in the application database; AI candidates remain separate until an engineer approves and imports them. See [backend/README.md](./backend/README.md) for setup, limits, and API routes. The extracted regulatory source corpus is ignored by Git and can be placed at `integrations/sinceai/data/solas_ii2_revised_mca.jsonl`; set `EVIDENCE_PROVIDER=none` to disable that separate source-retrieval demo.
 
 The local dev site opens on evidence intake. The separate demo passage reviewer retrieves candidate passages through the optional SinceAI SOLAS II-2 adapter. Engineering extraction sends supported files to FastAPI and requires an existing design revision and configured extraction task or backend Gemini settings. The extracted source corpus is ignored by Git and can be placed at `integrations/sinceai/data/solas_ii2_revised_mca.jsonl`; set `EVIDENCE_PROVIDER=none` to disable only the regulatory source adapter.
 
@@ -23,12 +24,7 @@ The local dev site opens on evidence intake. The separate demo passage reviewer 
 | `/inspection/` | ShipCheck from `shipcheck/`: evidence intake, then the checker with the real RCRV 3D model at `/inspection/index.html`. |
 | `/#ai-settings` | Backend-backed AI provider configuration, model routing, provider testing and text extraction review. Requires the FastAPI setup described in `backend/README.md`. |
 
-ShipCheck needs its own dependencies. The default local viewer uses files in `shipcheck/model/`; APS keys are only needed for the optional `?viewer=aps` fallback:
-
-```sh
-cd shipcheck && npm install && cd ..
-npm run dev
-```
+The RCRV design review reads rules, scenarios, model/check data, and expected results from the FastAPI database API; the catalog JSON files have been removed from the repository. The database is the active source of truth. Binary model tiles still use the same-origin `/model/...` gateway. Configure Vultr storage with `MODEL_SOURCE=vultr` and the `VULTR_S3_*` settings, or serve model files from `shipcheck/model/`. If the gateway is unavailable, the findings remain visible alongside saved screenshots.
 
 `/inspection/` only exists on the dev server (ShipCheck runs as Node middleware); `npm run build` builds the landing page only.
 ShipCheck can still run on its own: `cd shipcheck && npm start` (port 8080).

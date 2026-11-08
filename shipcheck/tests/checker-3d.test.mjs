@@ -1,4 +1,4 @@
-// Real RCRV model (ships/rcrv/parts.json): ground truth, an independent recount of every bulk
+// Real RCRV model (database catalog): ground truth, an independent recount of every bulk
 // finding category, and the new check types.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,24 +6,24 @@ import fs from 'node:fs';
 import { checkModel, validateRule, whereMatches, parseSteelGrade, findingsOf } from '../src/checker.mjs';
 import { partsToModel, swbsGroup } from '../src/parts-model.mjs';
 import { scoreResults, scoreLine } from '../src/score.mjs';
+import { fetchCatalog } from '../src/catalog-api.mjs';
 
-const read = (p) => JSON.parse(fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8'));
-const HAVE = fs.existsSync(new URL('../ships/rcrv/parts.json', import.meta.url));
-const skip = !HAVE && 'ships/rcrv/parts.json missing (npm run prepare-model)';
-const RULES = read('rules.json').rules;
+const [rulesCatalog, parts, meta, expected, precomputed, cruise] = await Promise.all([
+  fetchCatalog('rules'),
+  fetchCatalog('model-rcrv-parts'),
+  fetchCatalog('model-rcrv-meta'),
+  fetchCatalog('expected-rcrv-3d'),
+  fetchCatalog('model-rcrv-precomputed'),
+  fetchCatalog('model-cruise-deck'),
+]);
+const RULES = rulesCatalog.rules;
 const res = (out, el, rule) => out.elements[el]?.results.find((r) => r.rule_id === rule);
 
-let cache;
-function load() {
-  if (!cache) {
-    const parts = read('ships/rcrv/parts.json');
-    const model = partsToModel(parts, read('ships/rcrv/rcrv-3d.meta.json'));
-    cache = { parts, model, out: checkModel(model, RULES), expected: read('tests/expected/rcrv-3d.json') };
-  }
-  return cache;
-}
+const model = partsToModel(parts, meta);
+const loaded = { parts, model, out: checkModel(model, RULES), expected };
+const load = () => loaded;
 
-test('rcrv-3d: hand-checked findings detected, bulk counts match, no false alarms', { skip }, () => {
+test('rcrv-3d: hand-checked findings detected, bulk counts match, no false alarms', () => {
   const { out, expected } = load();
   const s = scoreResults(out, expected);
   console.log(`  rcrv-3d: ${scoreLine(s)}`);
@@ -34,9 +34,9 @@ test('rcrv-3d: hand-checked findings detected, bulk counts match, no false alarm
   assert.deepEqual(s.bulk_failed, []);
 });
 
-// Independent recount from parts.json. Deliberately written without the checker or the adapter's
+// Independent recount from database parts. Deliberately written without the checker or the adapter's
 // helper functions: plain filters over the raw fields, with the material lists spelled out.
-test('rcrv-3d: every bulk count equals an independent scan of parts.json', { skip }, () => {
+test('rcrv-3d: every bulk count equals an independent scan of database parts', () => {
   const { parts, expected } = load();
   const P = parts.parts;
   const listed = new Set(expected.findings.map((f) => `${f.element}|${f.rule}`));
@@ -90,7 +90,7 @@ test('rcrv-3d: every bulk count equals an independent scan of parts.json', { ski
   for (const b of expected.bulk) assert.equal(scan[b.rule], b.count, `${b.rule} ${b.status}: independent scan`);
 });
 
-test('rcrv-3d: inch values are shown with their mm conversion', { skip }, () => {
+test('rcrv-3d: inch values are shown with their mm conversion', () => {
   const { out } = load();
   const r = res(out, 'P977', 'IACS-S6-T7-GRADE-THICKNESS');
   assert.equal(r.measured, 'grade A, t = 5/8" = 15.88 mm');
@@ -99,7 +99,7 @@ test('rcrv-3d: inch values are shown with their mm conversion', { skip }, () => 
   assert.equal(h.measured, '30" (smaller side of 30"X36") = 762 mm');
 });
 
-test('rcrv-3d: setting the material class decides the grade/thickness check (live edit)', { skip }, () => {
+test('rcrv-3d: setting the material class decides the grade/thickness check (live edit)', () => {
   const { model } = load();
   const m = structuredClone(model);
   const el = m.elements.find((e) => e.id === 'P977'); // 5/8" Grade A shell plate
@@ -109,21 +109,21 @@ test('rcrv-3d: setting the material class decides the grade/thickness check (liv
   assert.equal(res(checkModel(m, RULES), 'P977', 'IACS-S6-T7-GRADE-THICKNESS').status, 'compliant');
 });
 
-test('rcrv-3d: draft rule (no official value) is listed and never run', { skip }, () => {
+test('rcrv-3d: draft rule (no official value) is listed and never run', () => {
   const { out } = load();
   assert.ok(out.draft_rules.some((d) => d.id === 'MIN-THK-SWBS'));
   assert.ok(Object.values(out.elements).every((e) => e.results.every((r) => r.rule_id !== 'MIN-THK-SWBS')));
 });
 
-test('rcrv-3d: the precomputed offline results match a fresh run', { skip }, () => {
+test('rcrv-3d: database precomputed results match a fresh run', () => {
   const { out } = load();
-  const pre = read('ships/rcrv/results-3d.json');
-  assert.deepEqual(pre.summary, out.summary, 'run: npm run precompute');
+  const pre = precomputed;
+  assert.deepEqual(pre.summary, out.summary);
   assert.equal(pre.findings.length, findingsOf(out).length);
   assert.ok(pre.findings.every((f) => Number.isInteger(f.objectid)));
 });
 
-test('aluminium and stainless parts are not checked against steel grades, and the UI says why', { skip }, () => {
+test('aluminium and stainless parts are not checked against steel grades, and the UI says why', () => {
   const { out, model } = load();
   const al = model.elements.find((e) => e.props.material_family?.value === 'aluminium' && /^1/.test(e.props.swbs?.value ?? ''));
   const na = out.elements[al.id].not_applicable.find((n) => n.rule_id === 'IACS-W11-HULL-GRADE');
@@ -177,7 +177,6 @@ test('new rules are valid and every unverified rule is in VERIFY.md', () => {
 // ---------- Meyer mentors Q&A (7 Nov) ----------
 
 test('mentor Q&A: DNV confirmed, every rule reviewed but still unverified, no drawing codes in rules', () => {
-  const meta = read('ships/rcrv/rcrv-3d.meta.json');
   assert.equal(meta.ship.class_society.value, 'DNV');
   assert.match(meta.ship.class_society.source, /confirmed by Meyer mentors \(Q&A, 7 Nov\)/);
   for (const r of RULES) {
@@ -188,6 +187,6 @@ test('mentor Q&A: DNV confirmed, every rule reviewed but still unverified, no dr
   const verify = fs.readFileSync(new URL('../VERIFY.md', import.meta.url), 'utf8');
   const open = verify.split('## Open mentor questions')[1].split('\n## ')[0];
   assert.doesNotMatch(open, /BHP|ABS or DNV/);
-  const out = checkModel(read('ships/cruise/deck.json'), RULES);
+  const out = checkModel(cruise, RULES);
   assert.equal(Object.values(out.elements)[0].results[0]?.review_status ?? 'reviewed by Meyer mentors (Q&A, 7 Nov)', 'reviewed by Meyer mentors (Q&A, 7 Nov)');
 });

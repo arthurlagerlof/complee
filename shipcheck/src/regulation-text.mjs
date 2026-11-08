@@ -6,10 +6,17 @@ import fs from 'node:fs';
 
 const TTL_MS = 10 * 60_000;
 
-export function createRegulationText({ linksFile, ruleIds, apiBase = 'http://127.0.0.1:8000', fetchImpl = fetch, timeoutMs = 8000 }) {
-  const links = JSON.parse(fs.readFileSync(linksFile, 'utf8'));
+export function createRegulationText({ linksFile, linksProvider, ruleIds, apiBase = 'http://127.0.0.1:8000', fetchImpl = fetch, timeoutMs = 8000 }) {
+  let links = linksFile ? JSON.parse(fs.readFileSync(linksFile, 'utf8')) : null;
   const base = String(apiBase).replace(/\/+$/, '');
   const cache = new Map(); // provision id -> { until, value }
+
+  async function getLinks() {
+    if (links) return links;
+    if (!linksProvider) throw new Error('Regulation links are not configured.');
+    links = await linksProvider();
+    return links;
+  }
 
   async function provision(id) {
     const hit = cache.get(id);
@@ -34,9 +41,11 @@ export function createRegulationText({ linksFile, ruleIds, apiBase = 'http://127
 
   return {
     async forRule(ruleId) {
-      if (!ruleId || !ruleIds().includes(ruleId)) throw Object.assign(new Error('Unknown rule'), { status: 404 });
-      const entry = links.rules[ruleId];
-      const head = { rule_id: ruleId, database: links.database, loaded_instruments: links.loaded_instruments, method: links.method };
+      const ids = await ruleIds();
+      if (!ruleId || !ids.includes(ruleId)) throw Object.assign(new Error('Unknown rule'), { status: 404 });
+      const catalog = await getLinks();
+      const entry = catalog.rules[ruleId];
+      const head = { rule_id: ruleId, database: catalog.database, loaded_instruments: catalog.loaded_instruments, method: catalog.method };
       if (!entry) return { ...head, linked: false, note: 'No provision in the regulation database is linked to this rule.', provisions: [] };
       try {
         const provisions = await Promise.all(entry.links.map(async (l) => ({ ...(await provision(l.provision_id)), match: l.match, note: l.note || null })));

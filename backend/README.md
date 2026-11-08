@@ -34,7 +34,7 @@ The backend that preceded this integration used a configurable HTTP embedding en
 
 ### Database permissions
 
-The configured role `shipdesign_app` was verified read-only on 2026-11-07 to have `CREATE` on `public`, `USAGE` on `extensions`, and `SELECT` on `public.provisions.embedding`; the vector type and cosine operator are present. The configured database currently has zero `sc_*` tables: the application migration is still pending. Do not reapply grants that are already present.
+The configured role `shipdesign_app` was verified read-only on 2026-11-07 to have `CREATE` on `public`, `USAGE` on `extensions`, and `SELECT` on `public.provisions.embedding`; the vector type and cosine operator are present. The database migration and ShipCheck import have since been applied; the 15 existing application tables and legacy records were preserved. Do not reapply grants that are already present.
 
 The app role needs database connection and `USAGE`/`CREATE` on `public` to run the application migration. Retrieval needs `SELECT` on the existing legacy tables and embedding column, plus `USAGE` on the schema containing pgvector. Have an administrator inspect the exact missing privilege before issuing a grant; the application never changes database permissions. No `REFERENCES` privilege is needed on legacy tables because application tables intentionally have no foreign keys into them. API vector errors are explicit and do not fall back to another search mode.
 
@@ -61,6 +61,22 @@ Apply the app-owned migration after an administrator has granted schema creation
 ```powershell
 python -m alembic upgrade head
 ```
+
+### ShipCheck catalog cutover
+
+The ShipCheck browser reads its rules, scenarios, model data, expected results, regulation links, and precomputed results from `GET /api/v1/shipcheck/catalog/{source_key}`. Binary 3D tiles remain on the existing `/model/...` gateway. The imported catalog JSON files have been removed from the repository after validating their hashes and record counts against the database; the database is the active source of truth.
+
+The additive `20261108_0004` migration creates three `sc_shipcheck_*` tables. `sc_shipcheck_dataset_versions` stores immutable source-hash versions, `sc_shipcheck_dataset_records` stores ordered JSON records, and `sc_shipcheck_active_datasets` identifies the active version per fixed source key. Re-imports are idempotent; changed inputs add a version and switch the active pointer in one transaction. Old versions are retained, and downgrade is blocked if any catalog data has been imported. Migration `20261108_0005` aligns the existing AI-extraction table with the ORM's prompt/schema version fields; existing extraction rows receive `legacy-unknown` rather than being dropped or rewritten.
+
+To import a future catalog version, prepare an external source directory containing the named catalog file(s) under `shipcheck/` (matching the historical paths recorded with each version). Set `SHIPCHECK_CATALOG_SOURCE_ROOT` to that directory and run from `backend` with selected source keys. The repository no longer contains these inputs. For a newly prepared APS parts export, `npm run prepare-model` writes to the OS temp directory; set `SHIPCHECK_CATALOG_STAGING_FILE` to a path ending in `shipcheck/ships/rcrv/parts.json`, set `SHIPCHECK_CATALOG_SOURCE_ROOT` to the parent directory containing that `shipcheck/` tree, then import `model-rcrv-parts`.
+
+```powershell
+python -m app.scripts.import_shipcheck_catalog rules scenarios model-rcrv-parts
+```
+
+The importer reads only its fixed registry of catalog keys and does not delete or update regulatory, legacy, or existing application records. Omitting source keys imports all registered catalogs. ShipCheck's Node server proxies catalog requests to FastAPI through `SHIPCHECK_DATA_API_URL`; set it to the API base URL on the server and to `http://127.0.0.1:8000` for local development. If a catalog has not been imported, the API reports a clear 503 instead of reading JSON from disk.
+
+The migration and initial import have been applied to the configured database after backup confirmation and target approval. The registered importer can still add new immutable versions when intentionally supplied with external catalog inputs.
 
 The pinned configuration is `BAAI/bge-m3`, snapshot `5617a9f61b028005a4858fdac845db406aefb181`, CPU by default, 1,024-dimensional L2-normalized query vectors. The supported settings are `EMBEDDING_MODEL`, `EMBEDDING_MODEL_REVISION`, `EMBEDDING_DEVICE`, and optional `EMBEDDING_CACHE_FOLDER`. Do not change the model, revision, normalization, or dimension to match a local convenience; these query vectors must be compatible with the existing provision embeddings. If `EMBEDDING_CACHE_FOLDER` is unset, Hugging Face uses its normal cache location (on Windows, typically `%USERPROFILE%\.cache\huggingface\hub`). `HF_HOME` can be set in the process environment to relocate the Hugging Face cache.
 
@@ -217,7 +233,7 @@ Geometry calculations require explicit coordinates/dimensions and compatible uni
 
 ## Migrations and tests
 
-The migration chain creates fourteen application-owned `sc_*` tables. It adds database-level same-revision constraints for relationships, component-associated facts, and finding-component links. `sc_findings` stores provision/retrieval identifiers without legacy foreign keys and snapshots the exact text, edition and source metadata. The follow-up AI migration adds provider/model/task configuration, execution history and reviewable extraction results. Downgrade drops only these app tables. Extensions, embeddings and legacy tables are not created, altered or dropped.
+The migration chain creates app-owned `sc_*` tables, including the versioned ShipCheck catalog tables. It adds database-level same-revision constraints for relationships, component-associated facts, and finding-component links. `sc_findings` stores provision/retrieval identifiers without legacy foreign keys and snapshots the exact text, edition and source metadata. The AI migrations add provider/model/task configuration, execution history and reviewable extraction results. Extensions, embeddings and legacy tables are not created, altered or dropped.
 
 Run unit and API tests without production access:
 
@@ -229,21 +245,22 @@ To run the migration upgrade/downgrade integration test, provide `TEST_DATABASE_
 
 ### Production migration runbook
 
-The configured production migration is intentionally unapplied. Before approval:
+For any future production schema or catalog change, verify the following against that specific change before approval:
 
-1. Take a database backup using the organization's established procedure and confirm that the backup is restorable. Capture the current schema/table inventory and confirm `public` contains no `sc_*` tables.
+1. Take a database backup using the organization's established procedure and confirm that the backup is restorable. Capture the current schema/table inventory, including existing `sc_*` tables and row counts.
 2. Confirm `DATABASE_URL` points to the intended production database without printing or logging it. Check the Alembic head with `python -m alembic heads` and current revision with `python -m alembic current`.
 3. Confirm the role has database `CONNECT` and `USAGE`/`CREATE` on `public`. Separately verify legacy-table read access and pgvector schema/embedding-column access for retrieval. The configured role's relevant grants were verified on 2026-11-07; do not repeat or broaden grants without a failed exact privilege check.
-4. Review the migration files and their scope. They create only the fourteen `sc_*` tables and do not create or alter legacy provisions, embeddings, extensions, or other regulatory data.
+4. Review the migration files and their scope. Additive application migrations must not create or alter legacy provisions, embeddings, extensions, or other regulatory data.
 5. In an approved change window, run from `backend`:
 
    ```powershell
    python -m alembic upgrade head
    ```
 
-6. Verify `python -m alembic current`, `python -m alembic check`, the exact fourteen `sc_*` tables, expected same-revision foreign keys, and unchanged legacy table/extension inventories and row counts. Then perform health and read-only retrieval checks.
+6. Verify `python -m alembic current`, `python -m alembic check`, the expected application tables, foreign keys, and unchanged legacy tables, existing application records, and extension inventories/row counts.
+7. After the schema is verified, import any approved catalog source from its external staging directory. Confirm its source hash and count, then check the catalog API response shape before switching production ShipCheck to the new active version.
 
-Rollback is not automatic: `downgrade base` drops the fourteen application tables and all application data in them. If rollback is approved before the application has accepted data, run `python -m alembic downgrade base`; otherwise restore the verified pre-migration backup under the incident/change procedure. Never use downgrade as a way to repair or modify legacy regulatory data.
+Rollback is not automatic. The applied ShipCheck catalog migration explicitly blocks downgrade while catalog history exists, and AI extraction schema rollback is also blocked when extraction records exist. Do not use `downgrade base` on the configured database: it would remove application-owned schema/data and is not a catalog rollback procedure. Restore the verified backup only under the organization's approved incident/change procedure; never use downgrade as a way to repair or modify legacy regulatory data.
 
 ## Current scope and limitations
 

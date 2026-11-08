@@ -4,14 +4,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { checkModel, validateRule, normalizeModel, findingsOf } from '../src/checker.mjs';
 import { scoreResults, scoreLine } from '../src/score.mjs';
+import { fetchCatalog } from '../src/catalog-api.mjs';
 
 const read = (p) => JSON.parse(fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8'));
-const RULES = read('rules.json').rules;
+const [rulesCatalog, CRUISE, INSIDE, expectedLayout, expectedCruise, expectedInside] = await Promise.all([
+  fetchCatalog('rules'),
+  fetchCatalog('model-cruise-deck'),
+  fetchCatalog('model-rcrv-inside'),
+  fetchCatalog('expected-rcrv-layout'),
+  fetchCatalog('expected-cruise'),
+  fetchCatalog('expected-rcrv-inside'),
+]);
+const RULES = rulesCatalog.rules;
 // Estimated RCRV deck layout with planted findings: test data for the layout rules (escape, Load Line, ...).
 const RCRV = read('tests/fixtures/rcrv-layout.json');
-const CRUISE = read('ships/cruise/deck.json');
-// Corridor example inside the real RCRV model (corridor, door, stair, guard rail placed in the real deckhouse).
-const INSIDE = read('ships/rcrv/inside.json');
 const clone = (o) => structuredClone(o);
 const resultOf = (out, el, rule) => out.elements[el]?.results.find((r) => r.rule_id === rule);
 const notApplied = (out, el, rule) => out.elements[el]?.not_applicable.find((r) => r.rule_id === rule);
@@ -19,9 +25,9 @@ const notApplied = (out, el, rule) => out.elements[el]?.not_applicable.find((r) 
 // ---------- ground truth ----------
 
 for (const [name, model, expected] of [
-  ['rcrv-layout', RCRV, read('tests/expected/rcrv-layout.json')],
-  ['cruise', CRUISE, read('tests/expected/cruise.json')],
-  ['rcrv-inside', INSIDE, read('tests/expected/rcrv-inside.json')],
+  ['rcrv-layout', RCRV, expectedLayout],
+  ['cruise', CRUISE, expectedCruise],
+  ['rcrv-inside', INSIDE, expectedInside],
 ]) {
   test(`${name}: every planted finding detected, no false alarms`, () => {
     const s = scoreResults(checkModel(model, RULES), expected);
