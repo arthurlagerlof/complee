@@ -704,11 +704,14 @@ def _ground_extraction_evidence(
     parsed = source_document.parsed_data
     format_name = parsed.get("format")
     evidence_by_id: dict[str, str] = {}
-    if format_name in {"txt", "docx"}:
+    page_by_id: dict[str, int] = {}
+    if format_name in {"txt", "docx", "pdf"}:
         for item in parsed.get("blocks", []):
             if isinstance(item, dict) and isinstance(item.get("source_id"), str):
                 if isinstance(item.get("text"), str):
                     evidence_by_id[item["source_id"]] = item["text"]
+                if isinstance(item.get("page"), int):
+                    page_by_id[item["source_id"]] = item["page"]
     elif format_name == "dxf":
         for item in parsed.get("entities", []):
             if isinstance(item, dict) and isinstance(item.get("source_id"), str):
@@ -716,7 +719,7 @@ def _ground_extraction_evidence(
                     item, ensure_ascii=False, separators=(",", ":")
                 )
     elif format_name in {"glb", "gltf"}:
-        for item in parsed.get("nodes", []):
+        for item in [*parsed.get("nodes", []), *parsed.get("groups", [])]:
             if isinstance(item, dict) and isinstance(item.get("source_id"), str):
                 evidence_by_id[item["source_id"]] = json.dumps(
                     item, ensure_ascii=False, separators=(",", ":")
@@ -744,7 +747,7 @@ def _ground_extraction_evidence(
                         **evidence.model_dump(),
                         "text": original[:5_000],
                         "source_id": source_id,
-                        "page": None,
+                        "page": page_by_id.get(source_id),
                     }
                 )
             )
@@ -779,17 +782,32 @@ def _attach_geometry_references(
             for item in parsed.get("nodes", [])
             if isinstance(item, dict) and isinstance(item.get("source_id"), str)
         }
+        groups = {
+            item.get("source_id"): item
+            for item in parsed.get("groups", [])
+            if isinstance(item, dict) and isinstance(item.get("source_id"), str)
+        }
         for candidate in result.components:
             candidate.geometry_reference = None
-            nodes = [
-                source_items[evidence.source_id]
-                for evidence in candidate.evidence
-                if evidence.source_id in source_items
-            ]
+            nodes = []
+            cited_groups = []
+            for evidence in candidate.evidence:
+                if evidence.source_id in source_items:
+                    if source_items[evidence.source_id] not in nodes:
+                        nodes.append(source_items[evidence.source_id])
+                elif evidence.source_id in groups:
+                    group = groups[evidence.source_id]
+                    cited_groups.append(group["source_id"])
+                    # A cited branch stands for its root node and the mesh nodes underneath it.
+                    for index in [group["node_index"], *group.get("mesh_node_indices", [])]:
+                        item = source_items.get(f"node:{index}")
+                        if item is not None and item not in nodes:
+                            nodes.append(item)
             if nodes:
                 candidate.geometry_reference = {
                     "source_document_id": str(source_document_id),
                     "source_sha256": source_document.sha256,
+                    **({"groups": cited_groups} if cited_groups else {}),
                     "nodes": [
                         {
                             "node_index": node["node_index"],

@@ -60,6 +60,7 @@ const fileKind = (name: string) => {
   if (suffix === '.bin') return { label: 'BIN', kind: 'model', support: 'GLTF binary sidecar · select with its GLTF file' }
   if (suffix === '.docx') return { label: 'DOCX', kind: 'document', support: 'Text and table extraction' }
   if (suffix === '.txt') return { label: 'TXT', kind: 'document', support: 'UTF-8 text extraction' }
+  if (suffix === '.pdf') return { label: 'PDF', kind: 'document', support: 'Text extraction with page references (text-based PDFs; no OCR)' }
   if (['.dwg', '.ifc', '.step', '.stp', '.iges', '.igs', '.nwd', '.nwc', '.rvt', '.3dm', '.obj', '.stl'].includes(suffix)) return { label: suffix.slice(1).toUpperCase(), kind: 'model', support: 'Not supported by the extraction pipeline yet' }
   return { label: suffix ? suffix.slice(1).toUpperCase() : 'FILE', kind: 'document', support: 'Not supported by the extraction pipeline yet' }
 }
@@ -142,9 +143,9 @@ export default function EvidenceIntake({ onContinue, onBack }: { onContinue: () 
 
   const extractSelectedFiles = async () => {
     if (!revisionId) { setExtractionMessage('Select a design revision before extracting candidate data.'); return }
-    const supported = files.filter((file) => ['.docx', '.txt', '.dxf', '.glb', '.gltf', '.bin'].includes(ext(file.name)))
-    if (!supported.some((file) => ['.docx', '.txt', '.dxf', '.glb', '.gltf'].includes(ext(file.name)))) {
-      setExtractionMessage('Select a supported DOCX, TXT, DXF, GLB or GLTF source file.')
+    const supported = files.filter((file) => ['.docx', '.txt', '.pdf', '.dxf', '.glb', '.gltf', '.bin'].includes(ext(file.name)))
+    if (!supported.some((file) => ['.docx', '.txt', '.pdf', '.dxf', '.glb', '.gltf'].includes(ext(file.name)))) {
+      setExtractionMessage('Select a supported DOCX, TXT, PDF, DXF, GLB or GLTF source file.')
       return
     }
     setBusy(true)

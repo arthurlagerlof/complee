@@ -16,6 +16,8 @@ MAX_ENTITIES = 10_000
 MAX_NODES = 10_000
 MAX_SOURCE_CHARACTERS = 1_000_000
 MAX_AI_ITEMS = 500
+MAX_PDF_PAGES = 2_000
+MAX_GROUPS = 300
 _DOCX_NS = {
     "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
 }
@@ -46,12 +48,14 @@ def parse_source(
         return _parse_text(data)
     if suffix == ".docx":
         return _parse_docx(data)
+    if suffix == ".pdf":
+        return _parse_pdf(data)
     if suffix == ".dxf":
         return _parse_dxf(data)
     if suffix in {".glb", ".gltf"}:
         return _parse_gltf(data, suffix, related_files or {})
     raise SourceProcessingError(
-        "Unsupported file format. Supported formats are TXT, DOCX, DXF, GLB and GLTF."
+        "Unsupported file format. Supported formats are TXT, DOCX, PDF (text-based), DXF, GLB and GLTF."
     )
 
 
@@ -147,6 +151,51 @@ def _parse_docx(data: bytes) -> ParsedSource:
         content=content,
         evidence=evidence,
         parsed_data={"format": "docx", "blocks": blocks[:MAX_ENTITIES]},
+    )
+
+
+def _parse_pdf(data: bytes) -> ParsedSource:
+    """Text of a text-based PDF, one evidence block per text line with its page number. Scanned pages without a
+    text layer are reported, not guessed (no OCR)."""
+    try:
+        from pypdf import PdfReader
+        from pypdf.errors import PdfReadError
+    except ImportError as exc:  # pragma: no cover - dependency is in requirements.txt
+        raise SourceProcessingError("PDF parsing needs the pypdf package (pip install -r requirements.txt).") from exc
+    try:
+        reader = PdfReader(BytesIO(data))
+        if reader.is_encrypted and not reader.decrypt(""):
+            raise SourceProcessingError("Password-protected PDFs are not supported.")
+        pages = list(reader.pages)
+    except (PdfReadError, ValueError, KeyError, OSError) as exc:
+        raise SourceProcessingError("Could not read the PDF document.") from exc
+    if len(pages) > MAX_PDF_PAGES:
+        raise SourceProcessingError(f"The PDF has more than {MAX_PDF_PAGES} pages.")
+    blocks: list[dict[str, Any]] = []
+    pages_without_text: list[int] = []
+    for page_number, page in enumerate(pages, start=1):
+        try:
+            text = page.extract_text() or ""
+        except Exception:  # noqa: BLE001 - one unreadable page must not discard the others
+            text = ""
+        # PDF text has visual lines, not reliable paragraphs: one block per line, like TXT sources.
+        lines = [" ".join(line.split()) for line in text.replace("\r", "").split("\n")]
+        lines = [line for line in lines if line]
+        if not lines:
+            pages_without_text.append(page_number)
+        for line_number, line in enumerate(lines, start=1):
+            blocks.append({"source_id": f"page:{page_number}:line:{line_number}", "page": page_number, "text": line})
+    if not blocks:
+        raise SourceProcessingError("No text layer was found in this PDF (scanned drawings need OCR, which is not supported).")
+    content = "\n".join(f"[{block['source_id']}] {block['text']}" for block in blocks)
+    _limit_content(content)
+    return ParsedSource(
+        source_type="document",
+        extraction_method="pdf_text",
+        content=content,
+        evidence=blocks[:MAX_ENTITIES],
+        parsed_data={"format": "pdf", "page_count": len(pages), "pages_without_text": pages_without_text,
+                     "blocks": blocks[:MAX_ENTITIES]},
     )
 
 
@@ -507,6 +556,65 @@ def _mesh_data(document: dict[str, Any], buffers: list[bytes]) -> list[dict[str,
     return meshes
 
 
+def _triangles(primitive: dict[str, Any]) -> int:
+    if primitive.get("mode", 4) != 4:
+        return 0
+    count = (primitive.get("index_data") or {}).get("count") or primitive.get("vertex_count") or 0
+    return int(count) // 3
+
+
+def _branch_groups(parsed_nodes: list[dict[str, Any]], meshes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deterministic assemblies: every node with children whose subtree contains geometry, with its path, direct
+    children, aggregated world bounds and geometry totals. Groups describe structure only; they are not components."""
+    by_index = {node["node_index"]: node for node in parsed_nodes}
+    groups = []
+    for node in parsed_nodes:
+        children = [c for c in node["child_node_indices"] if isinstance(c, int) and c in by_index]
+        if not children:
+            continue
+        stack, members, seen = list(children), [], set()
+        while stack:
+            index = stack.pop()
+            if index in seen:
+                continue
+            seen.add(index)
+            member = by_index[index]
+            members.append(member)
+            stack.extend(c for c in member["child_node_indices"] if isinstance(c, int) and c in by_index)
+        mesh_members = [m for m in [node, *members] if m["bounding_box"]]
+        if not mesh_members:
+            continue
+        triangles = vertices = 0
+        for member in mesh_members:
+            index = member["mesh_index"]
+            mesh = meshes[index] if isinstance(index, int) and 0 <= index < len(meshes) else None
+            for primitive in (mesh or {}).get("primitives", []):
+                triangles += _triangles(primitive)
+                vertices += primitive.get("vertex_count") or 0
+        minimum = [min(m["bounding_box"]["min"][axis] for m in mesh_members) for axis in range(3)]
+        maximum = [max(m["bounding_box"]["max"][axis] for m in mesh_members) for axis in range(3)]
+        path, parent = [], node["parent_node_index"]
+        while parent is not None and len(path) < 20:
+            path.append(by_index[parent]["name"] or f"node {parent}")
+            parent = by_index[parent]["parent_node_index"]
+        groups.append({
+            "source_id": f"group:node:{node['node_index']}",
+            "node_index": node["node_index"],
+            "name": node["name"],
+            "path": list(reversed(path)),
+            "depth": len(path),
+            "child_names": [by_index[c]["name"] for c in children][:24],
+            "descendant_count": len(members),
+            "mesh_node_indices": [m["node_index"] for m in mesh_members][:500],
+            "triangle_count": triangles,
+            "vertex_count": vertices,
+            "bounding_box": {"min": minimum, "max": maximum, "dimensions": [maximum[a] - minimum[a] for a in range(3)]},
+            "metadata": node["metadata"],
+        })
+    groups.sort(key=lambda g: (g["depth"], g["node_index"]))
+    return groups[:MAX_GROUPS]
+
+
 def _parse_gltf(data: bytes, suffix: str, related_files: dict[str, bytes]) -> ParsedSource:
     document, buffers = _gltf_json_and_buffers(data, suffix, related_files)
     source_model_id = hashlib.sha256(data).hexdigest()
@@ -522,15 +630,27 @@ def _parse_gltf(data: bytes, suffix: str, related_files: dict[str, bytes]) -> Pa
 
     parsed_nodes: list[dict[str, Any]] = []
     world_matrices: dict[int, list[float]] = {}
+
+    def world_matrix(index: int) -> list[float]:
+        # glTF does not require parents to have lower indices: resolve the ancestor chain first.
+        chain: list[int] = []
+        current: int | None = index
+        while current is not None and current not in world_matrices:
+            if current in chain:
+                raise SourceProcessingError("The GLTF node hierarchy contains a cycle.")
+            chain.append(current)
+            current = parents.get(current)
+        matrix = world_matrices[current] if current is not None else None
+        for item in reversed(chain):
+            local_matrix = _node_local_matrix(nodes[item])
+            matrix = _matrix_multiply(matrix, local_matrix) if matrix is not None else local_matrix
+            world_matrices[item] = matrix
+        return world_matrices[index]
+
     for node_index, node in enumerate(nodes):
         local = _node_local_matrix(node)
         parent_index = parents.get(node_index)
-        world = (
-            _matrix_multiply(world_matrices[parent_index], local)
-            if parent_index is not None
-            else local
-        )
-        world_matrices[node_index] = world
+        world = world_matrix(node_index)
         mesh_index = node.get("mesh")
         mesh = meshes[mesh_index] if isinstance(mesh_index, int) and mesh_index < len(meshes) else None
         world_bounds = []
@@ -614,8 +734,13 @@ def _parse_gltf(data: bytes, suffix: str, related_files: dict[str, bytes]) -> Pa
                 ] if mesh else []
             }
         )
+    groups = _branch_groups(parsed_nodes, meshes)
     content = "\n".join(
-        json.dumps(node, ensure_ascii=False, separators=(",", ":")) for node in ai_nodes
+        ["MODEL BRANCHES (assemblies with aggregated world bounds; interpret a branch as one logical object when its "
+         "children are its parts, and cite group:node:N for it):"]
+        + [json.dumps(group, ensure_ascii=False, separators=(",", ":")) for group in groups[:MAX_AI_ITEMS]]
+        + ["NODES:"]
+        + [json.dumps(node, ensure_ascii=False, separators=(",", ":")) for node in ai_nodes]
     )
     return ParsedSource(
         source_type="cad",
@@ -627,6 +752,9 @@ def _parse_gltf(data: bytes, suffix: str, related_files: dict[str, bytes]) -> Pa
                 "text": json.dumps(node, ensure_ascii=False, separators=(",", ":")),
             }
             for node in parsed_nodes
+        ] + [
+            {"source_id": group["source_id"], "text": json.dumps(group, ensure_ascii=False, separators=(",", ":"))}
+            for group in groups
         ],
         parsed_data={
             "format": suffix[1:],
@@ -644,5 +772,6 @@ def _parse_gltf(data: bytes, suffix: str, related_files: dict[str, bytes]) -> Pa
                 if isinstance(buffer, dict) and buffer.get("uri") and not buffer["uri"].startswith("data:")
             ],
             "ai_interpretation_truncated": len(parsed_nodes) > MAX_AI_ITEMS,
+            "groups": groups,
         },
     )
