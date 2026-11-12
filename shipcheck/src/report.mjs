@@ -33,6 +33,7 @@ export function reportRows(results, model, rules = [], { register = null } = {})
       text: f.text_status ?? ruleById.get(f.rule_id)?.text_status ?? 'paraphrase',
       verified: f.verified ? 'yes' : 'no',
       review: f.review_status ?? ruleById.get(f.rule_id)?.review_status ?? '',
+      same_requirement_as: (f.same_requirement_as || []).join(' '),
       // Engineer's disposition (findings register); only present when a register is passed.
       ...(register ? (() => {
         const d = register[`${f.element}|${f.rule_id}`];
@@ -73,6 +74,21 @@ ${table('Changed findings', 'ni', f.changed.map((x) => row(x, `${esc(LABEL[x.bef
 ${table('Resolved findings', 'ok', f.resolved.map((x) => row({ ...x, status: 'resolved' }, `${esc(LABEL[x.status] ?? x.status)}, ${esc(x.measured)}`)))}
 ${e.changed.length ? `<h3>Changed design values (${e.changed.length} elements)</h3><table><tr><th>Element</th><th>Field</th><th>Earlier</th><th>Now</th></tr>${e.changed.flatMap((c) => c.changes.map((ch) => `<tr><td><b>${esc(c.id)}</b> ${esc(c.name)}</td><td>${esc(ch.field)}</td><td>${esc(ch.before)}</td><td>${esc(ch.after)}</td></tr>`)).join('')}</table>` : ''}
 ${e.added.length ? `<p>Added: ${e.added.map((x) => esc(x.id)).join(', ')}.</p>` : ''}${e.removed.length ? `<p>Removed: ${e.removed.map((x) => esc(x.id)).join(', ')}.</p>` : ''}`;
+}
+
+// Rule hierarchy: conflicting limits and rules replaced by a higher-ranking one (with the stated basis).
+export function hierarchySection(results) {
+  const els = Object.values(results.elements || {});
+  const conflicts = els.flatMap((e) => (e.conflicts || []).map((c) => ({ e, c })));
+  const sup = els.flatMap((e) => (e.superseded || []).map((x) => ({ e, x })));
+  if (!conflicts.length && !sup.length) return '';
+  return `<h2>Rule hierarchy</h2>
+${conflicts.length ? `<h3 class="nc">Rule conflicts (${conflicts.length}): no design can meet both limits, clarify with flag state or class</h3>
+<table><tr><th>Element</th><th>Parameter</th><th>Lower limit</th><th>Upper limit</th></tr>
+${conflicts.map(({ e, c }) => `<tr><td><b>${esc(e.id)}</b> ${esc(e.name)}</td><td>${esc(c.parameter)}</td><td>${esc(c.lower.required)} (${esc(c.lower.rule_id)})</td><td>${esc(c.upper.required)} (${esc(c.upper.rule_id)})</td></tr>`).join('')}</table>` : ''}
+${sup.length ? `<h3>Replaced by a higher-ranking rule (${sup.length}): not counted as findings</h3>
+<table><tr><th>Element</th><th>Rule</th><th>Replaced by</th><th>Basis</th><th>Result it would have had</th></tr>
+${sup.map(({ e, x }) => `<tr><td><b>${esc(e.id)}</b> ${esc(e.name)}</td><td>${esc(x.rule_id)}</td><td>${esc(x.by)} (${x.type === 'exempts' ? 'exemption' : 'replaces'})</td><td>${esc(x.basis)}</td><td>${esc(LABEL[x.status] ?? x.status)}, required ${esc(x.required)}</td></tr>`).join('')}</table>` : ''}`;
 }
 
 // Escape-route analysis (src/escape.mjs) as a report section: one row per room.
@@ -127,9 +143,10 @@ ${drafts.length ? `<p><b>Draft rules, not run (no official value):</b> ${drafts.
 ${register ? `<p>Findings register: <b>${openCount}</b> of ${rows.length} findings open, ${rows.length - openCount} with a disposition. A disposition records how a finding is handled; it never changes the checker status.</p>` : ''}
 <table><tr><th>Status</th><th>Element</th><th>Group / deck</th><th>Rule</th><th>Source / clause</th><th>Measured</th><th>Required</th><th>Explanation</th><th>Input provenance (model text = mm)</th><th>Basis</th><th>Verified</th><th>Review</th>${register ? '<th>Disposition</th><th>Responsible</th><th>Justification / note</th>' : ''}</tr>
 ${rows.map((r) => `<tr><td class="${r.status === 'Non-compliant' ? 'nc' : 'ni'}">${esc(r.status)}</td><td><b>${esc(r.element)}</b>${r.objectid !== '' ? `<br><span class="muted">dbId ${esc(r.objectid)}</span>` : ''}<br>${esc(r.name)}</td>
-<td>${esc(r.group)}</td><td>${esc(r.rule)}</td><td>${esc(r.source)}<br><span class="muted">${esc(r.clause)}</span></td><td>${esc(r.measured)}</td><td>${esc(r.required)}</td>
+<td>${esc(r.group)}</td><td>${esc(r.rule)}${r.same_requirement_as ? `<br><span class="muted">same requirement as ${esc(r.same_requirement_as)}</span>` : ''}</td><td>${esc(r.source)}<br><span class="muted">${esc(r.clause)}</span></td><td>${esc(r.measured)}</td><td>${esc(r.required)}</td>
 <td>${esc(r.explanation)}</td><td class="muted">${esc(r.provenance)}</td><td>${esc(r.basis)}</td><td>${r.verified}</td><td>${esc(r.review)}</td>${register ? `<td>${esc(r.disposition)}</td><td>${esc(r.responsible)}</td><td>${esc(r.note)}</td>` : ''}</tr>`).join('\n')}
 </table>
+${hierarchySection(results)}
 ${comparisonSection(comparison)}
 ${escapeSection(escape, model)}
 ${traceSection(results, rules)}

@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { checkModel, validateRule, normalizeModel, findingsOf } from '../src/checker.mjs';
+import { checkModel, validateRule, validateRelations, normalizeModel, findingsOf } from '../src/checker.mjs';
 import { scoreResults, scoreLine } from '../src/score.mjs';
 import { fetchCatalog } from '../src/catalog-api.mjs';
 
@@ -62,6 +62,7 @@ test('all rules are structurally valid and related[] ids exist', () => {
     assert.deepEqual(validateRule(r), [], `rule ${r.id}`);
     for (const rel of r.related || []) assert.ok(ids.has(rel), `${r.id} -> unknown related ${rel}`);
   }
+  assert.deepEqual(validateRelations(RULES), []);
 });
 
 test('every unverified rule is listed in VERIFY.md', () => {

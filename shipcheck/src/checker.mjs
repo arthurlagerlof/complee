@@ -568,7 +568,117 @@ export function validateRule(rule) {
   if (rule.check === 'requires' && !rule.requires?.type) errors.push('missing "requires.type"');
   if (!rule.applies_to?.types?.length) errors.push('missing "applies_to.types"');
   if (typeof rule.verified !== 'boolean') errors.push('"verified" must be true or false');
+  if (rule.relations !== undefined) {
+    if (!Array.isArray(rule.relations)) errors.push('"relations" must be a list');
+    else for (const r of rule.relations) {
+      if (!RELATION_TYPES.includes(r?.type)) errors.push(`relation type must be one of ${RELATION_TYPES.join(', ')}`);
+      if (!r?.rule || r.rule === rule.id) errors.push('a relation needs "rule" (another rule id)');
+      // No relation without a source: which rule takes precedence is a legal statement, never a guess.
+      if (!r?.basis?.trim?.()) errors.push('a relation needs "basis" (where the precedence is stated)');
+    }
+  }
   return errors;
+}
+
+// ---------- rule hierarchy ----------
+// Rules apply cumulatively by default: every applicable rule must be met, so the strictest limit governs.
+// A catalog rule can state that it takes another rule's place where both apply:
+//   replaces - a more specific or higher-ranking provision that applies instead (e.g. a national implementation)
+//   exempts  - an exemption or accepted alternative arrangement that lifts the other requirement
+// Each relation names its basis (the clause that says so). Without one, nothing is superseded.
+export const RELATION_TYPES = ['replaces', 'exempts'];
+
+// Catalog-level checks: relations must point to known rules and must not go in a circle.
+export function validateRelations(rules) {
+  const errors = [];
+  const ids = new Set(rules.map((r) => r.id));
+  const edges = new Map(rules.map((r) => [r.id, (r.relations || []).map((x) => x.rule)]));
+  for (const r of rules) for (const x of r.relations || []) if (!ids.has(x.rule)) errors.push(`${r.id}: relation to unknown rule "${x.rule}"`);
+  const state = new Map();
+  const visit = (id, path) => {
+    if (state.get(id) === 'done') return;
+    if (state.get(id) === 'open') { errors.push(`circular precedence: ${[...path, id].join(' > ')}`); return; }
+    state.set(id, 'open');
+    for (const next of edges.get(id) || []) if (ids.has(next)) visit(next, [...path, id]);
+    state.set(id, 'done');
+  };
+  for (const r of rules) visit(r.id, []);
+  return errors;
+}
+
+// Relations by rule id, built once per rule list.
+const relationCache = new WeakMap();
+function relationsByRule(rules) {
+  let hit = relationCache.get(rules);
+  if (!hit) {
+    const edges = new Map(rules.filter((r) => r.relations?.length).map((r) => [r.id, r.relations]));
+    const reaches = (from, to, seen = new Set()) => from === to || (!seen.has(from) && (seen.add(from), (edges.get(from) || []).some((x) => reaches(x.rule, to, seen))));
+    // A circular precedence (a catalog error, see validateRelations) would let rules cancel each other out: such
+    // relations are ignored, so every rule in the circle stays in force.
+    hit = new Map();
+    for (const [id, rels] of edges) {
+      const ok = rels.filter((x) => RELATION_TYPES.includes(x.type) && x.basis && !reaches(x.rule, id));
+      if (ok.length) hit.set(id, ok);
+    }
+    relationCache.set(rules, hit);
+  }
+  return hit;
+}
+
+// Apply the hierarchy to one element's results. A rule replaces or exempts another only when it applies here
+// for certain: if its own applicability is unknown (ship particulars missing), the other rule stays in force.
+// Replaced results are kept under `superseded` with the reason, never dropped silently.
+function applyHierarchy(results, rules, unknownApplicability) {
+  const relations = relationsByRule(rules);
+  if (!relations.size) return { results, superseded: [] };
+  const byId = new Map(results.map((r) => [r.rule_id, r]));
+  const out = new Map();
+  for (const r of results) {
+    if (unknownApplicability.has(r.rule_id)) continue;
+    for (const rel of relations.get(r.rule_id) || []) {
+      const target = byId.get(rel.rule);
+      if (target && !out.has(rel.rule)) {
+        out.set(rel.rule, { rule_id: target.rule_id, source: target.source, clause: target.clause, status: target.status,
+          measured: target.measured, required: target.required, by: r.rule_id, by_source: r.source, type: rel.type, basis: rel.basis });
+      }
+    }
+  }
+  return { results: results.filter((r) => !out.has(r.rule_id)), superseded: [...out.values()] };
+}
+
+// Limits on the same parameter: the strictest lower and the strictest upper limit govern; when the lower limit is
+// above the upper limit no design can meet both (a rule conflict to clear with flag state or class). Rules that set
+// the very same limit are marked as the same requirement, so a reviewer sees one requirement from two sources.
+function limitAnalysis(results) {
+  const governing = {};
+  for (const r of results) {
+    const l = r.limit;
+    if (!l || typeof l.value !== 'number' || (l.kind !== 'min' && l.kind !== 'max')) continue;
+    const key = l.kind === 'min' ? l.parameter : `${l.parameter} (upper limit)`;
+    const cur = governing[key];
+    const stricter = !cur || (l.kind === 'min' ? l.value > cur.value : l.value < cur.value);
+    if (stricter) governing[key] = { parameter: l.parameter, rule_id: r.rule_id, kind: l.kind, value: l.value, required: r.required, count: (cur?.count ?? 0) + 1 };
+    else cur.count++;
+  }
+  const conflicts = [];
+  for (const g of Object.values(governing)) {
+    if (g.kind !== 'min') continue;
+    const upper = governing[`${g.parameter} (upper limit)`];
+    if (upper && g.value > upper.value) {
+      conflicts.push({ parameter: g.parameter, lower: { rule_id: g.rule_id, required: g.required }, upper: { rule_id: upper.rule_id, required: upper.required } });
+    }
+  }
+  const same = new Map();
+  for (const r of results) {
+    const l = r.limit;
+    if (!l || typeof l.value !== 'number') continue;
+    const key = `${l.parameter}|${l.kind}|${l.value}`;
+    same.set(key, [...(same.get(key) || []), r]);
+  }
+  for (const group of same.values()) {
+    if (group.length > 1) for (const r of group) r.same_requirement_as = group.filter((x) => x !== r).map((x) => x.rule_id);
+  }
+  return { governing, conflicts };
 }
 
 // ---------- main entry ----------
@@ -579,7 +689,8 @@ const LOCAL_CHECKS = new Set(['in_set', 'table_lookup', 'data_quality', 'min', '
 
 function checkElement(el, rules, ctx) {
   const { model } = ctx;
-  const results = [], not_applicable = [];
+  const all = [], not_applicable = [];
+  const unknownApplicability = new Set();
   for (const rule of rules) {
     const ec = elementCondition(rule, el, model);
     if (!ec.ok) {
@@ -589,7 +700,8 @@ function checkElement(el, rules, ctx) {
     const sc = shipCondition(rule, model);
     if (sc.ok === false) { not_applicable.push({ rule_id: rule.id, source: rule.source, reason: sc.reason }); continue; }
     if (sc.ok === 'unknown') {
-      results.push(result(rule, 'not_enough_info', {
+      unknownApplicability.add(rule.id);
+      all.push(result(rule, 'not_enough_info', {
         inputs: sc.inputs,
         explanation: `Cannot decide whether this rule applies: ${sc.missing} is missing in the ship particulars.`,
       }));
@@ -600,21 +712,13 @@ function checkElement(el, rules, ctx) {
       ? fn(rule, el, ctx)
       : result(rule, 'not_enough_info', { explanation: `Unknown check type "${rule.check}".` });
     if (sc.inputs.length) r.inputs = [...r.inputs, ...sc.inputs];
-    results.push(r);
+    all.push(r);
   }
 
-  // Overlap: several rules limiting the same parameter -> the strictest one governs.
-  const governing = {};
-  for (const r of results) {
-    const l = r.limit;
-    if (!l || typeof l.value !== 'number') continue;
-    const cur = governing[l.parameter];
-    const stricter = !cur || (l.kind === 'min' ? l.value > cur.value : l.value < cur.value);
-    if (stricter) governing[l.parameter] = { rule_id: r.rule_id, kind: l.kind, value: l.value, required: r.required, count: (cur?.count ?? 0) + 1 };
-    else cur.count++;
-  }
+  const { results, superseded } = applyHierarchy(all, rules, unknownApplicability);
+  const { governing, conflicts } = limitAnalysis(results);
   const worst = results.reduce((w, r) => (STATUS_RANK[r.status] > (STATUS_RANK[w] || 0) ? r.status : w), null);
-  return { id: el.id, name: el.name, type: el.type, deck: el.deck, worst, results, not_applicable, governing };
+  return { id: el.id, name: el.name, type: el.type, deck: el.deck, worst, results, not_applicable, superseded, governing, conflicts };
 }
 
 function checkContext(rawModel, allRules) {

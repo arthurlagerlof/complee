@@ -251,7 +251,7 @@ function resultsFromPrecomputed(pre) {
   const rules = Object.fromEntries(allRules().map((r) => [r.id, r]));
   const elements = {};
   for (const f of pre.findings) {
-    const e = (elements[f.element] ??= { id: f.element, name: f.name, type: 'part', deck: f.deck, worst: null, results: [], not_applicable: [], governing: {} });
+    const e = (elements[f.element] ??= { id: f.element, name: f.name, type: 'part', deck: f.deck, worst: null, results: [], not_applicable: [], superseded: [], governing: {}, conflicts: [] });
     e.results.push({ ...f, rule_text: rules[f.rule_id]?.text ?? '', related: [] });
     if ((STATUS_RANK[f.status] ?? 0) > (STATUS_RANK[e.worst] ?? 0)) e.worst = f.status;
   }
@@ -910,8 +910,10 @@ function renderRuleView(ruleId) {
 function renderResults(id) {
   const e = S.results.elements[id];
   $('#dStatus').innerHTML = `<span class="badge st-${e.worst ?? 'none'}">${LABEL[e.worst]}</span>`;
-  const gov = Object.entries(e.governing).filter(([, g]) => g.count > 1).map(([p, g]) =>
-    `<div class="gov"><b>${esc(p)}</b> is limited by ${g.count} overlapping rules here; the strictest governs: <b>${esc(g.required)}</b> (${esc(g.rule_id)}).</div>`).join('');
+  const gov = (e.conflicts || []).map((c) =>
+    `<div class="gov conflict"><b>Rule conflict on ${esc(c.parameter)}:</b> ${esc(c.lower.rule_id)} requires ${esc(c.lower.required)}, ${esc(c.upper.rule_id)} requires ${esc(c.upper.required)}. No design can meet both; clarify with the flag state or class which one applies.</div>`).join('')
+    + Object.entries(e.governing).filter(([, g]) => g.count > 1).map(([p, g]) =>
+    `<div class="gov"><b>${esc(g.parameter ?? p)}</b> has ${g.count} overlapping ${g.kind === 'max' ? 'upper' : 'lower'} limits here; all apply, so the strictest governs: <b>${esc(g.required)}</b> (${esc(g.rule_id)}).</div>`).join('');
 
   const cards = e.results.map((r) => `
     <div class="res st-${r.status}" data-rule="${esc(r.rule_id)}">
@@ -926,6 +928,7 @@ function renderResults(id) {
         ${r.review_status ? `<span class="tag review" title="How the value is shown was reviewed; this is not a verification against the official text">${esc(r.review_status)}</span>` : ''}
         <span class="tag grey">${r.text_status === 'verbatim' ? 'verbatim text' : 'paraphrased text'}</span>
         ${r.basis !== 'explicit' ? `<span class="tag grey" title="${esc(ruleById(r.rule_id)?.basis_note || '')}">basis: ${esc(r.basis)}</span>` : ''}
+        ${r.same_requirement_as?.length ? `<span class="tag grey" title="Same limit on the same value from another instrument: one requirement, two sources">same requirement as ${esc(r.same_requirement_as.join(', '))}</span>` : ''}
         ${r.reference_url ? `<a class="tag grey" href="${esc(r.reference_url)}" target="_blank" rel="noopener">official source ↗</a>` : ''}
       </div>
       ${r.status !== 'compliant' ? `<div class="ai-row"><button class="tiny ai-btn explainBtn" data-rule="${esc(r.rule_id)}" title="Plain-language explanation, exceptions to check and ways to resolve it (AI)">✦ Explain</button></div><div class="ai-out" data-explain="${esc(r.rule_id)}">${explainHTML(id, r)}</div>` : ''}
@@ -933,7 +936,7 @@ function renderResults(id) {
       </div>`).join('') || '<p class="muted">No rule in the current rule set applies to this element.</p>';
 
   // "Also required": related rules not applied to this element, and where they are checked in the model.
-  const applied = new Set(e.results.map((r) => r.rule_id));
+  const applied = new Set([...e.results, ...(e.superseded || [])].map((r) => r.rule_id));
   const related = [...new Set(e.results.flatMap((r) => r.related))].filter((rid) => !applied.has(rid));
   const also = related.map((rid) => {
     const rule = ruleById(rid);
@@ -949,11 +952,13 @@ function renderResults(id) {
   }).join('');
 
   const na = e.not_applicable.map((n) => `<div class="na">• <b>${esc(n.rule_id)}</b>: ${esc(n.reason)}</div>`).join('');
+  const sup = (e.superseded || []).map((x) => `<div class="na">• <b>${esc(x.rule_id)}</b> ${x.type === 'exempts' ? 'is lifted by the exemption in' : 'is replaced by'} <b>${esc(x.by)}</b> (${esc(x.basis)}). It would have been ${esc(LABEL[x.status].toLowerCase())}${x.required && x.required !== '-' ? ` (required ${esc(x.required)})` : ''}.</div>`).join('');
 
   $('#dResults').innerHTML = `${gov}
     <h2>Rules applied (${e.results.length})</h2>${cards}
     <h2 id="alsoHead">Also required (${related.length})</h2>
     ${also || '<p class="muted">No related rules outside the ones applied above.</p>'}
+    ${sup ? `<h2>Replaced by a higher-ranking rule (${e.superseded.length})</h2>${sup}` : ''}
     ${na ? `<h2>Considered, not applicable (${e.not_applicable.length})</h2>${na}` : ''}`;
   document.querySelectorAll('#dResults .goto').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); select(a.dataset.id); }));
   document.querySelectorAll('#dResults .ruleLink').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); showRule(a.dataset.rule); }));
