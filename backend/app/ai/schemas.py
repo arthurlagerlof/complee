@@ -260,6 +260,8 @@ class GenerationResponse(BaseModel):
     validation_errors: list[str] = Field(default_factory=list)
     duration_ms: int
     token_usage: dict[str, Any] = Field(default_factory=dict)
+    # Fast model chain: every model that was tried, with status, duration and the reason it was skipped.
+    attempts: list[dict[str, Any]] | None = None
 
 
 class AIExecutionOut(BaseModel):

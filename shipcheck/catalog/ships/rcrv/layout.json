@@ -1213,7 +1213,7 @@
    "geom": {
     "x": 40525,
     "y": 600,
-    "lx": 3475,
+    "lx": 2475,
     "ly": 5400,
     "h": 2500
    },
@@ -1617,14 +1617,14 @@
   {
    "id": "01-C4",
    "type": "corridor",
-   "name": "Forward cross passage to escape ladder",
+   "name": "Forward passage beside the stair to the escape ladder",
    "deck": "01",
    "source": "estimated (added for the escape-route network)",
    "geom": {
-    "x": 46500,
-    "y": -1250,
-    "lx": 1000,
-    "ly": 4250,
+    "x": 43000,
+    "y": 1600,
+    "lx": 4500,
+    "ly": 1600,
     "h": 150
    },
    "props": {
@@ -1786,6 +1786,63 @@
    },
    "props": {
     "zone": "open_deck"
+   }
+  },
+  {
+   "id": "01-C5",
+   "type": "corridor",
+   "name": "Connector, 01 main corridor to forward passage",
+   "deck": "01",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 43000,
+    "y": 600,
+    "lx": 1000,
+    "ly": 1000,
+    "h": 150
+   },
+   "props": {
+    "clear_width": 1000,
+    "dead_end_length": 0,
+    "zone": "circulation"
+   }
+  },
+  {
+   "id": "MD-C2",
+   "type": "corridor",
+   "name": "Passage beside the main stair to the science stores",
+   "deck": "MD",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 43000,
+    "y": 1425,
+    "lx": 3500,
+    "ly": 1000,
+    "h": 150
+   },
+   "props": {
+    "clear_width": 1000,
+    "dead_end_length": 0,
+    "zone": "circulation"
+   }
+  },
+  {
+   "id": "MD-C3",
+   "type": "corridor",
+   "name": "Connector, lab corridor to the stair-side passage",
+   "deck": "MD",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 43000,
+    "y": 425,
+    "lx": 1000,
+    "ly": 1000,
+    "h": 150
+   },
+   "props": {
+    "clear_width": 1000,
+    "dead_end_length": 0,
+    "zone": "circulation"
    }
   }
  ],

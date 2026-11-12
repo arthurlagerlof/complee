@@ -356,3 +356,37 @@ table.register tr.warn td { background: #fffaf0; }
 .top-break { flex-basis: 100%; height: 0; }
 #scenario { max-width: 340px; }
 .top #accBadge { display: none; } /* the same figure is in the sidebar; the header keeps to controls */
+
+/* ---------- measuring, geometry line, revision comparison ---------- */
+.measure-label { position: absolute; z-index: 5; transform: translate(-50%, -140%); background: #1d2430; color: #fff; padding: 4px 9px; border-radius: 6px; font-size: 12px; pointer-events: none; white-space: nowrap; display: none; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+.measure-label b { font-size: 13px; margin-right: 8px; } .measure-label span { opacity: .78; font-size: 11px; }
+.geom { font-size: 12px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+.compare { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 10px 0; background: #fbfcfd; }
+.cmp-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.cmp-group { margin-top: 8px; } .cmp-group > b { font-size: 12px; }
+.item.cmp.gone { cursor: default; }
+
+/* ---------- Revit conversion progress ---------- */
+.convert h1 { font-size: 14px; word-break: break-all; }
+.convert-bar { height: 6px; border-radius: 3px; background: var(--soft); overflow: hidden; margin: 10px 0 6px; }
+.convert-bar i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+.convert-bar.indeterminate i { width: 30%; animation: convert-slide 1.4s ease-in-out infinite; }
+@keyframes convert-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+
+/* ---------- AI assistance ---------- */
+.ai-btn { border-color: #c7d2fe; background: #eef2ff; color: #3730a3; }
+.ai-btn:hover:not(:disabled) { border-color: #818cf8; }
+.ai-row { margin-top: 6px; }
+.ai-box { margin-top: 6px; padding: 8px 10px; border: 1px solid #c7d2fe; border-radius: 6px; background: #f8f9ff; font-size: 12.5px; }
+.ai-box p { margin: 0 0 6px; }
+.ai-box ul, .ai-box ol { margin: 2px 0 6px; padding-left: 18px; }
+.ai-h { font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em; color: #3730a3; margin-top: 6px; }
+.ai-foot { margin-top: 6px; font-size: 11px; color: var(--muted); border-top: 1px dashed #c7d2fe; padding-top: 4px; }
+.ai-wait { margin-top: 6px; font-size: 12px; color: #3730a3; display: flex; align-items: center; gap: 8px; }
+.spin { width: 12px; height: 12px; border: 2px solid #c7d2fe; border-top-color: #4f46e5; border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.esc-sug { padding: 6px 0; border-bottom: 1px solid #e0e7ff; }
+.esc-sug:last-of-type { border-bottom: 0; }
+.esc-sug.on { background: #ecfdf5; margin: 0 -10px; padding: 6px 10px; }
+.esc-sug .ok-line { color: #15803d; font-size: 12px; margin-top: 3px; }
+.esc-sug-actions { display: flex; gap: 6px; margin-top: 4px; }

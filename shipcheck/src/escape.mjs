@@ -183,7 +183,9 @@ export function routesFrom(graph, model, id) {
   if (!primary) return { id, status: 'no_route', primary: null, secondary: null };
   const gates = [...primary.verticals, ...primary.doors];
   if (!gates.length) return { id, status: 'direct', primary, secondary: null };
-  const secondary = describe(graph, model, shortest(graph, start, { banVertical: new Set(primary.verticals), banElements: new Set(primary.doors) }));
+  // Independent means: the alternative may not use any stair, ladder, trunk or door of the shortest route at all, not even
+  // walk across a stair landing (a fire in that stairwell would block both routes).
+  const secondary = describe(graph, model, shortest(graph, start, { banElements: new Set([...primary.verticals, ...primary.doors]) }));
   return { id, status: secondary ? 'two_routes' : 'single_route', primary, secondary, shared_gates: secondary ? [] : gates };
 }
 
@@ -205,7 +207,7 @@ export function analyzeEscape(model, { blocked = new Set() } = {}) {
     assumptions: [
       `Openings are inferred from geometry: elements that overlap or share at least ${MIN_OPENING_MM} mm of boundary are connected; a gap over ${TOLERANCE_MM} mm is a closed bulkhead.`,
       'Rooms connect to circulation only; a room is crossed only to reach a door, stair, ladder or escape trunk inside it.',
-      'The alternative route shares no stair, ladder, escape trunk or door with the shortest route.',
+      'The alternative route does not use any stair, ladder, escape trunk or door of the shortest route, not even to cross a landing.',
       'Lengths are walking distances along the route centre line, including the rise of stairs and ladders.',
     ],
   };

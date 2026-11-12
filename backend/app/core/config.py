@@ -37,6 +37,20 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     gemini_model: str | None = None
+    # Optional second Gemini model, used only when the configured one is overloaded (HTTP 503) after retries.
+    gemini_fallback_model: str | None = None
+    # Fast model chain (app/services/ai_chain.py): first model first, next one on error, timeout or bad answer.
+    anthropic_api_key: str | None = None
+    anthropic_base_url: str = "https://api.anthropic.com"
+    openai_api_key: str | None = None
+    openai_base_url: str = "https://api.openai.com/v1"
+    ai_model_chain: str = (
+        "anthropic:claude-opus-5-5:speed=fast,"
+        "openai:gpt-6.1-sol:service_tier=ultrafast,"
+        "openai:gpt-6-astra:service_tier=fast"
+    )
+    ai_chain_step_timeout_seconds: float = Field(default=45, gt=0, le=600)
+    ai_chain_max_tokens: int = Field(default=8000, ge=256, le=64000)
 
     @property
     def allowed_origins(self) -> list[str]:

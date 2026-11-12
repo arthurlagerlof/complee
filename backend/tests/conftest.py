@@ -162,3 +162,12 @@ def _isolated_catalog_cache(tmp_path, monkeypatch):
 
     monkeypatch.setattr(shipcheck_catalog, "CACHE_DIR", tmp_path / "catalog-cache")
     monkeypatch.setattr(shipcheck_catalog, "_json_cache", {})
+
+
+@pytest.fixture(autouse=True)
+def _no_real_ai_providers(monkeypatch):
+    """Tests never call real AI services: keys from backend/.env are switched off for every test."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "anthropic_api_key", None)
+    monkeypatch.setattr(settings, "openai_api_key", None)

@@ -17,6 +17,7 @@ import { createRateLimiter } from './src/rate-limit.mjs';
 import { isIP } from 'node:net';
 import { bundledCatalogEnabled, readBundledCatalog, LOCAL_CATALOG_FILES, catalogDir } from './src/catalog-local.mjs';
 import crypto from 'node:crypto';
+import { createRvtConverter, MAX_RVT_BYTES } from './src/rvt-convert.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8080);
@@ -135,6 +136,13 @@ if (fs.existsSync(path.join(APS_DIR, '.env'))) {
     if (m) aps[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
   }
 }
+// shipcheck/.env may hold the same keys (not read under the test runner, so tests stay offline).
+if (!process.env.NODE_TEST_CONTEXT && fs.existsSync(path.join(ROOT, '.env'))) {
+  for (const line of fs.readFileSync(path.join(ROOT, '.env'), 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^\s*(APS_CLIENT_ID|APS_CLIENT_SECRET)\s*=\s*(.*?)\s*$/);
+    if (m && !aps[m[1]]) aps[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
+  }
+}
 aps.APS_CLIENT_ID ??= process.env.APS_CLIENT_ID;
 aps.APS_CLIENT_SECRET ??= process.env.APS_CLIENT_SECRET;
 let apsToken = null;
@@ -154,6 +162,82 @@ async function apsViewerToken() {
   apsToken = { access_token: t.access_token, expires_in: t.expires_in, expires: Date.now() + t.expires_in * 1000 };
   return apsToken;
 }
+// Revit -> IFC conversion through Autodesk (src/rvt-convert.mjs). The upload uses this server's APS keys, so it is
+// open to this computer only unless CONVERT_ALLOW_REMOTE=true.
+const CONVERT_DIR = path.resolve(ROOT, process.env.CONVERT_CACHE_DIR || '.cache/convert');
+const rvtConverter = createRvtConverter({
+  credentials: () => ({ id: aps.APS_CLIENT_ID, secret: aps.APS_CLIENT_SECRET }),
+  cacheDir: CONVERT_DIR,
+  base: process.env.APS_BASE_URL || undefined, // test override; Autodesk by default
+});
+const OLE_MAGIC = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]); // Revit files are OLE compound files
+
+async function receiveRvt(req, res, url) {
+  if (process.env.CONVERT_ALLOW_REMOTE !== 'true' && !isLoopback(req)) return sendJSON(res, 403, { error: 'Revit conversion is only available on the computer that runs Complee.' });
+  if (!rvtConverter.configured()) {
+    req.resume();
+    return sendJSON(res, 503, { error: 'Revit conversion needs Autodesk Platform Services keys (APS_CLIENT_ID and APS_CLIENT_SECRET in shipcheck/.env). Without them, export the model from Revit as IFC (File > Export > IFC) and open the .ifc file.' });
+  }
+  const declared = Number(req.headers['content-length']);
+  if (Number.isFinite(declared) && declared > MAX_RVT_BYTES) { req.resume(); return sendJSON(res, 413, { error: 'The file is larger than 1 GB.' }); }
+  const name = String(url.searchParams.get('name') || 'model.rvt').replace(/[^\w .()-]+/g, '_').slice(0, 120);
+  fs.mkdirSync(path.join(CONVERT_DIR, 'uploads'), { recursive: true });
+  const tmp = path.join(CONVERT_DIR, 'uploads', `${crypto.randomUUID()}.rvt`);
+  const hash = crypto.createHash('sha256');
+  const out = fs.createWriteStream(tmp);
+  let bytes = 0, head = Buffer.alloc(0);
+  try {
+    for await (const chunk of req) {
+      bytes += chunk.length;
+      if (bytes > MAX_RVT_BYTES) throw Object.assign(new Error('The file is larger than 1 GB.'), { status: 413 });
+      if (head.length < 8) head = Buffer.concat([head, chunk.subarray(0, 8 - head.length)]);
+      hash.update(chunk);
+      if (!out.write(chunk)) await new Promise((r) => out.once('drain', r));
+    }
+    await new Promise((resolve, reject) => out.end((e) => (e ? reject(e) : resolve())));
+    if (!bytes) throw Object.assign(new Error('The upload is empty.'), { status: 400 });
+    if (!head.subarray(0, 8).equals(OLE_MAGIC)) throw Object.assign(new Error('This is not a Revit file (.rvt).'), { status: 400 });
+  } catch (e) {
+    out.destroy();
+    await fs.promises.rm(tmp, { force: true });
+    if (!req.complete) req.destroy();
+    return sendJSON(res, e.status || 500, { error: e.status ? e.message : 'The upload failed.' });
+  }
+  return sendJSON(res, 202, rvtConverter.start(tmp, { name, sha: hash.digest('hex'), bytes }));
+}
+
+// AI assistance (explain a finding, escape-route suggestions) runs in the Python backend, which holds the model chain
+// and the API keys. The viewer forwards the request; this server never sees a key. The AI costs money and uses the
+// backend's keys, so it is open to this computer only unless AI_ALLOW_REMOTE=true.
+const AI_API_URL = (process.env.AI_API_URL || process.env.SHIPCHECK_DATA_API_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+async function forwardAssist(req, res, name) {
+  if (process.env.AI_ALLOW_REMOTE !== 'true' && !isLoopback(req)) return sendJSON(res, 403, { error: 'AI assistance is only available on the computer that runs Complee.' });
+  let body;
+  try {
+    body = req.method === 'POST' ? JSON.stringify(await readBody(req, 400_000)) : undefined;
+  } catch (e) {
+    return sendJSON(res, 400, { error: e.message });
+  }
+  try {
+    const upstream = await fetch(`${AI_API_URL}/api/v1/ai/assist/${name}`, {
+      method: req.method, body, headers: body ? { 'Content-Type': 'application/json' } : {},
+      signal: AbortSignal.timeout(180_000),
+    });
+    const text = await upstream.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch { /* reported below */ }
+    if (!upstream.ok) {
+      const message = data?.error?.message || data?.detail || `The AI service answered ${upstream.status}.`;
+      return sendJSON(res, upstream.status >= 500 ? 502 : upstream.status, { error: typeof message === 'string' ? message : 'The AI service failed.' });
+    }
+    return sendJSON(res, 200, data);
+  } catch (e) {
+    return sendJSON(res, 503, { error: e.name === 'TimeoutError'
+      ? 'The AI service did not answer within 3 minutes.'
+      : 'The AI service is not running. Start the backend (cd backend; .venv\\Scripts\\python -m uvicorn app.main:app --port 8000).' });
+  }
+}
+
 const isLoopback = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req?.socket?.remoteAddress);
 const localOnly = (req) => { if (!isLoopback(req)) throw Object.assign(new Error('Only available on this computer'), { status: 403 }); };
 
@@ -168,6 +252,7 @@ const STATIC = [
   ['/demo/', 'demo'],
   ['/node_modules/three/', 'node_modules/three'],
   ['/node_modules/three-mesh-bvh/', 'node_modules/three-mesh-bvh'],
+  ['/node_modules/web-ifc/', 'node_modules/web-ifc'], // IFC import in the browser (wasm)
   // Local 3D viewer model chunks (exported with tools/export; not in Git, deployed with deploy.sh / deploy.ps1)
   ['/model/', process.env.MODEL_DIR || 'model'],
   ['/', 'public'],
@@ -336,6 +421,7 @@ const routes = {
   },
   // APS 3D viewer (real RCRV model).
   'GET /api/aps/status': () => ({ configured: !!(aps.APS_CLIENT_ID && aps.APS_CLIENT_SECRET) }),
+  'GET /api/convert/status': (q, b, req) => ({ rvt: rvtConverter.configured(), allowed: process.env.CONVERT_ALLOW_REMOTE === 'true' || isLoopback(req), max_bytes: MAX_RVT_BYTES }),
   'GET /api/aps/token': async (q, b, req) => {
     localOnly(req);
     if (!aps.APS_CLIENT_ID || !aps.APS_CLIENT_SECRET) throw Object.assign(new Error('APS not configured'), { status: 503 });
@@ -402,6 +488,20 @@ export async function handleRequest(req, res) {
       return sendJSON(res, 502, { error: 'Complee database API is temporarily unavailable.' });
     }
   }
+  if (req.method === 'POST' && p === '/api/convert/rvt') return receiveRvt(req, res, url);
+  const assistMatch = /^\/api\/assist\/(status|explain-finding|escape-suggestions)$/.exec(p);
+  if (assistMatch) return forwardAssist(req, res, assistMatch[1]);
+  const convertMatch = /^\/api\/convert\/jobs\/([0-9a-f-]{36})(\/ifc)?$/.exec(p);
+  if (req.method === 'GET' && convertMatch) {
+    const job = rvtConverter.job(convertMatch[1]);
+    if (!job) return sendJSON(res, 404, { error: 'Unknown conversion.' });
+    if (!convertMatch[2]) return sendJSON(res, 200, job);
+    const file = rvtConverter.ifcFile(convertMatch[1]);
+    if (!file || !fs.existsSync(file)) return sendJSON(res, 409, { error: 'The conversion is not finished.' });
+    res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': fs.statSync(file).size, 'Cache-Control': 'no-store',
+      'Content-Disposition': `attachment; filename="${job.name.replace(/\.rvt$/i, '')}.ifc"` });
+    return fs.createReadStream(file).pipe(res);
+  }
   const handler = routes[`${req.method} ${p}`];
   if (handler) {
     try {
@@ -421,6 +521,10 @@ export async function handleRequest(req, res) {
 export const server = http.createServer(handleRequest);
 
 // Listen on PORT only when started directly (npm start / node server.mjs), not when imported.
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) server.listen(PORT, () => {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) server.once('error', (e) => {
+  if (e.code !== 'EADDRINUSE') throw e;
+  console.error(`Port ${PORT} is already in use: Complee (or another program) is already running there. Open http://localhost:${PORT}, or stop the other process, or start on another port: set PORT=8090 (PowerShell: $env:PORT=8090).`);
+  process.exit(1);
+}).listen(PORT, () => {
   console.log(`Open http://localhost:${PORT}`);
 });

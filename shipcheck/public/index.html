@@ -32,7 +32,7 @@
   <nav class="workflow-steps" aria-label="Review workflow"><a href="evidence.html"><span>1</span> Add evidence</a><i></i><b><span>2</span> Review design</b><i></i><a href="index.html#manage" id="manageLink"><span>3</span> Manage findings</a></nav>
   <span class="top-break"></span>
   <label>Model <select id="scenario"></select></label>
-  <button id="openBtn" title="Open an AutoCAD drawing (DXF, layer convention: see the AutoCAD guide) or a ship model file (ship/1 JSON)">Open…</button><input id="openFile" type="file" accept=".dxf,.json,.dwg,application/json,application/dxf,image/vnd.dxf" hidden>
+  <button id="openBtn" title="Open a model: Revit (.rvt), IFC (.ifc, IFC2x3 or IFC4), an AutoCAD drawing (.dxf, layer convention: see the AutoCAD guide) or a ship/1 JSON model">Open…</button><input id="openFile" type="file" accept=".rvt,.ifc,.dxf,.dwg,.json,application/json,application/dxf,image/vnd.dxf" hidden>
   <label>Decks <select id="deck"></select></label>
   <button id="planBtn" title="Top-down plan view">Plan view</button>
   <button id="escapeBtn" hidden title="Escape routes from every room to the muster station">Escape plan</button>
@@ -86,6 +86,8 @@
       <i></i>
       <button data-act="labels" class="on" title="Room names">Labels</button>
       <button data-act="shell" class="on" title="Hull and deckhouse shell">Shell</button>
+      <i></i>
+      <button data-act="measure" title="Measure the distance between two points (Esc to finish)">Measure</button>
     </div>
     <div id="viewHint" class="view-hint">Drag: rotate · right-drag: move · wheel: zoom to the pointer · double-click: focus</div>
     <div id="caption" hidden></div>
