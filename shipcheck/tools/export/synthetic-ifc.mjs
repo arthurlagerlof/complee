@@ -60,6 +60,13 @@ export function syntheticIfc({ storeys = 6, nx = 12, ny = 7, bay = 6000, height 
     for (const side of [-1, 1]) put('IFCWALL', `Corridor wall ${side < 0 ? 'south' : 'north'} L${s + 1}`, [0, cy + side * 900 - 60, z, W, 120, height - 700]);
     for (let i = 1; i + 1 < nx; i += 2) {
       put('IFCDOOR', `Door ${i} L${s + 1}`, [i * bay + 1000, cy - 960 - 20, z, 900, 160, 2100], `$,2100.,900.,.DOOR.,.SINGLE_SWING_LEFT.,$`);
+      // The first door of each storey is a fire door: FireRating in Pset_DoorCommon, as BIM tools export it.
+      if (i === 1) {
+        const door = members[members.length - 1];
+        const prop = add("IFCPROPERTYSINGLEVALUE('FireRating',$,IFCLABEL('A-60'),$)");
+        const pset = add(`IFCPROPERTYSET(${guid()},$,'Pset_DoorCommon',$,(${prop}))`);
+        add(`IFCRELDEFINESBYPROPERTIES(${guid()},$,$,$,(${door}),${pset})`);
+      }
       put('IFCSPACE', `Room ${s + 1}.${i}`, [i * bay, 0, z, 2 * bay, cy - 960, height - 700], `'Room ${s + 1}.${i}',.ELEMENT.,.INTERNAL.,$`);
     }
     put('IFCSTAIR', `Stair L${s + 1}`, [W - 4500, cy + 1100, z, 4000, 1200, height], '$,.STRAIGHT_RUN_STAIR.');

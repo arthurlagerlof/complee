@@ -441,3 +441,4 @@ table.register tr.warn td { background: #fffaf0; }
 .cmt-foot input { flex: 1 1 140px; min-width: 0; }
 .cmt-import { border: 1px dashed #b9c1cc; border-radius: 8px; padding: 8px 10px; margin: 8px 0; background: #fafbfc; }
 .cmt-draft { white-space: pre-wrap; }
+.keel-whatif { margin-top: 3px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; }

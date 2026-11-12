@@ -32,13 +32,23 @@ test('ifc: every element with geometry is imported, on the right storey, in mm',
   assert.equal(model.elements.find((e) => e.name === 'Beam X 1-1 L1').deck, 'L01');
 });
 
+test('ifc: FireRating from Pset_DoorCommon becomes fire_rating with its source; other doors stay without one', () => {
+  const { model } = convert();
+  const doors = model.elements.filter((e) => e.type === 'door');
+  const rated = doors.filter((d) => d.props.fire_rating);
+  assert.equal(rated.length, 3, 'one fire door per storey');
+  assert.deepEqual(rated[0].props.fire_rating, { value: 'A-60', source: 'IFC Pset_DoorCommon.FireRating' });
+  assert.ok(doors.length > rated.length);
+});
+
 test('ifc: classes map to element types; nothing the rules read is invented', async () => {
   const { model } = convert();
   const byType = {};
   for (const e of model.elements) byType[e.type] = (byType[e.type] || 0) + 1;
   for (const t of ['door', 'stair', 'guard_rail', 'space', 'column', 'beam', 'slab', 'wall']) assert.ok(byType[t] > 0, `${t} present`);
   for (const t of ['door', 'stair', 'guard_rail', 'space']) assert.ok(SEMANTIC_TYPES.has(t));
-  const door = model.elements.find((e) => e.type === 'door');
+  // Only what the file states: a door without a FireRating in the file gets nothing besides its class.
+  const door = model.elements.find((e) => e.type === 'door' && !e.props.fire_rating);
   assert.deepEqual(Object.keys(door.props), ['ifc_class'], 'no clear width, sill height or zone is made up');
   assert.equal(door.geom.lx, 900);
 

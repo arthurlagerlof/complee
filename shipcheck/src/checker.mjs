@@ -126,7 +126,7 @@ function elementCondition(rule, el, model) {
   for (const [key, want] of Object.entries(a.where || {})) {
     const p = prop(el, key, model);
     if (!whereMatches(p?.value, want)) {
-      return { ok: false, reason: `${key} is ${p ? JSON.stringify(p.value) : 'not set'}; rule applies when ${key} ${describeWhere(want)}` };
+      return { ok: false, reason: `${key} is ${p ? JSON.stringify(p.value) : 'not set'}; rule applies when ${key} ${describeWhere(want)}`, ...(p ? {} : { missing: key, want: describeWhere(want) }) };
     }
   }
   return { ok: true };
@@ -137,7 +137,7 @@ function elementCondition(rule, el, model) {
 export function whereMatches(have, want) {
   if (!isObj(want)) return have === want;
   if ('exists' in want) return (have != null) === want.exists;
-  if ('prefix' in want) return have != null && String(have).startsWith(want.prefix);
+  if ('prefix' in want) return have != null && [].concat(want.prefix).some((p) => String(have).toUpperCase().startsWith(String(p).toUpperCase()));
   if ('in' in want) return want.in.includes(have);
   if ('not_in' in want) return !want.not_in.includes(have);
   return false;
@@ -145,10 +145,30 @@ export function whereMatches(have, want) {
 function describeWhere(want) {
   if (!isObj(want)) return `= ${JSON.stringify(want)}`;
   if ('exists' in want) return want.exists ? 'is set' : 'is not set';
-  if ('prefix' in want) return `starts with "${want.prefix}"`;
+  if ('prefix' in want) return `starts with ${[].concat(want.prefix).map((p) => `"${p}"`).join(' or ')}`;
   if ('in' in want) return `is one of ${want.in.map((v) => JSON.stringify(v)).join(', ')}`;
   return `is not one of ${want.not_in.map((v) => JSON.stringify(v)).join(', ')}`;
 }
+
+// A date as written in the model -> the interval it stands for: "2027-03-15" one day, "2027-03" a month, "2027" a year.
+// Returns [first, last] as YYYY-MM-DD strings (comparable as text), or null when it is not a date.
+export function dateRange(v) {
+  const m = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(String(v ?? '').trim());
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  if (mo && (+mo < 1 || +mo > 12)) return null;
+  if (d) {
+    const t = new Date(`${y}-${mo}-${d}T00:00:00Z`);
+    if (Number.isNaN(t.getTime()) || t.getUTCDate() !== +d) return null;
+    return [`${y}-${mo}-${d}`, `${y}-${mo}-${d}`];
+  }
+  if (mo) {
+    const last = new Date(Date.UTC(+y, +mo, 0)).getUTCDate();
+    return [`${y}-${mo}-01`, `${y}-${mo}-${String(last).padStart(2, '0')}`];
+  }
+  return [`${y}-01-01`, `${y}-12-31`];
+}
+const isDay = (v) => typeof v === 'string' && dateRange(v)?.[0] === v && v.length === 10;
 
 // Ship-level conditions: ship type, operating area, minimum size, class society.
 // Returns ok:true | ok:false (not applicable) | ok:'unknown' (ship data missing -> not_enough_info).
@@ -196,6 +216,21 @@ function shipCondition(rule, model) {
       shown = `${limit.value} ${limit.unit}`;
     }
     if (!(have >= want)) return { ok: false, reason: `ship.${key} is ${v.value}${v.unit && limit.unit ? ' ' + v.unit : ''}; rule applies from ${shown}` };
+  }
+  // Date of construction: SOLAS applies most new requirements to ships "constructed" (keel laid or at a similar stage
+  // of construction) on or after a date. The model gives ship.keel_laid; a date that does not decide (a year that
+  // spans the boundary) leaves the rule undecided instead of guessing.
+  if (c.constructed) {
+    const v = need('keel_laid');
+    if (!v) return unknown('keel_laid');
+    const r = dateRange(v.value);
+    if (!r) return { ok: 'unknown', missing: `ship.keel_laid as a date (YYYY-MM-DD; "${v.value}" is not one)`, inputs };
+    const { on_or_after: from, before } = c.constructed;
+    if (from && r[1] < from) return { ok: false, reason: `keel laid ${v.value}; rule applies to ships constructed on or after ${from}` };
+    if (before && r[0] >= before) return { ok: false, reason: `keel laid ${v.value}; rule applies to ships constructed before ${before}` };
+    if ((from && r[0] < from) || (before && r[1] >= before)) {
+      return { ok: 'unknown', missing: `the exact ship.keel_laid date ("${v.value}" spans ${from && r[0] < from ? from : before})`, inputs };
+    }
   }
   return { ok: true, inputs };
 }
@@ -568,6 +603,12 @@ export function validateRule(rule) {
   if (rule.check === 'requires' && !rule.requires?.type) errors.push('missing "requires.type"');
   if (!rule.applies_to?.types?.length) errors.push('missing "applies_to.types"');
   if (typeof rule.verified !== 'boolean') errors.push('"verified" must be true or false');
+  const built = rule.applies_to?.ship?.constructed;
+  if (built !== undefined) {
+    if (!isObj(built) || (!built.on_or_after && !built.before)) errors.push('"constructed" needs "on_or_after" and/or "before"');
+    else for (const k of ['on_or_after', 'before']) if (built[k] !== undefined && !isDay(built[k])) errors.push(`constructed.${k} must be a date YYYY-MM-DD`);
+    if (built?.on_or_after && built?.before && built.on_or_after >= built.before) errors.push('constructed.on_or_after must be before constructed.before');
+  }
   if (rule.relations !== undefined) {
     if (!Array.isArray(rule.relations)) errors.push('"relations" must be a list');
     else for (const r of rule.relations) {
@@ -693,6 +734,15 @@ function checkElement(el, rules, ctx) {
   const unknownApplicability = new Set();
   for (const rule of rules) {
     const ec = elementCondition(rule, el, model);
+    if (!ec.ok && ec.missing && rule.check === 'manual') {
+      const sc0 = shipCondition(rule, model);
+      if (sc0.ok !== false) {
+        manual.push({ rule_id: rule.id, source: rule.source, clause: rule.clause, rule_text: rule.text, text_status: rule.text_status || 'paraphrase',
+          verified: rule.verified === true, reference_url: rule.reference_url || null, evidence: rule.evidence || null,
+          applicability: 'unknown', reason: `Applies only if ${rule.applies_note ?? `${ec.missing} ${ec.want}`}: ${ec.missing} is not set in the model.` });
+      }
+      continue;
+    }
     if (!ec.ok) {
       if (!ec.silent) not_applicable.push({ rule_id: rule.id, source: rule.source, reason: ec.reason });
       continue;
@@ -709,10 +759,10 @@ function checkElement(el, rules, ctx) {
     }
     if (sc.ok === 'unknown') {
       unknownApplicability.add(rule.id);
-      all.push(result(rule, 'not_enough_info', {
+      all.push(Object.assign(result(rule, 'not_enough_info', {
         inputs: sc.inputs,
         explanation: `Cannot decide whether this rule applies: ${sc.missing} is missing in the ship particulars.`,
-      }));
+      }), { applicability: 'unknown' }));
       continue;
     }
     const fn = CHECKS[rule.check];

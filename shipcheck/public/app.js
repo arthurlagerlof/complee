@@ -288,6 +288,8 @@ async function loadScenario(id) {
     S.norm = normalizeModel(S.model);
     S.expected = expected;
     S.edits.clear();
+    S.shipOriginal = null;
+    S.keelNote = null;
     S.register = loadRegister(sc, model);
     closeRegister();
     S.selected = null;
@@ -410,12 +412,53 @@ function renderShip() {
       ${row('Berths', 'berths', (v) => v.value)}
       ${row('Gross tonnage', 'gross_tonnage', (v) => v.value)}
       ${row('Class society', 'class_society', (v) => v.value)}
+      ${keelRow()}
       ${sh.propulsion ? row('Propulsion', 'propulsion', (v) => v.value) : ''}
     </table>
     ${S.model.provenance_note ? `<div class="note">${esc(S.model.provenance_note)}</div>` : ''}
     ${S.model.scope_note ? `<div class="note scope">${esc(S.model.scope_note)}</div>` : ''}
     ${S.model.kind === 'parts' ? '' : '<button class="tiny" id="dlModel" style="margin-top:6px" title="The model as a ship/1 JSON file: the format Open… reads">Download model (JSON)</button>'}`;
   if ($('#dlModel')) $('#dlModel').onclick = () => download(`${S.sc.id}.json`, JSON.stringify(S.model, null, 1), 'application/json');
+  if ($('#keelWhatIf')) $('#keelWhatIf').onchange = (e) => setKeelDate(e.target.value);
+}
+
+// Rules whose applicability depends on the date of construction (applies_to.ship.constructed).
+const dateRules = () => allRules().filter((r) => !r.draft && r.applies_to?.ship?.constructed);
+
+// Keel laying date: shown always (it decides which edition of a requirement applies); a what-if date when rules
+// in the catalog depend on it, so the engineer sees what changes for a ship laid down before or after a date.
+function keelRow() {
+  const v = readValue(S.model.ship?.keel_laid, null, S.model.ship?.source);
+  const n = dateRules().length;
+  const editable = n && S.model.kind !== 'parts' && !S.precomputed;
+  return `<tr><td title="SOLAS: keel laid or similar stage of construction">Keel laid</td><td>${v ? `${esc(v.value)}${prov(v.source)}` : '<span class="muted">not given</span>'}
+    ${editable ? `<div class="keel-whatif"><input type="date" id="keelWhatIf" value="${esc(/^\d{4}-\d{2}-\d{2}$/.test(v?.value ?? '') ? v.value : '')}" title="What-if: another keel laying date"> <span class="muted">${n} rule${n === 1 ? '' : 's'} depend${n === 1 ? 's' : ''} on it</span></div>` : ''}
+    ${S.keelNote ? `<div class="note">${esc(S.keelNote)}</div>` : ''}</td></tr>`;
+}
+
+function setKeelDate(value) {
+  if (!value) return;
+  if (!S.shipOriginal) S.shipOriginal = structuredClone(S.model.ship ?? {});
+  // Per date-dependent rule: applies (somewhere), undecided (date missing or not exact) or does not apply.
+  const states = () => {
+    const out = new Map(dateRules().map((r) => [r.id, 'does not apply']));
+    for (const e of Object.values(S.results.elements)) for (const r of e.results) {
+      if (!out.has(r.rule_id)) continue;
+      if (r.applicability === 'unknown') { if (out.get(r.rule_id) !== 'applies') out.set(r.rule_id, 'undecided'); } else out.set(r.rule_id, 'applies');
+    }
+    return out;
+  };
+  const before = { findings: findingsOf(S.results).length, states: states() };
+  const was = display(S.shipOriginal.keel_laid, S.norm.units);
+  S.model.ship = { ...(S.model.ship ?? {}), keel_laid: { value, source: EDIT_SOURCE } };
+  S.edits.set('ship.keel_laid', { id: 'ship', key: 'keel_laid', before: was, after: value });
+  recheck();
+  const now = states();
+  const changes = [...now].filter(([id, st]) => before.states.get(id) !== st).map(([id, st]) => `${id}: ${before.states.get(id)} → ${st}`);
+  const after = findingsOf(S.results).length;
+  S.keelNote = `Keel laid ${value}: ${after} finding${after === 1 ? '' : 's'} (${after - before.findings >= 0 ? '+' : ''}${after - before.findings}). `
+    + (changes.length ? `${changes.join('; ')}.` : 'No date-dependent rule changes.');
+  renderShip();
 }
 
 // Draft rules are only mentioned where the model has elements they would apply to.
@@ -845,6 +888,17 @@ function labelFor(id) {
 }
 
 function resetEdit(id, key) {
+  if (id === 'ship') {
+    const orig = S.shipOriginal?.[key];
+    const ship = { ...(S.model.ship ?? {}) };
+    if (orig === undefined) delete ship[key]; else ship[key] = structuredClone(orig);
+    S.model.ship = ship;
+    S.edits.delete(`ship.${key}`);
+    S.keelNote = null;
+    recheck();
+    renderShip();
+    return;
+  }
   const el = elById(id);
   const orig = S.original.get(id)?.props?.[key];
   if (orig === undefined) delete el.props[key]; else el.props[key] = structuredClone(orig);

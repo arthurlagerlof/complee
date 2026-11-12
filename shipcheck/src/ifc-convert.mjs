@@ -141,6 +141,25 @@ export function convertIfc(WebIFC, api, bytes, fileName = 'model.ifc') {
       decks.splice(i, 1);
     }
 
+    // ---- properties the rules read: FireRating from the common property sets (Pset_DoorCommon, Pset_WallCommon, ...)
+    const fireRating = new Map(); // expressID -> { value, source }
+    try {
+      const rels = api.GetLineIDsWithType(id, WebIFC.IFCRELDEFINESBYPROPERTIES);
+      for (let i = 0; i < rels.size(); i++) {
+        const r = api.GetLine(id, rels.get(i));
+        const pset = r.RelatingPropertyDefinition && api.GetLine(id, r.RelatingPropertyDefinition.value);
+        const psetName = String(text(pset?.Name) ?? '');
+        if (!/^Pset_\w+Common$/.test(psetName) || !Array.isArray(pset.HasProperties)) continue;
+        for (const ref of pset.HasProperties) {
+          const p = api.GetLine(id, ref.value);
+          if (String(text(p?.Name) ?? '') !== 'FireRating') continue;
+          const v = text(p.NominalValue);
+          if (v == null || !String(v).trim()) continue;
+          for (const o of r.RelatedObjects ?? []) fireRating.set(o.value, { value: String(v).trim(), source: `IFC ${psetName}.FireRating` });
+        }
+      }
+    } catch { /* no property sets */ }
+
     // ---- elements ----
     const elements = [], geometry = new Map();
     const used = new Set();
@@ -169,7 +188,7 @@ export function convertIfc(WebIFC, api, bytes, fileName = 'model.ifc') {
       elements.push({
         id: elId, type, name: String(text(line?.Name) || text(line?.ObjectType) || cls.replace(/^IFC/, '')),
         source: `IFC ${cls} #${expressID}`,
-        props: { ifc_class: cls, ...(text(line?.ObjectType) ? { object_type: String(text(line.ObjectType)) } : {}), ...(text(line?.Tag) ? { tag: String(text(line.Tag)) } : {}) },
+        props: { ifc_class: cls, ...(text(line?.ObjectType) ? { object_type: String(text(line.ObjectType)) } : {}), ...(text(line?.Tag) ? { tag: String(text(line.Tag)) } : {}), ...(fireRating.has(expressID) ? { fire_rating: fireRating.get(expressID) } : {}) },
         _box: { min, max },
         _express: expressID,
       });
