@@ -168,6 +168,7 @@ const STATIC = [
   ['/demo/', 'demo'],
   ['/node_modules/three/', 'node_modules/three'],
   ['/node_modules/three-mesh-bvh/', 'node_modules/three-mesh-bvh'],
+  ['/node_modules/web-ifc/', 'node_modules/web-ifc'], // IFC import in the browser (wasm)
   // Local 3D viewer model chunks (exported with tools/export; not in Git, deployed with deploy.sh / deploy.ps1)
   ['/model/', process.env.MODEL_DIR || 'model'],
   ['/', 'public'],

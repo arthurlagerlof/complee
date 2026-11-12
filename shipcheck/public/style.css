@@ -356,3 +356,12 @@ table.register tr.warn td { background: #fffaf0; }
 .top-break { flex-basis: 100%; height: 0; }
 #scenario { max-width: 340px; }
 .top #accBadge { display: none; } /* the same figure is in the sidebar; the header keeps to controls */
+
+/* ---------- measuring, geometry line, revision comparison ---------- */
+.measure-label { position: absolute; z-index: 5; transform: translate(-50%, -140%); background: #1d2430; color: #fff; padding: 4px 9px; border-radius: 6px; font-size: 12px; pointer-events: none; white-space: nowrap; display: none; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+.measure-label b { font-size: 13px; margin-right: 8px; } .measure-label span { opacity: .78; font-size: 11px; }
+.geom { font-size: 12px; color: var(--muted); margin-top: 6px; font-variant-numeric: tabular-nums; }
+.compare { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 10px 0; background: #fbfcfd; }
+.cmp-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.cmp-group { margin-top: 8px; } .cmp-group > b { font-size: 12px; }
+.item.cmp.gone { cursor: default; }

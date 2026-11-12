@@ -7,6 +7,8 @@ import { reportRows, toCSV, toHTML } from './src/report.mjs';
 import { traceMatrix, traceCSV, cellLabel } from './src/trace.mjs';
 import { createViewer, STATUS_HEX } from './viewer3d.js';
 import { analyzeEscape, ESCAPE_LABEL } from './src/escape.mjs';
+import { compareRevisions } from './src/compare.mjs';
+import { consistencyIssues, widthCheck } from './src/consistency.mjs';
 import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, registerSummary, withDisposition, registerCSV } from './src/dispositions.mjs';
 import { createFallbackViewer } from './viewer-fallback.js';
 import { createLocalViewer } from './viewer-stream.js';
@@ -84,7 +86,7 @@ const S = {
   filter: { status: new Set(['non_compliant', 'not_enough_info', 'compliant', 'null']), family: '', deck: '' },
   lastCheckMs: 0, demo: null, ruleView: null,
   escape: null, escapeOn: false, blocked: new Set(),
-  register: {},
+  register: {}, compare: null,
 };
 const allRules = () => S.coreRules;
 const ruleById = (id) => allRules().find((r) => r.id === id);
@@ -297,6 +299,7 @@ async function loadScenario(id) {
     computeEscape();
     scenarioPending = false;
     useViewer(sc);
+    views.three.setSource(sc.geometry ?? null);
     viewer.build(S.norm, S.results);
     viewer.setMode('all');
     syncEscapeView();
@@ -305,6 +308,9 @@ async function loadScenario(id) {
       (decks.length > 1 ? `<option value="exploded">Exploded</option>` : '') +
       decks.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
     S.filter.deck = '';
+    S.filter.text = '';
+    S.compare = null;
+    setMeasureMode(false);
     renderAll();
     $('#detail').innerHTML = `<p class="muted">Click an element in the model or in the list to see every rule that applies, why it passes or fails, and where each value comes from.</p>`;
     return true;
@@ -315,6 +321,7 @@ async function loadScenario(id) {
       scenarioPending = false;
       $('#scenario').value = S.sc.id;
       useViewer(S.sc);
+      views.three.setSource(S.sc.geometry ?? null);
       viewer.build(S.norm, S.results);
       renderList();
     }
@@ -346,6 +353,7 @@ function recheck(ids) {
   renderEdits();
   renderList();
   renderRegisterButton();
+  if (S.compare?.diff) S.compare.diff = compareRevisions(S.compare.model, checkModel(structuredClone(S.compare.model), allRules()), S.model, S.results);
   if (!$('#registerPanel').hidden) openRegister();
   if (S.ruleView) { renderRuleView(S.ruleView); return; }
   if (S.selected) {
@@ -435,6 +443,11 @@ function renderSummary() {
       <div class="pill st-compliant">${s.compliant}<small>compliant</small></div>
     </div>
     <div class="muted">Rule checks per element. Elements: ${e.non_compliant} red, ${e.not_enough_info} amber, ${e.compliant} green, ${e.no_rule} without a rule. Checked in ${S.lastCheckMs.toFixed(1)} ms.</div>`;
+  const issues = S.model.kind === 'parts' ? [] : consistencyIssues(S.norm);
+  if (issues.length) {
+    $('#summary').insertAdjacentHTML('beforeend', `<div class="note"><b>Data consistency:</b> ${issues.length} declared clear width${issues.length === 1 ? ' is' : 's are'} larger than the modelled geometry: ${issues.map((c) => `<a href="#" class="via" data-id="${esc(c.id)}">${esc(c.id)}</a>`).join(', ')}. The rule check reads the declared value.</div>`);
+    $('#summary').querySelectorAll('a.via').forEach((n) => (n.onclick = (ev) => { ev.preventDefault(); select(n.dataset.id); }));
+  }
 }
 
 function renderEdits() {
@@ -457,7 +470,9 @@ function renderFilters() {
     <div class="filters-row">
       <select id="fFam"><option value="">All rule sources</option>${fams.map((f) => `<option ${S.filter.family === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>
       <select id="fDeck"><option value="">All decks</option>${S.norm.decks.map((d) => `<option value="${d.id}" ${S.filter.deck === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>
-    </div>`;
+    </div>
+    <input id="fText" type="search" placeholder="Search id, name or type" value="${esc(S.filter.text ?? '')}" style="width:100%;margin-bottom:6px">`;
+  $('#fText').oninput = (e) => { S.filter.text = e.target.value; listLimit = LIST_PAGE; renderList(); };
   document.querySelectorAll('#filters .chip').forEach((c) => (c.onclick = () => {
     const st = c.dataset.st;
     S.filter.status.has(st) ? S.filter.status.delete(st) : S.filter.status.add(st);
@@ -469,8 +484,10 @@ function renderFilters() {
 
 function visibleElements() {
   const f = S.filter;
+  const words = (f.text ?? '').toLowerCase().split(/\s+/).filter(Boolean);
   return Object.values(S.results.elements).filter((e) => {
     if (f.deck && e.deck !== f.deck) return false;
+    if (words.length) { const hay = `${e.id} ${e.name} ${e.type}`.toLowerCase(); if (!words.every((w) => hay.includes(w))) return false; }
     const rs = f.family ? e.results.filter((r) => family(r.source) === f.family) : e.results;
     if (f.family && !rs.length) return false;
     if (!rs.length) return f.status.has('null');
@@ -494,7 +511,7 @@ function renderList() {
   if (!items.length) $('#list').innerHTML = '<p class="muted">No element matches the filters.</p>';
   if ($('#moreBtn')) $('#moreBtn').onclick = () => { listLimit += LIST_PAGE; renderList(); };
   document.querySelectorAll('#list .item').forEach((n) => (n.onclick = () => select(n.dataset.id)));
-  const all = S.filter.status.size === 4 && !S.filter.family && !S.filter.deck;
+  const all = S.filter.status.size === 4 && !S.filter.family && !S.filter.deck && !(S.filter.text ?? '').trim();
   viewer.setFilter(all ? null : new Set(items.map((e) => e.id)));
 }
 
@@ -528,11 +545,13 @@ function renderDetail(id) {
     ${S.sc.viewer === 'local' ? '<button id="backOverview" class="tiny" style="margin-top:6px">← Back to the whole ship</button>' : ''}
     ${el.note ? `<div class="note"><b>Model note:</b> ${esc(el.note)}</div>` : ''}
     <div id="dComponent"></div>
+    <div id="dGeom"></div>
     <div id="dEscape"></div>
     <div id="dResults"></div>
     <h2>Design data (what-if editing)</h2>
     <div id="dEditor"></div>`;
   renderComponent(id);
+  renderGeometry(id);
   renderEscapeDetail(id);
   renderResults(id);
   renderEditor(id);
@@ -1026,6 +1045,63 @@ function openTrace() {
 }
 function closeTrace() { $('#tracePanel').hidden = true; $('#traceBtn').classList.remove('on'); }
 
+// ---------- modelled geometry of the selected element, and whether a declared width fits into it ----------
+
+function renderGeometry(id) {
+  const box = $('#dGeom');
+  if (!box) return;
+  const el = S.norm.elements.find((e) => e.id === id), g = el?.geom_mm;
+  if (!g) { box.innerHTML = ''; return; }
+  const m = (v) => (v / 1000).toFixed(2);
+  const c = widthCheck(el, S.norm);
+  box.innerHTML = `<div class="geom">Modelled: ${m(g.lx)} × ${m(g.ly)} m, height ${m(g.h)} m${c ? ` · declared clear width ${c.declared_mm} mm, modelled width ${c.modelled_mm} mm` : ''}</div>` +
+    (c && !c.ok ? '<div class="note"><b>Data consistency:</b> the declared clear width is larger than the modelled geometry. One of the two is wrong; the rule check reads the declared value.</div>' : '');
+}
+
+function setMeasureMode(on) {
+  views.three.setMeasure(on);
+  document.querySelector('#viewTools [data-act="measure"]')?.classList.toggle('on', views.three.measuring);
+  $('#viewHint').textContent = views.three.measuring
+    ? 'Measure: click two points (snaps to the faces of the element) · Esc to finish'
+    : 'Drag: rotate · right-drag: move · wheel: zoom to the pointer · double-click: focus';
+}
+
+// ---------- compare with an earlier revision of the model ----------
+
+async function compareWithFile(file) {
+  try {
+    if (file.size > 30_000_000) throw new Error('The file is larger than 30 MB.');
+    let json;
+    try { json = JSON.parse(await file.text()); } catch { throw new Error('The file is not valid JSON.'); }
+    if (!json || !Array.isArray(json.elements)) throw new Error('Not a ship model (no "elements" list).');
+    const baseResults = checkModel(structuredClone(json), allRules());
+    S.compare = { name: file.name, diff: compareRevisions(json, baseResults, S.model, S.results), model: json };
+  } catch (e) {
+    S.compare = { name: file.name, error: e.message };
+  }
+  openRegister();
+}
+
+function comparisonHTML() {
+  const c = S.compare;
+  if (!c) return '';
+  if (c.error) return `<div class="note"><b>Could not compare with ${esc(c.name)}.</b> ${esc(c.error)} <button class="tiny" id="cmpClear">dismiss</button></div>`;
+  const { findings: f, elements: e } = c.diff;
+  const item = (x, extra) => `<div class="item cmp" data-id="${esc(x.element)}" data-rule="${esc(x.rule_id)}"><span class="dot st-${x.status}"></span><span><b>${esc(x.element)}</b> ${esc(x.name)} · ${esc(x.rule_id)} · ${esc(x.measured)} (required ${esc(x.required)})${extra ? ` <span class="muted">${extra}</span>` : ''}</span></div>`;
+  const group = (title, rows) => (rows.length ? `<div class="cmp-group"><b>${title} (${rows.length})</b>${rows.join('')}</div>` : '');
+  return `<div class="compare">
+    <div class="cmp-head"><b>Changes since ${esc(c.name)}</b>
+      <span class="muted">${c.diff.identical ? 'No difference in findings or design values.' : `${f.new.length} new · ${f.resolved.length} resolved · ${f.changed.length} changed · ${f.unchanged} unchanged findings · ${e.changed.length} elements with changed values, ${e.added.length} added, ${e.removed.length} removed`}</span>
+      <button class="tiny" id="cmpClear">close comparison</button></div>
+    ${group('New findings', f.new.map((x) => item(x)))}
+    ${group('Changed findings', f.changed.map((x) => item(x, `earlier: ${esc(LABEL[x.before_status] ?? x.before_status)}, ${esc(x.before_measured)}`)))}
+    ${group('Resolved findings', f.resolved.map((x) => `<div class="item cmp gone"><span class="dot st-compliant"></span><span><b>${esc(x.element)}</b> ${esc(x.name)} · ${esc(x.rule_id)} <span class="muted">earlier: ${esc(x.measured)} (required ${esc(x.required)})</span></span></div>`))}
+    ${e.changed.length ? `<details class="assume"><summary>Changed design values (${e.changed.length} elements)</summary><table class="register"><tbody>${e.changed.flatMap((el) => el.changes.map((ch) => `<tr><td><b>${esc(el.id)}</b> ${esc(el.name)}</td><td>${esc(ch.field)}</td><td>${esc(ch.before)}</td><td>→ ${esc(ch.after)}</td></tr>`)).join('')}</tbody></table></details>` : ''}
+    ${e.added.length ? `<div class="na">Added: ${e.added.map((x) => esc(x.id)).join(', ')}</div>` : ''}
+    ${e.removed.length ? `<div class="na">Removed: ${e.removed.map((x) => esc(x.id)).join(', ')}</div>` : ''}
+  </div>`;
+}
+
 // ---------- findings register: how each finding is handled (never changes a rule result) ----------
 
 const registerKey = (scenarioId) => `complee.register.${scenarioId}`;
@@ -1092,9 +1168,11 @@ function openRegister() {
       <span class="muted">${s.total} finding${s.total === 1 ? '' : 's'} · ${s.open} open · ${s.total - s.open} with a disposition${s.stale ? ` · <b class="check-bad">${s.stale} to review again</b>` : ''}${s.missing_note ? ` · <b class="check-bad">${s.missing_note} without justification</b>` : ''}${S.edits.size ? ' · includes what-if values' : ''}</span>
       <label><input type="checkbox" id="regOpen" ${registerOpenOnly ? 'checked' : ''}> needs attention only</label>
       <span class="grow"></span>
+      <button id="cmpBtn" title="Open an earlier revision of this model (ship/1 JSON) and list what changed">Compare with earlier revision…</button><input id="cmpFile" type="file" accept=".json,application/json" hidden>
       <button id="regCsv">Download CSV</button><button id="regClose">Close</button>
     </div>
     <div class="trace-wrap">
+    ${comparisonHTML()}
     <p class="muted" style="margin:8px 0">A disposition records how a finding is handled and by whom. It never changes the result of the rule check. Saved in this browser for this model; export the CSV or the report to share it.</p>
     ${current.length ? `<table class="register"><thead><tr><th>Check result</th><th>Element</th><th>Rule</th><th>Measured</th><th>Required</th><th>Disposition · responsible · justification</th><th>Updated</th></tr></thead><tbody>${current.map(row).join('')}</tbody></table>`
       : `<p class="muted">${s.total ? 'No finding needs attention.' : 'The rule check reports no findings for this model.'}</p>`}
@@ -1106,6 +1184,10 @@ function openRegister() {
   $('#regClose').onclick = closeRegister;
   $('#regOpen').onchange = (e) => { registerOpenOnly = e.target.checked; openRegister(); };
   $('#regCsv').onclick = () => download(`findings-register-${S.sc.id}.csv`, registerCSV(registerRows(S.results, S.register)), 'text/csv');
+  $('#cmpBtn').onclick = () => $('#cmpFile').click();
+  $('#cmpFile').onchange = (e) => { const f = e.target.files[0]; if (f) compareWithFile(f); };
+  if ($('#cmpClear')) $('#cmpClear').onclick = () => { S.compare = null; openRegister(); };
+  panel.querySelectorAll('.item.cmp[data-id]').forEach((n) => (n.onclick = () => { closeRegister(); select(n.dataset.id); }));
   panel.querySelectorAll('.regDrop').forEach((b) => (b.onclick = () => { const next = { ...S.register }; delete next[b.dataset.key]; S.register = next; saveRegister(); openRegister(); }));
   panel.querySelectorAll('td.part').forEach((n) => (n.onclick = () => {
     closeRegister();
@@ -1122,9 +1204,18 @@ function closeRegister() { $('#registerPanel').hidden = true; $('#registerBtn').
 let fileCounter = 0;
 async function openModelFile(file) {
   try {
-    if (file.size > 30_000_000) throw new Error('The file is larger than 30 MB.');
-    let json;
-    try { json = JSON.parse(await file.text()); } catch { throw new Error('The file is not valid JSON.'); }
+    let json, geometry = null;
+    if (/\.ifc$/i.test(file.name)) {
+      if (file.size > 400_000_000) throw new Error('The file is larger than 400 MB.');
+      $('#detail').innerHTML = `<p class="muted">Reading ${esc(file.name)} (${(file.size / 1e6).toFixed(1)} MB)…</p>`;
+      await new Promise((r) => setTimeout(r, 30)); // let the message paint before the parser blocks the page
+      const { importIfc } = await import('./ifc-import.js');
+      const result = await importIfc(file);
+      json = result.model; geometry = result.geometry;
+    } else {
+      if (file.size > 30_000_000) throw new Error('The file is larger than 30 MB.');
+      try { json = JSON.parse(await file.text()); } catch { throw new Error('The file is not valid JSON (expected a ship/1 JSON model or an .ifc file).'); }
+    }
     if (!json || typeof json !== 'object' || !Array.isArray(json.elements)) throw new Error('A ship model needs an "elements" list (ship/1 format; "Download model (JSON)" in the left panel gives an example).');
     if (!Array.isArray(json.decks) && !json.deck) throw new Error('A ship model needs "decks" (or a single "deck").');
     const norm = normalizeModel(structuredClone(json)); // throws on an unsupported unit
@@ -1135,7 +1226,7 @@ async function openModelFile(file) {
       ids.add(e.id);
     }
     const id = `file-${++fileCounter}-${file.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40)}`;
-    S.scenarios.push({ id, name: `File: ${file.name}`, viewer: 'three', modelData: json });
+    S.scenarios.push({ id, name: `File: ${file.name}`, viewer: 'three', modelData: json, geometry });
     $('#scenario').insertAdjacentHTML('beforeend', `<option value="${esc(id)}">${esc(`File: ${file.name}`)}</option>`);
     await loadScenario(id);
   } catch (e) {
@@ -1151,7 +1242,7 @@ function exportCSV() {
 
 function exportReport() {
   const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(),
-    score: S.baseline, edits: [...S.edits.values()], register: S.register, escape: S.escape });
+    score: S.baseline, edits: [...S.edits.values()], register: S.register, escape: S.escape, comparison: S.compare?.diff ? S.compare : null });
   const w = window.open('', '_blank');
   if (w) { w.document.write(html); w.document.close(); } else download(`report-${S.sc.id}.html`, html, 'text/html');
 }
@@ -1459,6 +1550,7 @@ $('#reportBtn').onclick = exportReport;
 $('#traceBtn').onclick = () => ($('#tracePanel').hidden ? openTrace() : closeTrace());
 $('#csvBtn').onclick = exportCSV;
 addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && views.three.measuring) { setMeasureMode(false); return; }
   if (!S.demo) return;
   if (e.key === 'Escape') { S.demo.stop = true; S.demo.next?.(); return; }
   if ([' ', 'ArrowRight', 'PageDown', 'Enter'].includes(e.key) && !/^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(e.target.tagName)) {
@@ -1503,6 +1595,7 @@ $('#viewTools').onclick = (e) => {
   else if (b.dataset.act === 'all') { S.selected = null; viewer.select(null); syncEscapeView(); renderList(); viewer.overview(600); }
   else if (b.dataset.act === 'labels') { viewer.setLabels(!viewer.labels); b.classList.toggle('on', viewer.labels); }
   else if (b.dataset.act === 'shell') { viewer.setShell(!viewer.shell); b.classList.toggle('on', viewer.shell); }
+  else if (b.dataset.act === 'measure') setMeasureMode(!viewer.measuring);
 };
 
 window.__shipcheck = S; // for debugging in the console

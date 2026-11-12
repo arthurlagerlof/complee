@@ -197,12 +197,85 @@ export function createViewer(container, { onPick } = {}) {
     }
   }
 
+  // ---------- imported geometry (IFC): setSource({ elements: Map(id -> { positions, normals, indices, color }) }) ----------
+  // Elements that can carry a rule result are drawn one by one from their own triangles. All other elements
+  // (beams, columns, walls, slabs ...) are merged into one mesh per deck: thousands of parts, a handful of draw calls.
+  // A table of triangle ranges still tells which element a click hit.
+  let source = null;
+  const batchMeshes = [], batchBox = {}; // batchBox: id -> { deck, min: [x, y, z], max } relative to the deck group
+  const INDIVIDUAL = new Set(['door', 'stair', 'ramp', 'guard_rail', 'space', 'corridor', 'machinery_space']);
+  function setSource(next) { source = next ?? null; }
+
+  function sourceGeometry(el, centre) {
+    const g = source.elements.get(el.id);
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(g.positions.length);
+    for (let i = 0; i < pos.length; i += 3) { pos[i] = g.positions[i] - centre.x; pos[i + 1] = g.positions[i + 1] - centre.y; pos[i + 2] = g.positions[i + 2] - centre.z; }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(g.normals, 3));
+    geo.setIndex(new THREE.BufferAttribute(g.indices, 1));
+    return geo;
+  }
+
+  function buildBatches() {
+    const perDeck = new Map();
+    for (const el of model.elements) {
+      if (!el.geom_mm || !deckGroups[el.deck] || INDIVIDUAL.has(el.type) || !source.elements.has(el.id)) continue;
+      let list = perDeck.get(el.deck);
+      if (!list) perDeck.set(el.deck, (list = []));
+      list.push(el);
+    }
+    const tint = new THREE.Color();
+    for (const [deckId, list] of perDeck) {
+      const elevation = model.decks[deckIndex[deckId]].elevation_mm * M;
+      let vertices = 0, indices = 0;
+      for (const el of list) { const g = source.elements.get(el.id); vertices += g.positions.length / 3; indices += g.indices.length; }
+      const pos = new Float32Array(vertices * 3), nor = new Float32Array(vertices * 3), col = new Float32Array(vertices * 3), idx = new Uint32Array(indices);
+      const ranges = []; // sorted by first triangle
+      let vo = 0, io = 0;
+      for (const el of list) {
+        const g = source.elements.get(el.id), n = g.positions.length / 3;
+        for (let i = 0; i < n; i++) { pos[(vo + i) * 3] = g.positions[i * 3]; pos[(vo + i) * 3 + 1] = g.positions[i * 3 + 1] - elevation; pos[(vo + i) * 3 + 2] = g.positions[i * 3 + 2]; }
+        nor.set(g.normals, vo * 3);
+        // The file's own colour, pulled towards a light steel grey so the checked elements stand out.
+        tint.setRGB(g.color[0], g.color[1], g.color[2]).lerp(new THREE.Color(0xb9c2cc), 0.45);
+        for (let i = 0; i < n; i++) { col[(vo + i) * 3] = tint.r; col[(vo + i) * 3 + 1] = tint.g; col[(vo + i) * 3 + 2] = tint.b; }
+        for (let k = 0; k < g.indices.length; k++) idx[io + k] = g.indices[k] + vo;
+        ranges.push({ id: el.id, start: io / 3, end: (io + g.indices.length) / 3 });
+        const gm = el.geom_mm;
+        batchBox[el.id] = { deck: deckId, min: [gm.x * M, gm.z * M, -(gm.y + gm.ly) * M], max: [(gm.x + gm.lx) * M, (gm.z + gm.h) * M, -gm.y * M] };
+        vo += n; io += g.indices.length;
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+      geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      geo.setIndex(new THREE.BufferAttribute(idx, 1));
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.05, side: THREE.DoubleSide }));
+      mesh.userData.batch = ranges;
+      deckGroups[deckId].add(mesh);
+      batchMeshes.push(mesh);
+    }
+  }
+  function batchId(mesh, faceIndex) {
+    const r = mesh.userData.batch;
+    let lo = 0, hi = r.length - 1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (faceIndex < r[mid].start) hi = mid - 1; else if (faceIndex >= r[mid].end) lo = mid + 1; else return r[mid].id; }
+    return null;
+  }
+
   function elementObject(el) {
     const gm = el.geom_mm;
     const lx = Math.max(gm.lx, 30) * M, h = Math.max(gm.h, 30) * M, ly = Math.max(gm.ly, 30) * M;
     const box = new THREE.BoxGeometry(lx, h, ly);
     let obj;
-    if (el.virtual) {
+    if (source?.elements.has(el.id) && !el.virtual) {
+      const centre = new THREE.Vector3((gm.x + gm.lx / 2) * M, model.decks[deckIndex[el.deck]].elevation_mm * M + (gm.z + gm.h / 2) * M, -(gm.y + gm.ly / 2) * M);
+      const space = el.type === 'space';
+      obj = new THREE.Mesh(sourceGeometry(el, centre), new THREE.MeshStandardMaterial({ color: 0x9aa3ad, transparent: space, opacity: space ? 0.22 : 1, depthWrite: !space, roughness: 0.8, side: THREE.DoubleSide }));
+      obj.userData.mats = [{ m: obj.material, base: space ? 0.22 : 1 }];
+      obj.userData.volume = space;
+    } else if (el.virtual) {
       obj = new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineDashedMaterial({ color: 0x9aa3ad, dashSize: 0.4, gapSize: 0.25 }));
       obj.computeLineDistances();
       obj.userData.mats = [];
@@ -245,8 +318,12 @@ export function createViewer(container, { onPick } = {}) {
     for (const k of Object.keys(meshes)) delete meshes[k];
     for (const k of Object.keys(deckGroups)) delete deckGroups[k];
     for (const k of Object.keys(elById)) delete elById[k];
+    for (const k of Object.keys(batchBox)) delete batchBox[k];
+    for (const b of batchMeshes) b.geometry.dispose();
+    batchMeshes.length = 0;
     model = m; results = r; selectedId = null; selBox.visible = false;
     blocked = new Set(); escape = null; escapeGroup = null; runners = [];
+    clearMeasure();
     model.decks.forEach((d, i) => (deckIndex[d.id] = i));
 
     buildShell();
@@ -261,6 +338,7 @@ export function createViewer(container, { onPick } = {}) {
         const plate = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xdfe4ea, transparent: true, opacity: 0.9, side: THREE.DoubleSide, roughness: 0.95 }));
         plate.position.y = -0.03;
         g.add(plate);
+        plate.userData.deckPlate = true;
         const pts = [...d.outline_mm, d.outline_mm[0]].map(([x, y]) => new THREE.Vector3(x * M, 0, -y * M));
         g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x334155 })));
       }
@@ -271,11 +349,13 @@ export function createViewer(container, { onPick } = {}) {
     for (const el of model.elements) {
       elById[el.id] = el;
       if (!el.geom_mm || !deckGroups[el.deck]) continue;
+      if (source?.elements.has(el.id) && !INDIVIDUAL.has(el.type)) continue; // merged per deck (buildBatches)
       const obj = elementObject(el);
       deckGroups[el.deck].add(obj);
       meshes[el.id] = obj;
     }
 
+    if (source) buildBatches();
     labelLayer.replaceChildren();
     roomLabels = [];
     for (const el of model.elements) {
@@ -288,7 +368,7 @@ export function createViewer(container, { onPick } = {}) {
     }
     applyMode();
     update(r);
-    overview();
+    overview(0, plan ? null : new THREE.Vector3(...VIEWS.iso));
   }
 
   function colorFor(id) {
@@ -321,6 +401,7 @@ export function createViewer(container, { onPick } = {}) {
   }
 
   function applyFilter() {
+    for (const b of batchMeshes) { b.material.transparent = !!filterIds; b.material.opacity = filterIds ? 0.18 : 1; b.material.depthWrite = !filterIds; b.material.needsUpdate = true; }
     for (const [id, o] of Object.entries(meshes)) {
       if (o.userData.virtual) continue;
       const dim = filterIds && !filterIds.has(id);
@@ -432,8 +513,17 @@ export function createViewer(container, { onPick } = {}) {
     return new THREE.Box3(new THREE.Vector3(c.x - lx / 2, c.y - h / 2, c.z - ly / 2), new THREE.Vector3(c.x + lx / 2, c.y + h / 2, c.z + ly / 2));
   }
 
+  // World box of an element that is part of a merged deck mesh.
+  function batchWorldBox(id) {
+    const b = batchBox[id];
+    if (!b || !deckGroups[b.deck]?.visible) return null;
+    const y = deckGroups[b.deck].position.y;
+    return new THREE.Box3(new THREE.Vector3(b.min[0], b.min[1] + y, b.min[2]), new THREE.Vector3(b.max[0], b.max[1] + y, b.max[2]));
+  }
+
   function flyToElement(id, ms = 1100) {
     const o = meshes[id];
+    if (!o && batchBox[id]) { const b = batchWorldBox(id); return b ? frameBox(b.expandByScalar(0.08), ms, 2.6, new THREE.Vector3(-0.35, 1, 0.55)) : Promise.resolve(); }
     if (!o) return Promise.resolve();
     // One element on a deck: look down at it from above at an angle, so other elements on the same deck
     // (corridors, walls) cannot stand between the camera and the element.
@@ -444,6 +534,14 @@ export function createViewer(container, { onPick } = {}) {
     selectedId = id;
     const o = meshes[id];
     for (const m of Object.values(meshes)) for (const { m: mat } of m.userData.mats ?? []) mat.emissive?.setHex(0x000000);
+    if (!o && batchBox[id]) {
+      const b = batchWorldBox(id);
+      selBox.visible = !!b;
+      if (b) selBox.box.copy(b.expandByScalar(0.05));
+      label.style.display = 'none';
+      if (fly) flyToElement(id);
+      return;
+    }
     if (!o) { selBox.visible = false; label.style.display = 'none'; return; }
     for (const { m: mat } of o.userData.mats ?? []) mat.emissive?.setHex(0x26303c);
     selBox.box.copy(boxOf(o).expandByScalar(0.08));
@@ -453,6 +551,7 @@ export function createViewer(container, { onPick } = {}) {
 
   function setMode(m) {
     mode = m;
+    clearMeasure(); // points are scene positions: they do not follow decks that move apart
     applyMode();
     overview();
   }
@@ -618,18 +717,129 @@ export function createViewer(container, { onPick } = {}) {
     mouse.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(mouse, camera);
     const objs = Object.values(meshes).filter((o) => o.parent.visible);
-    const hits = ray.intersectObjects(objs, true).map((h) => idOf(h.object)).filter(Boolean);
-    const real = hits.find((o) => !o.userData.virtual);
-    return (real || hits[0])?.userData.id;
+    for (const b of batchMeshes) if (b.parent.visible) objs.push(b);
+    let fallback = null;
+    for (const h of ray.intersectObjects(objs, true)) {
+      if (h.object.userData.batch) { const id = batchId(h.object, h.faceIndex); if (id) return id; continue; }
+      const o = idOf(h.object);
+      if (!o) continue;
+      if (!o.userData.virtual && !o.userData.volume) return o.userData.id;
+      fallback ??= o.userData.id;
+    }
+    return fallback;
   }
   let down = null;
   renderer.domElement.addEventListener('pointerdown', (e) => (down = [e.clientX, e.clientY]));
+  // ---------- zoom (perspective): towards the surface under the pointer, never through it in one go ----------
+
+  const STOP_M = 0.5; // the camera stops this far in front of a surface; the next wheel step passes it
+  const surfaces = () => root.children.filter((c) => c.visible && !c.userData.overlay && !c.userData.shell);
+  function surfaceHit(ev, minDistance = 0) {
+    const r = renderer.domElement.getBoundingClientRect();
+    mouse.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(mouse, camera);
+    return ray.intersectObjects(surfaces(), true).find((h) => h.distance > minDistance && !h.object.isLine && !h.object.isLineSegments) ?? null;
+  }
+  const viewDir = new THREE.Vector3();
+  container.addEventListener('wheel', (e) => {
+    if (plan || e.target !== renderer.domElement || !model) return; // the plan view zooms by scale (OrbitControls)
+    e.preventDefault();
+    e.stopPropagation();
+    cancelFlight();
+    framedBox = null;
+    const cam = persp.position;
+    const hit = surfaceHit(e, STOP_M + 0.05);
+    // Nothing under the pointer: zoom along the pointer ray at the current orbit distance.
+    const P = hit ? hit.point.clone() : ray.ray.origin.clone().addScaledVector(ray.ray.direction, Math.max(cam.distanceTo(controlsP.target), 5));
+    const dist = cam.distanceTo(P);
+    const steps = Math.min(Math.abs(e.deltaY) * (e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1), 400);
+    const keep = Math.pow(0.9982, steps); // share of the distance left after zooming in
+    const next = e.deltaY < 0 ? Math.max(dist * keep, STOP_M) : Math.min(dist / keep, controlsP.maxDistance);
+    if (Math.abs(next - dist) < 1e-4) return;
+    cam.sub(P).multiplyScalar(next / dist).add(P);
+    // The view direction stays; the orbit centre moves to the depth of what the pointer is on.
+    persp.getWorldDirection(viewDir);
+    controlsP.target.copy(cam).addScaledVector(viewDir, Math.max(P.clone().sub(cam).dot(viewDir), STOP_M));
+    resetDamping(controlsP);
+    invalidate();
+  }, { capture: true, passive: false });
+
+  // ---------- measuring: distance between two picked points ----------
+
+  let measureOn = false, measurePoints = [], measureGroup = null;
+  const measureLabel = document.createElement('div');
+  measureLabel.className = 'measure-label';
+  container.appendChild(measureLabel);
+
+  function clearMeasure() {
+    if (measureGroup) { scene.remove(measureGroup); measureGroup.traverse((o) => { o.geometry?.dispose?.(); if (o.material?.isLineMaterial) lineMaterials.delete(o.material); o.material?.dispose?.(); }); }
+    measureGroup = null; measurePoints = [];
+    measureLabel.style.display = 'none';
+  }
+
+  // Snap to the faces of the element that was hit, so wall-to-wall distances are exact.
+  function snapped(hit) {
+    const p = hit.point.clone(), owner = idOf(hit.object);
+    if (!owner?.userData.size) return p;
+    const b = boxOf(owner);
+    for (const axis of ['x', 'y', 'z']) {
+      if (Math.abs(p[axis] - b.min[axis]) < 0.12) p[axis] = b.min[axis];
+      else if (Math.abs(p[axis] - b.max[axis]) < 0.12) p[axis] = b.max[axis];
+    }
+    return p;
+  }
+
+  function addMeasurePoint(ev) {
+    const hit = surfaceHit(ev);
+    if (!hit) return;
+    if (measurePoints.length >= 2) clearMeasure();
+    measurePoints.push(snapped(hit));
+    if (!measureGroup) { measureGroup = new THREE.Group(); measureGroup.renderOrder = 20; scene.add(measureGroup); }
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(0.09, 14, 10), new THREE.MeshBasicMaterial({ color: 0x1d2430, depthTest: false, transparent: true }));
+    dot.position.copy(measurePoints[measurePoints.length - 1]);
+    dot.renderOrder = 21;
+    measureGroup.add(dot);
+    if (measurePoints.length === 2) {
+      const [a, b] = measurePoints;
+      const line = new Line2(new LineGeometry().setPositions([a.x, a.y, a.z, b.x, b.y, b.z]), fatMaterial(0x1d2430, 2.5));
+      line.renderOrder = 20;
+      measureGroup.add(line);
+      const mm = (v) => Math.round(Math.abs(v) * 1000).toLocaleString('en');
+      measureLabel.innerHTML = '';
+      const main = document.createElement('b');
+      main.textContent = `${mm(a.distanceTo(b))} mm`;
+      const parts = document.createElement('span');
+      parts.textContent = `along ${mm(b.x - a.x)} · across ${mm(b.z - a.z)} · height ${mm(b.y - a.y)}${mode === 'exploded' ? ' · exploded view: heights between decks are not to scale' : ''}`;
+      measureLabel.append(main, parts);
+    } else {
+      measureLabel.textContent = 'Click the second point';
+    }
+    measureLabel.style.display = 'block';
+  }
+
+  function setMeasure(on) {
+    measureOn = !!on;
+    if (!measureOn) clearMeasure();
+    renderer.domElement.style.cursor = measureOn ? 'crosshair' : '';
+    tip.style.display = 'none';
+  }
+
+  function updateMeasureLabel() {
+    if (!measurePoints.length) return;
+    const p = measurePoints.length === 2 ? measurePoints[0].clone().add(measurePoints[1]).multiplyScalar(0.5) : measurePoints[0].clone();
+    p.project(camera);
+    measureLabel.style.left = `${((p.x + 1) / 2) * container.clientWidth}px`;
+    measureLabel.style.top = `${((1 - p.y) / 2) * container.clientHeight}px`;
+  }
+
   renderer.domElement.addEventListener('pointerup', (e) => {
     if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
+    if (measureOn) { if (e.button === 0) { addMeasurePoint(e); invalidate(); } return; }
     const id = pickAt(e);
     if (id) onPick?.(id);
   });
   renderer.domElement.addEventListener('dblclick', (e) => {
+    if (measureOn) return;
     const id = pickAt(e);
     if (id) flyToElement(id, 700); else overview(700);
   });
@@ -674,6 +884,23 @@ export function createViewer(container, { onPick } = {}) {
   }
 
   // Room names appear once the room is wide enough on screen to carry its name.
+  // A name is hidden when a deck plate or another element's floor lies between it and the camera, so the names
+  // of the decks below do not shine through.
+  const labelRay = new THREE.Raycaster(), labelPoint = new THREE.Vector3(), toCamera = new THREE.Vector3();
+  function labelHidden(id) {
+    const occluders = [];
+    for (const g of Object.values(deckGroups)) {
+      if (!g.visible) continue;
+      for (const c of g.children) if (c.userData.deckPlate || (c.userData.id && c.userData.id !== id && !c.userData.virtual && c.isMesh)) occluders.push(c);
+    }
+    let far;
+    if (plan) { toCamera.set(0, 1, 0); far = 1e4; } else { toCamera.copy(persp.position).sub(labelPoint); far = toCamera.length() - 0.05; toCamera.normalize(); }
+    if (far <= 0) return false;
+    labelRay.set(labelPoint, toCamera);
+    labelRay.far = far;
+    return labelRay.intersectObjects(occluders, false).length > 0;
+  }
+
   function updateRoomLabels() {
     const w = container.clientWidth, h = container.clientHeight;
     for (const L of roomLabels) {
@@ -683,10 +910,12 @@ export function createViewer(container, { onPick } = {}) {
         o.getWorldPosition(projected);
         const [lx, hh] = o.userData.size;
         projected.y += -hh / 2 + 0.1;
+        labelPoint.copy(projected);
         corner.copy(projected); corner.x += lx / 2;
         projected.project(camera); corner.project(camera);
         const px = Math.abs(corner.x - projected.x) * w; // full room length on screen
         show = projected.z > -1 && projected.z < 1 && Math.abs(projected.x) < 1.02 && Math.abs(projected.y) < 1.02 && (L.always || px > L.chars * 5.2 + 10);
+        if (show && !L.always) show = !labelHidden(L.id);
         if (show) {
           L.node.style.left = `${((projected.x + 1) / 2) * w}px`;
           L.node.style.top = `${((1 - projected.y) / 2) * h}px`;
@@ -713,8 +942,10 @@ export function createViewer(container, { onPick } = {}) {
       if (Math.abs(near - persp.near) > near * 0.05 || Math.abs(far - persp.far) > 1) { persp.near = near; persp.far = far; persp.updateProjectionMatrix(); }
     }
     if (selectedId && meshes[selectedId]) selBox.box.copy(boxOf(meshes[selectedId]).expandByScalar(0.08));
+    else if (selectedId && batchBox[selectedId]) { const b = batchWorldBox(selectedId); selBox.visible = !!b; if (b) selBox.box.copy(b.expandByScalar(0.05)); }
     if (runners.length) moveRunners(now);
     updateLabel();
+    updateMeasureLabel();
     if (model) updateRoomLabels();
     renderer.render(scene, camera);
   });
@@ -727,11 +958,12 @@ export function createViewer(container, { onPick } = {}) {
     if (out && typeof out.then === 'function') out.then(invalidate, invalidate);
     return out;
   };
-  const api = { build, update, paintNeutral, select, flyToElement, setMode, setPlan, setFilter, overview, setEscape, frameRoute, setLabels, setShell, setView };
+  const api = { build, update, paintNeutral, select, flyToElement, setMode, setPlan, setFilter, overview, setEscape, frameRoute, setLabels, setShell, setView, setMeasure, setSource };
   for (const key of Object.keys(api)) api[key] = redraws(api[key]);
   // Live getters (Object.assign would copy their current values instead).
   return Object.defineProperties(api, Object.getOwnPropertyDescriptors({
     get mode() { return mode; }, get plan() { return plan; }, get labels() { return labelsOn; }, get shell() { return shellOn; },
-    get frames() { return frames; },
+    get frames() { return frames; }, get measuring() { return measureOn; },
+    get cameraDistance() { return persp.position.distanceTo(controlsP.target); },
   }));
 }

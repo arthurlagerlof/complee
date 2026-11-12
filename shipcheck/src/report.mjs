@@ -59,6 +59,22 @@ export function toCSV(rows) {
   return '﻿' + [cols.join(','), ...rows.map((r) => cols.map((c) => q(r[c])).join(','))].join('\r\n');
 }
 
+// Changes against an earlier revision (src/compare.mjs): { name, diff }.
+export function comparisonSection(comparison) {
+  if (!comparison?.diff) return '';
+  const { findings: f, elements: e } = comparison.diff;
+  const row = (x, extra = '') => `<tr><td><b>${esc(x.element)}</b> ${esc(x.name)}</td><td>${esc(x.rule_id)}</td><td>${esc(LABEL[x.status] ?? x.status)}</td><td>${esc(x.measured)}</td><td>${esc(x.required)}</td><td>${extra}</td></tr>`;
+  const table = (title, cls, rows) => (rows.length ? `<h3 class="${cls}">${title} (${rows.length})</h3><table><tr><th>Element</th><th>Rule</th><th>Status</th><th>Measured</th><th>Required</th><th>Earlier revision</th></tr>${rows.join('')}</table>` : '');
+  return `<h2>Changes since the earlier revision: ${esc(comparison.name)}</h2>
+<p><b>${f.new.length}</b> new finding${f.new.length === 1 ? '' : 's'}, <b>${f.resolved.length}</b> resolved, <b>${f.changed.length}</b> changed, ${f.unchanged} unchanged.
+Model: ${e.added.length} element${e.added.length === 1 ? '' : 's'} added, ${e.removed.length} removed, ${e.changed.length} with changed values.</p>
+${table('New findings', 'nc', f.new.map((x) => row(x, 'no finding')))}
+${table('Changed findings', 'ni', f.changed.map((x) => row(x, `${esc(LABEL[x.before_status] ?? x.before_status)}, ${esc(x.before_measured)}`)))}
+${table('Resolved findings', 'ok', f.resolved.map((x) => row({ ...x, status: 'resolved' }, `${esc(LABEL[x.status] ?? x.status)}, ${esc(x.measured)}`)))}
+${e.changed.length ? `<h3>Changed design values (${e.changed.length} elements)</h3><table><tr><th>Element</th><th>Field</th><th>Earlier</th><th>Now</th></tr>${e.changed.flatMap((c) => c.changes.map((ch) => `<tr><td><b>${esc(c.id)}</b> ${esc(c.name)}</td><td>${esc(ch.field)}</td><td>${esc(ch.before)}</td><td>${esc(ch.after)}</td></tr>`)).join('')}</table>` : ''}
+${e.added.length ? `<p>Added: ${e.added.map((x) => esc(x.id)).join(', ')}.</p>` : ''}${e.removed.length ? `<p>Removed: ${e.removed.map((x) => esc(x.id)).join(', ')}.</p>` : ''}`;
+}
+
 // Escape-route analysis (src/escape.mjs) as a report section: one row per room.
 export function escapeSection(escape, model) {
   if (!escape?.available) return '';
@@ -82,7 +98,7 @@ ${rooms.map((o) => `<tr><td><b>${esc(o.id)}</b> ${esc(els.get(o.id)?.name ?? '')
 <p class="muted">Route analysis from the model geometry, not a rule result. ${escape.assumptions.map(esc).join(' ')}</p>`;
 }
 
-export function toHTML({ title, scenario, results, model, rules = [], score = null, edits = [], generated = new Date(), register = null, escape = null }) {
+export function toHTML({ title, scenario, results, model, rules = [], score = null, edits = [], generated = new Date(), register = null, escape = null, comparison = null }) {
   const rows = reportRows(results, model, rules, { register });
   const openCount = register ? rows.filter((r) => r.disposition === DISPOSITION_LABEL.open).length : 0;
   const s = results.summary;
@@ -114,6 +130,7 @@ ${rows.map((r) => `<tr><td class="${r.status === 'Non-compliant' ? 'nc' : 'ni'}"
 <td>${esc(r.group)}</td><td>${esc(r.rule)}</td><td>${esc(r.source)}<br><span class="muted">${esc(r.clause)}</span></td><td>${esc(r.measured)}</td><td>${esc(r.required)}</td>
 <td>${esc(r.explanation)}</td><td class="muted">${esc(r.provenance)}</td><td>${esc(r.basis)}</td><td>${r.verified}</td><td>${esc(r.review)}</td>${register ? `<td>${esc(r.disposition)}</td><td>${esc(r.responsible)}</td><td>${esc(r.note)}</td>` : ''}</tr>`).join('\n')}
 </table>
+${comparisonSection(comparison)}
 ${escapeSection(escape, model)}
 ${traceSection(results, rules)}
 <h2>Rules applied</h2>
