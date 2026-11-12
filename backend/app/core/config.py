@@ -49,6 +49,9 @@ class Settings(BaseSettings):
         "openai:gpt-6.1-sol:service_tier=ultrafast,"
         "openai:gpt-6-astra:service_tier=fast"
     )
+    # Model chain profile when AI_MODEL_CHAIN is not set: "fast" (Claude Opus 5.5 fast first, a few cents per
+    # answer) or "budget" (GPT-6.1 Sol first, about 1-2 cents per answer, a few seconds slower).
+    ai_cost_profile: str = "fast"
     ai_chain_step_timeout_seconds: float = Field(default=45, gt=0, le=600)
     ai_chain_max_tokens: int = Field(default=8000, ge=256, le=64000)
 

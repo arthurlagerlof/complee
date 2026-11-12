@@ -28,6 +28,44 @@ from app.db.models import AIModelConfig, AIProvider
 
 CHAIN_MARKER = "fast_model_chain"
 
+# Chains per cost profile (AI_COST_PROFILE). An explicit AI_MODEL_CHAIN always wins.
+PROFILE_CHAINS = {
+    "fast": "anthropic:claude-opus-5-5:speed=fast,openai:gpt-6.1-sol:service_tier=ultrafast,openai:gpt-6-astra:service_tier=fast",
+    # From the comparison of 2026-11-12: GPT-6.1 Sol was right on every task at about 1 cent per answer;
+    # Gemini 3.8 Flash and Claude Sonnet 5.5 were right too and are about as cheap, but slower or less consistent.
+    "budget": "openai:gpt-6.1-sol,gemini:gemini-3.8-flash,anthropic:claude-sonnet-5-5",
+}
+
+# USD per 1M tokens (input, output), standard tier unless named. Used for the cost shown with each answer.
+PRICES = {
+    ("claude-opus-5-5", "fast"): (8.0, 40.0), ("claude-opus-5-5", None): (4.0, 20.0),
+    ("claude-sonnet-5-5", None): (2.0, 10.0), ("claude-haiku-5-5", None): (0.10, 0.50),
+    ("claude-fable-5-2", "fast"): (16.0, 80.0), ("claude-fable-5-2", None): (8.0, 40.0),
+    ("gpt-6.1-sol", None): (2.0, 10.0), ("gpt-6.1-sol", "fast"): (4.0, 20.0), ("gpt-6.1-sol", "ultrafast"): (12.0, 60.0),
+    ("gpt-6-astra", None): (10.0, 50.0), ("gpt-6-astra", "fast"): (20.0, 100.0), ("gpt-6-astra", "ultrafast"): (60.0, 300.0),
+    ("gpt-6.1-terra", None): (1.0, 5.0), ("gpt-6.1-terra", "fast"): (2.0, 10.0),
+    ("gemini-3.8-flash", None): (0.75, 3.75), ("gemini-3.5-flash-lite", None): (0.30, 2.50),
+    ("gemini-4-argon", None): (4.0, 20.0), ("gemini-4-carbon", None): (4.0, 20.0),
+}
+
+
+def chain_spec() -> str:
+    if "ai_model_chain" in settings.model_fields_set:
+        return settings.ai_model_chain
+    return PROFILE_CHAINS.get(settings.ai_cost_profile.strip().lower(), PROFILE_CHAINS["fast"])
+
+
+def estimate_cost(step: "ChainStep", usage: dict[str, Any]) -> float | None:
+    """USD for one answer from its token usage; None when the model's price is unknown."""
+    price = PRICES.get((step.model_name, step.options.get("speed") or step.options.get("service_tier")))
+    if price is None or not usage:
+        return None
+    tin = usage.get("input_tokens", usage.get("promptTokenCount")) or 0
+    tout = usage.get("output_tokens")
+    if tout is None:  # Gemini counts its reasoning separately; it is billed as output
+        tout = (usage.get("candidatesTokenCount") or 0) + (usage.get("thoughtsTokenCount") or 0)
+    return round(tin / 1e6 * price[0] + tout / 1e6 * price[1], 6)
+
 
 @dataclass
 class ChainStep:
@@ -60,7 +98,7 @@ def _key(provider_type: str) -> str | None:
 
 
 def active_steps() -> list[ChainStep]:
-    steps = [s for s in parse_chain(settings.ai_model_chain) if _key(s.provider_type)]
+    steps = [s for s in parse_chain(chain_spec()) if _key(s.provider_type)]
     if settings.gemini_api_key and settings.gemini_model and not any(s.provider_type == "gemini" for s in steps):
         steps.append(ChainStep("gemini", settings.gemini_model.removeprefix("models/")))
     return steps
@@ -144,6 +182,7 @@ def run_chain(
         raise AIProviderError("No AI model is configured (ANTHROPIC_API_KEY, OPENAI_API_KEY or GEMINI_API_KEY).")
     attempts: list[dict[str, Any]] = []
     last_error = "no attempt"
+    spent = 0.0  # USD of every attempt that returned tokens (an invalid answer is billed too)
     for index, step in enumerate(steps):
         provider, model = builtin_model(session, step, chain_head=index == 0)
         # The last step gets the normal timeout: there is nothing left to fall back to.
@@ -165,6 +204,9 @@ def run_chain(
         finally:
             adapter.close()
         duration_ms = round((time.perf_counter() - started) * 1000)
+        cost = estimate_cost(step, response.token_usage)
+        if cost is not None:
+            spent += cost
         if schema is not None and response.validation_errors:
             last_error = "the answer did not match the required structure"
             record(provider, model, "failed", duration_ms, {**response.token_usage, "fallback_reason": last_error}, "invalid")
@@ -172,7 +214,7 @@ def run_chain(
             continue
         execution = record(provider, model, "completed", duration_ms, response.token_usage,
                            "valid" if schema is not None else "not_applicable")
-        attempts.append({"model": step.label, "status": "completed", "duration_ms": duration_ms})
+        attempts.append({"model": step.label, "status": "completed", "duration_ms": duration_ms, "cost_usd": cost})
         return {
             "execution_id": execution.id,
             "provider_id": provider.id,
@@ -184,5 +226,6 @@ def run_chain(
             "duration_ms": sum(a["duration_ms"] for a in attempts),
             "token_usage": response.token_usage,
             "attempts": attempts,
+            "cost_usd": round(spent, 6) if spent else None,
         }
     raise AIProviderError(f"Every model in the chain failed. Last error: {last_error}")

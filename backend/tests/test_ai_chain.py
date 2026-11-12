@@ -124,3 +124,15 @@ def test_parse_chain_reads_options():
         ("anthropic", "claude-opus-5-5", {"speed": "fast"}),
         ("openai", "gpt-6.1-sol", {"service_tier": "ultrafast", "effort": "medium"}),
     ]
+
+
+def test_budget_profile_puts_cheap_models_first_and_prices_the_answer(chain, monkeypatch):
+    monkeypatch.setattr(settings, "ai_cost_profile", "budget")
+    monkeypatch.setattr(settings, "gemini_api_key", "g")
+    assert [s.label for s in ai_chain.active_steps()] == ["gpt-6.1-sol", "gemini-3.8-flash", "claude-sonnet-5-5"]
+    sol = ai_chain.ChainStep("openai", "gpt-6.1-sol", {})
+    assert ai_chain.estimate_cost(sol, {"input_tokens": 1000, "output_tokens": 1000}) == 0.012  # 0.2 ct + 1 ct
+    gemini = ai_chain.ChainStep("gemini", "gemini-3.8-flash", {})
+    # Gemini's reasoning tokens are billed as output
+    assert ai_chain.estimate_cost(gemini, {"promptTokenCount": 1000, "candidatesTokenCount": 200, "thoughtsTokenCount": 800}) == 0.0045
+    assert ai_chain.estimate_cost(ai_chain.ChainStep("openai", "unknown-model", {}), {"input_tokens": 1}) is None

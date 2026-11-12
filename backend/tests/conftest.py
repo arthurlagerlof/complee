@@ -171,3 +171,5 @@ def _no_real_ai_providers(monkeypatch):
 
     monkeypatch.setattr(settings, "anthropic_api_key", None)
     monkeypatch.setattr(settings, "openai_api_key", None)
+    # Tests describe the default chain; a demo profile in backend/.env (AI_COST_PROFILE) must not change them.
+    monkeypatch.setattr(settings, "ai_cost_profile", "fast")

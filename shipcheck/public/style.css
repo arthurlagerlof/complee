@@ -390,3 +390,21 @@ table.register tr.warn td { background: #fffaf0; }
 .esc-sug.on { background: #ecfdf5; margin: 0 -10px; padding: 6px 10px; }
 .esc-sug .ok-line { color: #15803d; font-size: 12px; margin-top: 3px; }
 .esc-sug-actions { display: flex; gap: 6px; margin-top: 4px; }
+
+/* ---------- where the AI works: header indicator, panel, tags ---------- */
+.ai-pill { display: inline-flex; align-items: center; gap: 6px; border-color: #a5b4fc; background: linear-gradient(90deg, #eef2ff, #f5f3ff); color: #3730a3; font-weight: 600; white-space: nowrap; }
+.ai-pill.off { border-color: var(--line); background: var(--soft); color: var(--muted); font-weight: 500; }
+.ai-pill.busy { border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99, 102, 241, .18); animation: ai-pulse 1.4s ease-in-out infinite; }
+.ai-pill.on { background: #3730a3; color: #fff; border-color: #3730a3; }
+@keyframes ai-pulse { 50% { box-shadow: 0 0 0 6px rgba(99, 102, 241, .08); } }
+#aiPanel { z-index: 15; background: #fff; display: flex; flex-direction: column; }
+#aiPanel[hidden] { display: none; }
+.ai-map { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+.ai-map-col { border-radius: 8px; padding: 10px 12px; font-size: 12.5px; }
+.ai-map-col ul { margin: 6px 0 0; padding-left: 18px; }
+.ai-map-col.ai { background: #f5f3ff; border: 1px solid #c4b5fd; }
+.ai-map-col.det { background: #f0fdf4; border: 1px solid #bbf7d0; }
+.ai-tag { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: #fff; background: #4f46e5; border-radius: 4px; padding: 1px 7px; margin-bottom: 6px; }
+.ai-box { border-left: 3px solid #6366f1; }
+.ai-btn::first-letter { color: #6366f1; }
+@media (max-width: 900px) { .ai-map { grid-template-columns: 1fr; } }

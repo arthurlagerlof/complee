@@ -122,6 +122,7 @@ def _run(prompt: str, system: str, schema: type[BaseModel], max_tokens: int) -> 
         "duration_ms": result["duration_ms"],
         "attempts": result["attempts"],
         "token_usage": result["token_usage"],
+        "cost_usd": result.get("cost_usd"),
     }
 
 
@@ -176,4 +177,10 @@ def escape_suggestions(payload: dict[str, Any]) -> dict[str, Any]:
 
 def status() -> dict[str, Any]:
     steps = ai_chain.active_steps()
-    return {"available": bool(steps), "chain": [s.label for s in steps]}
+    explicit = "ai_model_chain" in settings.model_fields_set
+    return {
+        "available": bool(steps),
+        "profile": "custom" if explicit else settings.ai_cost_profile.strip().lower(),
+        "chain": [s.label for s in steps],
+        "prices_usd_per_million": [ai_chain.PRICES.get((s.model_name, s.options.get("speed") or s.options.get("service_tier"))) for s in steps],
+    }
