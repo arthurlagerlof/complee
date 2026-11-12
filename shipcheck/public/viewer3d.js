@@ -264,6 +264,27 @@ export function createViewer(container, { onPick } = {}) {
     return null;
   }
 
+  // Large models (thousands of elements): one draw call per element instead of three. Edge lines are collected per
+  // deck into a single object and rooms are drawn as floors without the see-through walls. Smaller models keep the
+  // full look.
+  const LEAN_FROM = 3000;
+  let lean = false, leanEdges = {};
+  function addEdges(obj, geo, angle, opacity) {
+    if (!lean) { obj.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, angle), new THREE.LineBasicMaterial({ color: 0x2c3a4d, transparent: true, opacity }))); return; }
+    obj.userData.edges = new THREE.EdgesGeometry(geo, angle);
+  }
+  function flushLeanEdges() {
+    for (const [deck, list] of Object.entries(leanEdges)) {
+      const positions = new Float32Array(list.reduce((n, a) => n + a.length, 0));
+      let o = 0;
+      for (const a of list) { positions.set(a, o); o += a.length; }
+      const lines = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(positions, 3)), new THREE.LineBasicMaterial({ color: 0x2c3a4d, transparent: true, opacity: 0.4 }));
+      lines.raycast = () => {};
+      deckGroups[deck]?.add(lines);
+    }
+    leanEdges = {};
+  }
+
   function elementObject(el) {
     const gm = el.geom_mm;
     const lx = Math.max(gm.lx, 30) * M, h = Math.max(gm.h, 30) * M, ly = Math.max(gm.ly, 30) * M;
@@ -283,11 +304,14 @@ export function createViewer(container, { onPick } = {}) {
       // Floor (pick target, status colour) + see-through walls, no ceiling.
       const floor = new THREE.BoxGeometry(lx, 0.06, ly).translate(0, -h / 2 + 0.03, 0);
       obj = new THREE.Mesh(floor, new THREE.MeshStandardMaterial({ color: 0x9aa3ad, transparent: true, opacity: 0.96, roughness: 0.85 }));
-      const walls = new THREE.Mesh(roomGeometry(lx, h, ly), new THREE.MeshStandardMaterial({ color: 0x9aa3ad, transparent: true, opacity: 0.26, depthWrite: false, side: THREE.DoubleSide, roughness: 0.9 }));
-      walls.renderOrder = 2;
-      obj.add(walls);
-      obj.add(new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineBasicMaterial({ color: 0x2c3a4d, transparent: true, opacity: 0.42 })));
-      obj.userData.mats = [{ m: obj.material, base: 0.96 }, { m: walls.material, base: 0.26 }];
+      obj.userData.mats = [{ m: obj.material, base: 0.96 }];
+      if (!lean) {
+        const walls = new THREE.Mesh(roomGeometry(lx, h, ly), new THREE.MeshStandardMaterial({ color: 0x9aa3ad, transparent: true, opacity: 0.26, depthWrite: false, side: THREE.DoubleSide, roughness: 0.9 }));
+        walls.renderOrder = 2;
+        obj.add(walls);
+        obj.userData.mats.push({ m: walls.material, base: 0.26 });
+      }
+      addEdges(obj, box, 1, 0.42);
     } else {
       let geo = box, opacity = 0.97;
       if (el.type === 'stair' && gm.h > 600) geo = stairGeometry(lx, h, ly);
@@ -296,7 +320,7 @@ export function createViewer(container, { onPick } = {}) {
       else if (el.type === 'escape_trunk') opacity = 0.45;
       else if (/tank/.test(el.type)) opacity = 0.8;
       obj = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x9aa3ad, transparent: opacity < 0.97, opacity, depthWrite: opacity > 0.5, roughness: 0.8 }));
-      obj.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo, 20), new THREE.LineBasicMaterial({ color: 0x2c3a4d, transparent: true, opacity: 0.35 })));
+      addEdges(obj, geo, 20, 0.35);
       if (el.type === 'ladder') {
         // A slim ladder is hard to hit: an invisible box around it takes the click.
         const hit = new THREE.Mesh(box, new THREE.MeshBasicMaterial({ visible: false }));
@@ -308,6 +332,13 @@ export function createViewer(container, { onPick } = {}) {
     obj.userData.id = el.id;
     obj.userData.virtual = !!el.virtual;
     obj.userData.size = [lx, h, ly];
+    if (obj.userData.edges) {
+      const a = obj.userData.edges.attributes.position.array.slice(), p = obj.position;
+      for (let i = 0; i < a.length; i += 3) { a[i] += p.x; a[i + 1] += p.y; a[i + 2] += p.z; }
+      (leanEdges[el.deck] ??= []).push(a);
+      obj.userData.edges.dispose();
+      delete obj.userData.edges;
+    }
     return obj;
   }
 
@@ -347,6 +378,8 @@ export function createViewer(container, { onPick } = {}) {
       root.add(g);
     }
 
+    lean = model.elements.length > LEAN_FROM;
+    leanEdges = {};
     for (const el of model.elements) {
       elById[el.id] = el;
       if (!el.geom_mm || !deckGroups[el.deck]) continue;
@@ -356,6 +389,7 @@ export function createViewer(container, { onPick } = {}) {
       meshes[el.id] = obj;
     }
 
+    flushLeanEdges();
     if (source) buildBatches();
     labelLayer.replaceChildren();
     roomLabels = [];

@@ -49,6 +49,15 @@ function fmtLengthInput(rv, mm) {
 
 // Accepts ship.json (multi-deck) and the older deck.json (one deck). Geometry is converted to mm;
 // element props are kept as written so the original unit can be shown.
+function normalizeElement(el, k, defaultDeck) {
+  const g = el.geom;
+  return {
+    ...el,
+    deck: el.deck ?? defaultDeck,
+    geom_mm: g ? { x: g.x * k, y: g.y * k, z: (g.z ?? 0) * k, lx: g.lx * k, ly: g.ly * k, h: (g.h ?? 0) * k } : null,
+  };
+}
+
 export function normalizeModel(raw) {
   if (raw?.__normalized) return raw;
   const units = raw.units || 'mm';
@@ -85,14 +94,7 @@ export function normalizeModel(raw) {
     };
   });
 
-  const elements = (raw.elements || []).map((el) => {
-    const g = el.geom;
-    return {
-      ...el,
-      deck: el.deck ?? decks[0]?.id,
-      geom_mm: g ? { x: g.x * k, y: g.y * k, z: (g.z ?? 0) * k, lx: g.lx * k, ly: g.ly * k, h: (g.h ?? 0) * k } : null,
-    };
-  });
+  const elements = (raw.elements || []).map((el) => normalizeElement(el, k, decks[0]?.id));
 
   return {
     __normalized: true,
@@ -653,28 +655,51 @@ export function checkModel(rawModel, allRules) {
 // Re-check only the elements in `ids` after an edit (what-if editing on a model with tens of thousands of parts):
 // same output as checkModel on the edited model. Falls back to a full check when a rule in the set looks beyond
 // the element itself, when an element is new or gone, or when there is no previous result to start from.
-export function recheckElements(previous, rawModel, allRules, ids) {
-  const { model, drafts, rules, ctx } = checkContext(rawModel, allRules);
+// Raw elements by id, per elements array (rebuilt when the array is replaced or changes length).
+const rawIndex = new WeakMap();
+function rawElementsById(elements) {
+  let hit = rawIndex.get(elements);
+  if (!hit || hit.length !== elements.length) {
+    hit = { length: elements.length, byId: new Map(elements.map((e) => [e.id, e])) };
+    rawIndex.set(elements, hit);
+  }
+  return hit.byId;
+}
+
+// inPlace: update previous.elements itself instead of copying it (copying 100,000 entries costs more than the
+// re-check); the returned object is still a new one, so callers can tell that the results changed.
+export function recheckElements(previous, rawModel, allRules, ids, { inPlace = false } = {}) {
+  const rules = allRules.filter((r) => !r.draft);
   const local = rules.every((r) => LOCAL_CHECKS.has(r.check));
-  if (!previous?.elements || !local) return checkModel(rawModel, allRules);
+  const elementsRaw = rawModel?.__normalized ? null : rawModel?.elements;
+  if (!previous?.elements || !local || !Array.isArray(elementsRaw)) return checkModel(rawModel, allRules);
   const wanted = [...new Set(ids)];
-  if (wanted.some((id) => !previous.elements[id] || !ctx.byId[id])) return checkModel(rawModel, allRules);
+  const byRaw = rawElementsById(elementsRaw);
+  if (wanted.some((id) => !previous.elements[id] || !byRaw.has(id))) return checkModel(rawModel, allRules);
+  // Local rules read one element and the ship particulars: normalise the model header and only the edited elements,
+  // so an edit costs the same on 100 elements and on 100,000.
+  const header = normalizeModel({ ...rawModel, elements: [] });
+  const k = UNIT_TO_MM[header.units];
+  const edited = wanted.map((id) => normalizeElement(byRaw.get(id), k, header.decks[0]?.id));
+  const model = { ...header, elements: edited };
+  const ctx = { model, byId: Object.fromEntries(edited.map((e) => [e.id, e])), deckById: Object.fromEntries(header.decks.map((d) => [d.id, d])) };
   const summary = { ...previous.summary };
   const elementSummary = { ...previous.element_summary };
-  const elements = { ...previous.elements };
-  for (const id of wanted) {
-    const before = elements[id];
+  const elements = inPlace ? previous.elements : { ...previous.elements };
+  for (const el of edited) {
+    const before = elements[el.id];
     before.results.forEach((r) => summary[r.status]--);
     elementSummary[before.worst ?? 'no_rule']--;
-    const after = checkElement(ctx.byId[id], rules, ctx);
+    const after = checkElement(el, rules, ctx);
     after.results.forEach((r) => summary[r.status]++);
     elementSummary[after.worst ?? 'no_rule']++;
-    elements[id] = after;
+    elements[el.id] = after;
   }
+  const drafts = allRules.filter((r) => r.draft);
   return {
     ...previous,
-    model: model.name,
-    schema: model.schema,
+    model: header.name,
+    schema: header.schema,
     rule_count: rules.length,
     rules_verified: rules.filter((r) => r.verified === true).length,
     draft_rules: drafts.map((r) => ({ id: r.id, source: r.source, clause: r.clause, reason: r.draft_reason })),

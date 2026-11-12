@@ -1321,6 +1321,7 @@ diffuseColor.a = ${alpha};
       return this.select(id);
     },
     setFilter(set) {
+      if (!set && !filterDbs) return; // no filter before, none now: nothing to recompute (the list re-renders often)
       filterDbs = set
         ? new Set([...set].map((id) => idToDb.get(id)).filter((d) => d != null))
         : null;

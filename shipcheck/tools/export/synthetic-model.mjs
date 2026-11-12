@@ -14,7 +14,7 @@ import { MeshoptEncoder, MeshoptDecoder } from 'meshoptimizer';
 const CELL_MM = 6000;
 const align = (n) => (n + 3) & ~3;
 
-function writeGlb(json, body) {
+export function writeGlb(json, body) {
   const j = Buffer.from(JSON.stringify(json)), jp = Buffer.alloc(align(j.length), 32); j.copy(jp);
   const bp = Buffer.alloc(align(body.length)); Buffer.from(body.buffer, body.byteOffset, body.byteLength).copy(bp);
   const h = Buffer.alloc(20); h.writeUInt32LE(0x46546c67); h.writeUInt32LE(2, 4); h.writeUInt32LE(28 + jp.length + bp.length, 8); h.writeUInt32LE(jp.length, 12); h.writeUInt32LE(0x4e4f534a, 16);
@@ -78,7 +78,7 @@ export function buildParts() {
   return { parts, hatches, glass, rest, envelope, bounds: { min: [-L / 2, -H / 2, -W / 2], max: [L / 2, H / 2, W / 2] } };
 }
 
-function encode(streams) {
+export function encode(streams) {
   const packedParts = [], bufferViews = [];
   let compressedOffset = 0, decodedOffset = 0;
   for (const st of streams) {

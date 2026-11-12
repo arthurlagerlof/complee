@@ -280,8 +280,9 @@ async function loadScenario(id) {
     if (generation !== scenarioGeneration || controller.signal.aborted) return false;
     S.sc = sc; // commit the scenario and its model together, after checking ownership
     S.precomputed = precomputed ?? null;
-    S.pristine = model;
-    S.model = structuredClone(model);
+    // One copy of the model in memory: the original of an element is kept only once it is edited (S.original).
+    S.model = model;
+    S.original = new Map();
     S.norm = normalizeModel(S.model);
     S.expected = expected;
     S.edits.clear();
@@ -295,9 +296,10 @@ async function loadScenario(id) {
     // Start at the full overview; filtering by status hides the rest geometry.
     S.filter.status = new Set(['non_compliant', 'not_enough_info', 'compliant', 'null']);
     // Ground-truth score is computed on the unedited design with the core rule set only.
-    S.baseline = precomputed ? precomputed.score : expected ? scoreResults(checkModel(S.pristine, S.coreRules), expected) : null;
-    if (S.baseline && !S.baseline.line) S.baseline.line = scoreLine(S.baseline);
+    // The model is unedited here, so this one check is also the ground-truth run (no second pass over the model).
     runCheck();
+    S.baseline = precomputed ? precomputed.score : expected ? scoreResults(S.results, expected) : null;
+    if (S.baseline && !S.baseline.line) S.baseline.line = scoreLine(S.baseline);
     S.blocked = new Set();
     computeEscape();
     scenarioPending = false;
@@ -343,13 +345,14 @@ async function loadScenario(id) {
 function runCheck(ids) {
   const t0 = performance.now();
   S.results = S.precomputed ? resultsFromPrecomputed(S.precomputed)
-    : ids && S.results ? recheckElements(S.results, S.model, allRules(), ids) : checkModel(S.model, allRules());
+    : ids && S.results ? recheckElements(S.results, S.model, allRules(), ids, { inPlace: true }) : checkModel(S.model, allRules());
   S.lastCheckMs = performance.now() - t0;
 }
 
 function recheck(ids) {
   runCheck(ids);
-  computeEscape();
+  computeEscape({ force: S.escapeOn });
+  if (!S.escape) S.escapeOn = false;
   renderEscape();
   viewer.update(S.results, ids);
   syncEscapeView();
@@ -575,9 +578,18 @@ const ESCAPE_ORDER = { no_route: 0, single_route: 1, two_routes: 2, direct: 3 };
 const metres = (mm) => `${(mm / 1000).toFixed(1)} m`;
 const escapeRooms = () => Object.values(S.escape?.origins ?? {}).filter((o) => o.room);
 
-function computeEscape() {
+// Large models: the route analysis takes seconds, so it runs when the escape plan is opened, not on every load and
+// edit (S.escapePending: available on demand).
+const ESCAPE_EAGER_MAX = 1500;
+function computeEscape({ force = false } = {}) {
   S.escape = null;
+  S.escapePending = false;
   if (S.model.kind === 'parts') return;
+  if (!force && S.norm.elements.length > ESCAPE_EAGER_MAX) {
+    const musters = new Set(S.model.escape?.muster_types ?? ['muster_station']);
+    S.escapePending = S.norm.elements.some((e) => musters.has(e.type));
+    return;
+  }
   try {
     const analysis = analyzeEscape(S.norm, { blocked: S.blocked });
     if (analysis.available) S.escape = analysis;
@@ -586,7 +598,7 @@ function computeEscape() {
 
 function syncEscapeView() {
   const three = viewer === views.three;
-  $('#escapeBtn').hidden = !S.escape || !three;
+  $('#escapeBtn').hidden = (!S.escape && !S.escapePending) || !three;
   $('#escapeBtn').classList.toggle('on', S.escapeOn && !!S.escape);
   $('#escapeBox').hidden = !(S.escapeOn && S.escape);
   if (!viewer.setEscape) return;
@@ -606,6 +618,16 @@ function syncEscapeView() {
 }
 
 function setEscapeMode(on) {
+  if (on && !S.escape && S.escapePending) {
+    const btn = $('#escapeBtn');
+    btn.textContent = 'Analysing routes…';
+    btn.disabled = true;
+    setTimeout(() => { // after the button has repainted
+      try { computeEscape({ force: true }); } finally { btn.textContent = 'Escape plan'; btn.disabled = false; }
+      setEscapeMode(true);
+    }, 30);
+    return;
+  }
   S.escapeOn = on && !!S.escape;
   renderEscape();
   syncEscapeView();
@@ -616,7 +638,7 @@ function setEscapeMode(on) {
 function toggleBlock(id) {
   if (S.blocked.has(id)) S.blocked.delete(id); else S.blocked.add(id);
   S.escapeOn = true;
-  computeEscape();
+  computeEscape({ force: true });
   renderEscape();
   syncEscapeView();
   if (S.selected) renderEscapeDetail(S.selected);
@@ -660,7 +682,7 @@ function renderEscape() {
 }
 
 function toggleBlockRefresh() {
-  computeEscape();
+  computeEscape({ force: true });
   renderEscape();
   syncEscapeView();
   if (S.selected) renderEscapeDetail(S.selected);
@@ -803,7 +825,7 @@ function labelFor(id) {
 
 function resetEdit(id, key) {
   const el = elById(id);
-  const orig = S.pristine.elements.find((x) => x.id === id)?.props?.[key];
+  const orig = S.original.get(id)?.props?.[key];
   if (orig === undefined) delete el.props[key]; else el.props[key] = structuredClone(orig);
   S.edits.delete(`${id}.${key}`);
   recheck([id]);
@@ -816,13 +838,22 @@ const PLURAL = { hatch: 'hatches', plate: 'plates', stiffener: 'stiffeners', str
   corridor: 'corridors', door: 'doors', stair: 'stairs', ramp: 'ramps', fuel_tank: 'fuel tanks', guard_rail: 'guard rails',
   machinery_space: 'machinery spaces', escape_zone: 'escape zones', system_item: 'system items', manhole: 'manholes' };
 
+// Hits of every rule, from one pass over the results; rebuilt when the results object changes.
+let ruleHitsOf = null, ruleHitsIndex = new Map();
 function ruleHits(ruleId) {
-  const hits = [];
-  for (const e of Object.values(S.results.elements)) {
-    const r = e.results.find((x) => x.rule_id === ruleId);
-    if (r) hits.push({ id: e.id, name: e.name, type: e.type, status: r.status, measured: r.measured });
+  if (ruleHitsOf !== S.results) {
+    ruleHitsOf = S.results;
+    ruleHitsIndex = new Map();
+    for (const e of Object.values(S.results.elements)) {
+      for (const r of e.results) {
+        let hits = ruleHitsIndex.get(r.rule_id);
+        if (!hits) ruleHitsIndex.set(r.rule_id, (hits = []));
+        hits.push({ id: e.id, name: e.name, type: e.type, status: r.status, measured: r.measured });
+      }
+    }
+    for (const hits of ruleHitsIndex.values()) { hits.sort((a, b) => (STATUS_RANK[b.status] ?? 0) - (STATUS_RANK[a.status] ?? 0)); }
   }
-  return hits.sort((a, b) => (STATUS_RANK[b.status] ?? 0) - (STATUS_RANK[a.status] ?? 0));
+  return ruleHitsIndex.get(ruleId) ?? [];
 }
 
 function countLine(hits) {
@@ -982,7 +1013,13 @@ function renderEditor(id) {
       const unit = $('#dEditor').querySelector(`[data-unit-for="${CSS.escape(k)}"]`)?.value;
       applyEdit(id, k, value, unit);
     };
-    inp.addEventListener(inp.dataset.kind === 'bool' ? 'change' : 'input', commit);
+    if (inp.dataset.kind === 'bool' || inp.tagName === 'SELECT') { inp.addEventListener('change', commit); return; }
+    // Typing: re-check once the value rests (each re-check redraws the lists), at once when the field is left.
+    let timer = 0;
+    const flush = () => { if (!timer) return; clearTimeout(timer); timer = 0; commit(); };
+    inp.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { timer = 0; commit(); }, S.model.elements.length > 5000 ? 250 : 0); });
+    inp.addEventListener('change', flush);
+    inp.addEventListener('blur', flush);
   });
   $('#dEditor').querySelectorAll('[data-unit-for]').forEach((sel) => (sel.onchange = () => {
     const inp = $('#dEditor').querySelector(`[data-key="${CSS.escape(sel.dataset.unitFor)}"]`);
@@ -993,7 +1030,8 @@ function renderEditor(id) {
 function applyEdit(id, key, value, unit) {
   if (S.precomputed) return;
   const el = elById(id);
-  const pristineEl = S.pristine.elements.find((x) => x.id === id);
+  if (!S.original.has(id)) S.original.set(id, structuredClone(el)); // before the first edit of this element
+  const pristineEl = S.original.get(id);
   const before = display(pristineEl?.props?.[key], S.norm.units);
   el.props = el.props || {};
   const opts = el.props[key]?.options;

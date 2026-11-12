@@ -44,6 +44,13 @@ test('re-checking edited elements equals a full check of the edited model', () =
   assert.deepEqual(out.summary, { compliant: 8, non_compliant: 2, not_enough_info: 0 });
   assert.notEqual(out.elements, base.elements, 'the previous result object is not mutated');
   assert.equal(base.elements.P1.worst, 'non_compliant');
+  // In place (the app, large models): same result, the element table itself is updated.
+  const fresh = checkModel(model(), LOCAL_RULES), edited = model();
+  edited.elements[0].props.thickness = { value: 10, unit: 'mm' };
+  const next = recheckElements(fresh, edited, LOCAL_RULES, ['P1'], { inPlace: true });
+  assert.deepEqual(next, checkModel(edited, LOCAL_RULES));
+  assert.notEqual(next, fresh);
+  assert.equal(next.elements, fresh.elements);
 });
 
 test('rules that look beyond one element fall back to a full check', () => {

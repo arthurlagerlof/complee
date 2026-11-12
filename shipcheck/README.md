@@ -255,6 +255,9 @@ clickable); the audit checks the opacity of every part against the source. Brows
 database, `cd tools/export && node --test viewer-smoke.mjs` builds a small synthetic ship in the same tile layout
 (`synthetic-model.mjs`), starts a stub catalog API and the server, and checks first picture, streaming, selection,
 rule view, filter, picking, what-if re-check, eviction, screenshots and HTTP revalidation in headless Chromium.
+Load tests: `node stress-model.mjs work/stress-model && node stress-run.mjs work/stress-model` (215,000 parts,
+10.3 million triangles, 86,000 checked parts; prints loading, part-state, check, picking and memory figures) and
+`node ../autocad/make_large_dxf.mjs big.dxf 5 3000` for a 16,500-element drawing.
 `node --test deck-viewer-smoke.mjs` does the same for the deck viewer with the bundled catalog (idle view draws no
 frames, selection, what-if re-check against a full check, escape plan, findings register).
 
