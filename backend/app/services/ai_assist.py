@@ -26,16 +26,16 @@ PROMPT_VERSION = "viewer-assist.v1"
 # ---------------------------------------------------------------- outputs
 
 class Option(BaseModel):
-    change: str = Field(description="One concrete design change")
-    effect: str = Field(description="What it changes in the check result")
+    change: str = Field(description="One concrete design change, at most 12 words")
+    effect: str = Field(description="Its effect on the check result, at most 10 words")
 
 
 class FindingExplanation(BaseModel):
-    summary: str = Field(description="Two or three plain sentences: what is required, what the design has, the gap")
-    reasons: list[str] = Field(default_factory=list, description="Why the rule applies here and how the values compare")
-    exceptions_to_check: list[str] = Field(default_factory=list, description="Exceptions or alternatives the rule text allows, if any")
-    options: list[Option] = Field(default_factory=list, description="At most 3 ways to resolve the finding")
-    questions: list[str] = Field(default_factory=list, description="Information a reviewer should obtain")
+    summary: str = Field(description="One or two short sentences, at most 35 words: required value, design value, gap")
+    reasons: list[str] = Field(default_factory=list, description="At most 2 points, each at most 15 words; omit what the summary already says")
+    exceptions_to_check: list[str] = Field(default_factory=list, description="At most 2 points, each at most 15 words; empty if none apply")
+    options: list[Option] = Field(default_factory=list, description="At most 3 ways to resolve the finding, most practical first")
+    questions: list[str] = Field(default_factory=list, description="At most 2 questions, each at most 15 words")
 
 
 class EscapeAction(BaseModel):
@@ -47,8 +47,8 @@ class EscapeAction(BaseModel):
 
 
 class EscapeSuggestion(BaseModel):
-    title: str
-    rationale: str
+    title: str = Field(description="At most 8 words")
+    rationale: str = Field(description="One sentence, at most 25 words")
     rooms: list[str] = Field(default_factory=list, description="Room ids this should give a second route")
     actions: list[EscapeAction] = Field(default_factory=list, max_length=4)
 
@@ -139,7 +139,8 @@ EXPLAIN_SYSTEM = (
     "required value. Explain it in plain engineering language, name exceptions or alternative arrangements only if the "
     "rule text or well-known provisions of that instrument allow them (say 'check' when unsure), and propose at most "
     "three concrete design changes. Rule texts in this tool are paraphrases until verified against the official text. "
-    "Return JSON only."
+    "Keep it short and easy to scan: plain words, no repetition between fields, no general background, respect the "
+    "word limits in the schema. A reviewer should understand the finding in ten seconds. Return JSON only."
 )
 
 
@@ -153,7 +154,7 @@ def explain_prompt(payload: dict[str, Any]) -> str:
 
 
 def explain_finding(payload: dict[str, Any]) -> dict[str, Any]:
-    return _run(explain_prompt(payload), EXPLAIN_SYSTEM, FindingExplanation, 2500)
+    return _run(explain_prompt(payload), EXPLAIN_SYSTEM, FindingExplanation, 1800)
 
 
 ESCAPE_SYSTEM = (
@@ -164,7 +165,7 @@ ESCAPE_SYSTEM = (
     "and add_door (a new door between two existing elements on one deck that touch each other). Use only element ids "
     "and deck ids from the input. Give every new passage or door at least the minimum clear width listed in the "
     "analysis for its type. Each suggestion is recomputed by the tool; suggestions that do not help are dropped. "
-    "Return JSON only."
+    "Keep titles and rationales short (see the word limits in the schema). Return JSON only."
 )
 
 
@@ -183,7 +184,7 @@ def escape_suggestions(payload: dict[str, Any]) -> dict[str, Any]:
 
 # Streaming: system prompt, schema, output limit, prompt builder, log task name
 STREAM_TASKS = {
-    "explain-finding": (EXPLAIN_SYSTEM, FindingExplanation, 2500, explain_prompt, "viewer_explain_finding"),
+    "explain-finding": (EXPLAIN_SYSTEM, FindingExplanation, 1800, explain_prompt, "viewer_explain_finding"),
     "escape-suggestions": (ESCAPE_SYSTEM, EscapeSuggestions, 3000, escape_prompt, "viewer_escape_suggestions"),
 }
 

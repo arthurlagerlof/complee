@@ -1318,13 +1318,15 @@ function explainHTML(id, r) {
   if (st.loading && !st.partial) return `<div class="ai-wait"><span class="spin"></span>${st.model ? `${esc(modelLabel(st.model))} is thinking…` : 'Asking the AI…'}${st.switched ? ` <span class="muted">(${esc(st.switched)})</span>` : ''}</div>`;
   if (st.error) return `<div class="check-bad">${esc(st.error)}</div>`;
   const x = (st.loading ? st.partial : st.data.result) || {};
-  const list = (title, items) => (items?.length ? `<div class="ai-h">${title}</div><ul>${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '');
+  // Short and scannable: summary and fixes always visible, background folded away; lists capped even if the model writes more.
+  const cap = (items, n) => (Array.isArray(items) ? items.filter(Boolean).slice(0, n) : []);
+  const list = (title, items) => (items.length ? `<div class="ai-h">${title}</div><ul>${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '');
+  const options = cap(x.options, 3).filter((o) => o?.change);
+  const details = list('Why', cap(x.reasons, 2)) + list('Exceptions to check', cap(x.exceptions_to_check, 2)) + list('Open questions', cap(x.questions, 2));
   return `<div class="ai-box"><div class="ai-tag">✦ AI explanation</div>
     <p>${esc(x.summary || '')}</p>
-    ${list('Why', x.reasons)}
-    ${list('Exceptions and alternatives to check', x.exceptions_to_check)}
-    ${x.options?.length ? `<div class="ai-h">Ways to resolve it</div><ol>${x.options.map((o) => `<li><b>${esc(o.change)}</b><br><span class="muted">${esc(o.effect)}</span></li>`).join('')}</ol>` : ''}
-    ${list('Questions for the reviewer', x.questions)}
+    ${options.length ? `<div class="ai-h">How to fix it</div><ol>${options.map((o) => `<li><b>${esc(o.change)}</b>${o.effect ? ` <span class="muted">→ ${esc(o.effect)}</span>` : ''}</li>`).join('')}</ol>` : ''}
+    ${details ? `<details class="ai-more"><summary>Why, exceptions, open questions</summary>${details}</details>` : ''}
     ${st.loading ? `<div class="ai-foot writing"><span class="caret"></span> ${esc(modelLabel(st.model))} is writing…</div>` : aiFooter(st.data)}
   </div>`;
 }
