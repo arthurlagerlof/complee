@@ -571,62 +571,108 @@ export function validateRule(rule) {
 
 // ---------- main entry ----------
 
-export function checkModel(rawModel, allRules) {
+// Checks that read only the element itself (plus the ship particulars): an edit to one element can be re-checked
+// alone. The others look at neighbours, zones or counts and need the whole model again.
+const LOCAL_CHECKS = new Set(['in_set', 'table_lookup', 'data_quality', 'min', 'max']);
+
+function checkElement(el, rules, ctx) {
+  const { model } = ctx;
+  const results = [], not_applicable = [];
+  for (const rule of rules) {
+    const ec = elementCondition(rule, el, model);
+    if (!ec.ok) {
+      if (!ec.silent) not_applicable.push({ rule_id: rule.id, source: rule.source, reason: ec.reason });
+      continue;
+    }
+    const sc = shipCondition(rule, model);
+    if (sc.ok === false) { not_applicable.push({ rule_id: rule.id, source: rule.source, reason: sc.reason }); continue; }
+    if (sc.ok === 'unknown') {
+      results.push(result(rule, 'not_enough_info', {
+        inputs: sc.inputs,
+        explanation: `Cannot decide whether this rule applies: ${sc.missing} is missing in the ship particulars.`,
+      }));
+      continue;
+    }
+    const fn = CHECKS[rule.check];
+    const r = fn
+      ? fn(rule, el, ctx)
+      : result(rule, 'not_enough_info', { explanation: `Unknown check type "${rule.check}".` });
+    if (sc.inputs.length) r.inputs = [...r.inputs, ...sc.inputs];
+    results.push(r);
+  }
+
+  // Overlap: several rules limiting the same parameter -> the strictest one governs.
+  const governing = {};
+  for (const r of results) {
+    const l = r.limit;
+    if (!l || typeof l.value !== 'number') continue;
+    const cur = governing[l.parameter];
+    const stricter = !cur || (l.kind === 'min' ? l.value > cur.value : l.value < cur.value);
+    if (stricter) governing[l.parameter] = { rule_id: r.rule_id, kind: l.kind, value: l.value, required: r.required, count: (cur?.count ?? 0) + 1 };
+    else cur.count++;
+  }
+  const worst = results.reduce((w, r) => (STATUS_RANK[r.status] > (STATUS_RANK[w] || 0) ? r.status : w), null);
+  return { id: el.id, name: el.name, type: el.type, deck: el.deck, worst, results, not_applicable, governing };
+}
+
+function checkContext(rawModel, allRules) {
   const model = normalizeModel(rawModel);
   // Draft rules (value not known yet) are listed, never run: no value is guessed.
   const drafts = allRules.filter((r) => r.draft);
   const rules = allRules.filter((r) => !r.draft);
   const byId = Object.fromEntries(model.elements.map((e) => [e.id, e]));
   const deckById = Object.fromEntries(model.decks.map((d) => [d.id, d]));
-  const ctx = { model, byId, deckById };
+  return { model, drafts, rules, ctx: { model, byId, deckById } };
+}
 
+export function checkModel(rawModel, allRules) {
+  const { model, drafts, rules, ctx } = checkContext(rawModel, allRules);
   const elements = {};
   const summary = { compliant: 0, non_compliant: 0, not_enough_info: 0 };
   const elementSummary = { compliant: 0, non_compliant: 0, not_enough_info: 0, no_rule: 0 };
 
   for (const el of model.elements) {
-    const results = [], not_applicable = [];
-    for (const rule of rules) {
-      const ec = elementCondition(rule, el, model);
-      if (!ec.ok) {
-        if (!ec.silent) not_applicable.push({ rule_id: rule.id, source: rule.source, reason: ec.reason });
-        continue;
-      }
-      const sc = shipCondition(rule, model);
-      if (sc.ok === false) { not_applicable.push({ rule_id: rule.id, source: rule.source, reason: sc.reason }); continue; }
-      if (sc.ok === 'unknown') {
-        results.push(result(rule, 'not_enough_info', {
-          inputs: sc.inputs,
-          explanation: `Cannot decide whether this rule applies: ${sc.missing} is missing in the ship particulars.`,
-        }));
-        continue;
-      }
-      const fn = CHECKS[rule.check];
-      const r = fn
-        ? fn(rule, el, ctx)
-        : result(rule, 'not_enough_info', { explanation: `Unknown check type "${rule.check}".` });
-      if (sc.inputs.length) r.inputs = [...r.inputs, ...sc.inputs];
-      results.push(r);
-    }
-
-    // Overlap: several rules limiting the same parameter -> the strictest one governs.
-    const governing = {};
-    for (const r of results) {
-      const l = r.limit;
-      if (!l || typeof l.value !== 'number') continue;
-      const cur = governing[l.parameter];
-      const stricter = !cur || (l.kind === 'min' ? l.value > cur.value : l.value < cur.value);
-      if (stricter) governing[l.parameter] = { rule_id: r.rule_id, kind: l.kind, value: l.value, required: r.required, count: (cur?.count ?? 0) + 1 };
-      else cur.count++;
-    }
-
-    results.forEach((r) => summary[r.status]++);
-    const worst = results.reduce((w, r) => (STATUS_RANK[r.status] > (STATUS_RANK[w] || 0) ? r.status : w), null);
-    elementSummary[worst ?? 'no_rule']++;
-    elements[el.id] = { id: el.id, name: el.name, type: el.type, deck: el.deck, worst, results, not_applicable, governing };
+    const e = checkElement(el, rules, ctx);
+    e.results.forEach((r) => summary[r.status]++);
+    elementSummary[e.worst ?? 'no_rule']++;
+    elements[el.id] = e;
   }
 
   return {
+    model: model.name,
+    schema: model.schema,
+    rule_count: rules.length,
+    rules_verified: rules.filter((r) => r.verified === true).length,
+    draft_rules: drafts.map((r) => ({ id: r.id, source: r.source, clause: r.clause, reason: r.draft_reason })),
+    summary,
+    element_summary: elementSummary,
+    elements,
+  };
+}
+
+// Re-check only the elements in `ids` after an edit (what-if editing on a model with tens of thousands of parts):
+// same output as checkModel on the edited model. Falls back to a full check when a rule in the set looks beyond
+// the element itself, when an element is new or gone, or when there is no previous result to start from.
+export function recheckElements(previous, rawModel, allRules, ids) {
+  const { model, drafts, rules, ctx } = checkContext(rawModel, allRules);
+  const local = rules.every((r) => LOCAL_CHECKS.has(r.check));
+  if (!previous?.elements || !local) return checkModel(rawModel, allRules);
+  const wanted = [...new Set(ids)];
+  if (wanted.some((id) => !previous.elements[id] || !ctx.byId[id])) return checkModel(rawModel, allRules);
+  const summary = { ...previous.summary };
+  const elementSummary = { ...previous.element_summary };
+  const elements = { ...previous.elements };
+  for (const id of wanted) {
+    const before = elements[id];
+    before.results.forEach((r) => summary[r.status]--);
+    elementSummary[before.worst ?? 'no_rule']--;
+    const after = checkElement(ctx.byId[id], rules, ctx);
+    after.results.forEach((r) => summary[r.status]++);
+    elementSummary[after.worst ?? 'no_rule']++;
+    elements[id] = after;
+  }
+  return {
+    ...previous,
     model: model.name,
     schema: model.schema,
     rule_count: rules.length,

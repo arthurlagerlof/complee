@@ -76,7 +76,30 @@ def test_catalog_json_is_cached_per_version_and_refreshed_on_a_new_version(api_c
             import_catalog_sources(session, tmp_path, sources)
         response = api_client.get("/api/v1/shipcheck/catalog/rules")
         assert response.json() == {"rules": [{"id": "R1"}, {"id": "R2"}]}
-        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["cache-control"] == "no-cache"
         assert calls == [1], "a newly activated version is read from the database"
+
     finally:
         shipcheck_catalog.read_active_catalog = original
+
+
+def test_catalog_etag_allows_revalidation_without_a_download(api_client, tmp_path):
+    source_path = tmp_path / "rules.json"
+    sources = {"rules": CatalogSource("rules.json", "rules")}
+    source_path.write_text(json.dumps({"rules": [{"id": "R1"}]}), encoding="utf-8")
+    with api_client.TestSession.begin() as session:
+        import_catalog_sources(session, tmp_path, sources)
+    first = api_client.get("/api/v1/shipcheck/catalog/rules")
+    etag = first.headers["etag"]
+    assert etag.startswith('"') and len(etag) == 66, "the ETag is the dataset's content hash"
+    unchanged = api_client.get("/api/v1/shipcheck/catalog/rules", headers={"If-None-Match": etag})
+    assert unchanged.status_code == 304
+    assert unchanged.headers["etag"] == etag
+    assert unchanged.content == b""
+    source_path.write_text(json.dumps({"rules": [{"id": "R1"}, {"id": "R2"}]}), encoding="utf-8")
+    with api_client.TestSession.begin() as session:
+        import_catalog_sources(session, tmp_path, sources)
+    changed = api_client.get("/api/v1/shipcheck/catalog/rules", headers={"If-None-Match": etag})
+    assert changed.status_code == 200
+    assert changed.headers["etag"] != etag
+    assert changed.json() == {"rules": [{"id": "R1"}, {"id": "R2"}]}

@@ -47,7 +47,8 @@ export function selectViewportTiles(manifest, options) {
   };
   // A component is atomic: never silently omit some of its tiles to fit a budget.
   if (selectedDb !== null) {
-    const tiles = manifest.chunks.filter((c) => c.dbIds.includes(selectedDb)),
+    // tilesByDb (dbId -> tiles, built once by the viewer) avoids scanning every tile's part list per query.
+    const tiles = options.tilesByDb?.get(selectedDb) ?? manifest.chunks.filter((c) => c.dbIds.includes(selectedDb)),
       bytes = tiles.reduce((s, c) => s + cost(c), 0);
     if (bytes > cfg.max_resident_bytes)
       return {

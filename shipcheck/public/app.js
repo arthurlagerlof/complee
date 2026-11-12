@@ -1,6 +1,6 @@
 // ShipCheck UI. The pass/fail decision always comes from the shared deterministic checker
 // (src/checker.mjs), which runs right here in the browser so edits re-check instantly.
-import { checkModel, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK } from './src/checker.mjs';
+import { checkModel, recheckElements, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK } from './src/checker.mjs';
 import { scoreResults, scoreLine, badgeText } from './src/score.mjs';
 import { partsToModel } from './src/parts-model.mjs';
 import { reportRows, toCSV, toHTML } from './src/report.mjs';
@@ -14,8 +14,10 @@ import { loadOfficialText } from './regulation-text.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// 'no-cache' (not 'no-store'): the browser keeps catalogs and model data in its HTTP cache and revalidates them with
+// the server's ETag, so an unchanged dataset costs one 304 round trip instead of a full download.
 const fetchJSON = async (u, opt) => {
-  const response = await fetch(u, { cache: 'no-store', ...opt });
+  const response = await fetch(u, { cache: 'no-cache', ...opt });
   if (!response.ok) {
     const body = await response.text();
     let detail = '';
@@ -86,7 +88,12 @@ const S = {
 };
 const allRules = () => S.coreRules;
 const ruleById = (id) => allRules().find((r) => r.id === id);
-const elById = (id) => S.model.elements.find((e) => e.id === id);
+// Element lookup by id: a Map rebuilt when the model changes (the parts model has ~70,000 elements).
+let elementIndex = new Map(), elementIndexOf = null;
+const elById = (id) => {
+  if (elementIndexOf !== S.model) { elementIndexOf = S.model; elementIndex = new Map((S.model?.elements || []).map((e) => [e.id, e])); }
+  return elementIndex.get(id);
+};
 const deckName = (id) => S.norm.decks.find((d) => d.id === id)?.name ?? id;
 
 // Scenario requests and viewer ownership use monotonic generations: A -> B -> A is still a new load.
@@ -320,14 +327,16 @@ async function loadScenario(id) {
   }
 }
 
-function runCheck() {
+// ids: only these elements changed (what-if edit): re-check them alone where the rule set allows it.
+function runCheck(ids) {
   const t0 = performance.now();
-  S.results = S.precomputed ? resultsFromPrecomputed(S.precomputed) : checkModel(S.model, allRules());
+  S.results = S.precomputed ? resultsFromPrecomputed(S.precomputed)
+    : ids && S.results ? recheckElements(S.results, S.model, allRules(), ids) : checkModel(S.model, allRules());
   S.lastCheckMs = performance.now() - t0;
 }
 
 function recheck(ids) {
-  runCheck();
+  runCheck(ids);
   computeEscape();
   renderEscape();
   viewer.update(S.results, ids);

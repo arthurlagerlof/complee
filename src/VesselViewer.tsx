@@ -10,7 +10,16 @@ type VesselViewerProps = {
   onSelectPoint?: (id: string) => void
 }
 
+// The vessel model is meshopt-compressed (gltfpack -cc -vpf: about 1 MB instead of 9.4 MB, float positions kept).
+// model-viewer decodes it once it knows where the decoder script is; it is served from this site, not a CDN.
 const MODEL_SRC = '/assets/models/rv-taani.glb'
+const MESHOPT_DECODER = `${import.meta.env.BASE_URL}assets/decoders/meshopt_decoder.js`
+
+type ModelViewerGlobals = { meshoptDecoderLocation?: string }
+function configureModelViewer() {
+  const scope = self as unknown as { ModelViewerElement?: ModelViewerGlobals }
+  scope.ModelViewerElement = { ...(scope.ModelViewerElement || {}), meshoptDecoderLocation: MESHOPT_DECODER }
+}
 const INITIAL_ORBIT = '35deg 72deg auto'
 
 function prefersReducedMotion() {
@@ -46,7 +55,11 @@ export default function VesselViewer({
       setLoaded(false)
     }
 
-    void import('@google/model-viewer').then(() => {
+    configureModelViewer()
+    void import('@google/model-viewer').then((module) => {
+      // Already defined by an earlier viewer on the page: set the location on the element class directly.
+      const element = (module as unknown as { ModelViewerElement?: ModelViewerGlobals }).ModelViewerElement
+      if (element && !element.meshoptDecoderLocation) element.meshoptDecoderLocation = MESHOPT_DECODER
       if (disposed) return
       model = document.createElement('model-viewer')
       model.setAttribute('src', MODEL_SRC)

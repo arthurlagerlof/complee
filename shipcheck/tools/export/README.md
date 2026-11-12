@@ -41,3 +41,12 @@ Screenshots: [full overview](../../docs/full-model/full-overview.png), [Full mod
 Ordinary rebuilds use the retained cache without requesting credentials. For a fresh machine without that cache, the original one-time download remains available explicitly via `--download-svf` (after the SVF job finishes); it is never automatic.
 
 Run the mapping and main export once when correcting or replacing the source. Then run `export-rest.mjs --plan`, each `--chunk N` in its own Node process (up to `--max-old-space-size=12288`), `--props`, and `audit-model.mjs`, in that order. The rest exporter never rewrites the six main GLBs. Each rest run checks disk space and reserves at least 3 GB while writing its temporary files. Only temporary raw files for the completed compression are deleted; the cached SVF remains. Model files and working data stay outside Git. Deployment scripts archive the entire model folder and print the total upload size; they have not been run.
+
+## Synthetic model and browser smoke test
+
+`node synthetic-model.mjs <outDir>` writes a small steel ship (hull and deck plates, four hatches, glazing, equipment,
+a 4 % envelope) as viewport tiles in exactly the production layouts: `stream-hp` tiles with float32 positions per tile,
+8-bit normals carrying the source opacity and dbId bytes in `COLOR_0`, plus 16-bit quantized rest tiles, all meshopt
+compressed, together with the catalogs the app reads (parts, two rules, scenario, metadata). `node --test
+viewer-smoke.mjs` serves that model through the real server and a stub catalog API and exercises the viewer in headless
+Chromium (`CHROME_PATH` selects the browser when this Playwright has none). Screenshots go to `work/viewer-smoke/`.

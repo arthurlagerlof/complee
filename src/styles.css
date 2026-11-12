@@ -667,3 +667,5 @@ a.findings-action { text-decoration: none; }
   .findings-run-actions select { flex: 1 1 100%; max-width: 100%; }
   .findings-detail-row .findings-card { position: sticky; left: 0; box-sizing: border-box; max-width: calc(100vw - 64px); }
 }
+
+.workspace-loading { min-height: 60vh; display: flex; align-items: center; justify-content: center; gap: 10px; color: #4f5f66; font-size: 15px; }

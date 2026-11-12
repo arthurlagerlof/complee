@@ -1,4 +1,4 @@
-﻿// Viewport-driven local viewer. Only requested spatial tiles are resident; old merged GLBs remain untouched.
+// Viewport-driven local viewer. Only requested spatial tiles are resident; old merged GLBs remain untouched.
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { createSceneOverlay } from "./viewer-scene.js";
@@ -35,7 +35,7 @@ export async function createLocalViewer(
     throw new Error(cfg.error || `Model gateway configuration failed (${configResponse.status})`);
   const base = new URL(cfg.base_url || "model/", document.baseURI),
     manifestUrl = new URL(cfg.manifest || "stream/manifest.json", base);
-  const response = await fetch(manifestUrl, { cache: "no-store" });
+  const response = await fetch(manifestUrl, { cache: "no-cache" });
   if (!response.ok)
     throw Error(
       `Model gateway could not provide viewport tiles (${response.status})`,
@@ -44,7 +44,8 @@ export async function createLocalViewer(
   if (manifest.kind !== "viewport-tiles" || !manifest.chunks?.length)
     throw Error("Expected a viewport tile manifest");
   if (!decoderWorkersStarted) {
-    MeshoptDecoder.useWorkers?.(2);
+    // Meshopt decoding off the main thread: leave two cores to the page and the picking worker.
+    MeshoptDecoder.useWorkers?.(Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 2)));
     decoderWorkersStarted = true;
   }
   const host = document.createElement("div");
@@ -59,9 +60,18 @@ export async function createLocalViewer(
   container.append(labelEl);
   const renderer = new THREE.WebGLRenderer({
     antialias: false,
-    preserveDrawingBuffer: true,
+    // Screenshots render right before reading the canvas, so the drawing buffer need not be preserved
+    // (preserving it disables buffer-swap optimisations on most GPUs).
+    preserveDrawingBuffer: false,
     powerPreference: "high-performance",
   });
+  if (!renderer.capabilities.isWebGL2) {
+    renderer.dispose();
+    host.remove();
+    badge.remove();
+    labelEl.remove();
+    throw new Error("The 3D viewer needs WebGL 2; this browser only offers WebGL 1");
+  }
   // Keep GPU fill/fragment work bounded on high-DPI displays; screenshots still use the preserved drawing buffer.
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.25));
   renderer.setClearColor(0xeef1f5);
@@ -81,59 +91,88 @@ export async function createLocalViewer(
   controls.enableDamping = true;
   controls.dampingFactor = 0.15;
   const clipping = [];
-  const material = new THREE.MeshLambertMaterial({
-    vertexColors: true,
-    side: THREE.DoubleSide,
-    clippingPlanes: clipping,
-  });
-  material.onBeforeCompile = (s) => {
-    s.fragmentShader = s.fragmentShader.replace(
-      "#include <color_fragment>",
-      "#include <color_fragment>\nif (vColor.a < 0.99) discard; diffuseColor.a = 1.0;",
-    );
-  };
-  material.customProgramCacheKey = () => "viewport-state";
-  const overviewMaterial = material.clone();
-  overviewMaterial.onBeforeCompile = material.onBeforeCompile;
-  overviewMaterial.customProgramCacheKey = material.customProgramCacheKey;
-  overviewMaterial.clippingPlanes = clipping;
-  overviewMaterial.polygonOffset = true;
-  overviewMaterial.polygonOffsetFactor = 1;
-  overviewMaterial.polygonOffsetUnits = 1;
+  const overviewInfos = manifest.overview?.chunks || [];
+  const allInfos = [...manifest.chunks, ...overviewInfos];
+  // ---------- per-part state (colour + visibility), one texel per dbId ----------
+  // Every vertex carries its part's dbId (the tile's COLOR_0 bytes, bound unchanged as `partId`) and its source
+  // opacity (`partOpacity`). The vertex shader looks the part's state up in a small texture, so a state change
+  // (selection, filter, rule view) rewrites a few hundred KB of texels instead of every vertex colour of every
+  // resident tile, and hidden parts are collapsed in the vertex shader (no fragment work, early depth test intact).
+  // State texel: rgb = linear display colour; a = 255 visible (source opacity applies), 254 selected part,
+  // 1..253 forced see-through alpha (rule-view context ghost), 0 hidden.
+  const STATE_W = 2048;
+  let maxDb = 0;
+  for (const c of allInfos) for (const db of c.dbIds) if (db > maxDb) maxDb = db;
+  const stateRows = Math.max(1, Math.ceil((maxDb + 1) / STATE_W));
+  const stateData = new Uint8Array(STATE_W * stateRows * 4);
+  const stateTexture = new THREE.DataTexture(stateData, STATE_W, stateRows, THREE.RGBAFormat, THREE.UnsignedByteType);
+  stateTexture.magFilter = THREE.NearestFilter;
+  stateTexture.minFilter = THREE.NearestFilter;
+  stateTexture.generateMipmaps = false;
+  stateTexture.flipY = false;
+  stateTexture.unpackAlignment = 1;
+  stateTexture.needsUpdate = true;
+  const LINEAR = Object.fromEntries(Object.entries(COLORS).map(([k, c]) => [k, linear(c).map((x) => Math.round(x * 255))]));
+  const STATE_VERTEX_PARS = `
+attribute vec4 partId;
+attribute float partOpacity;
+uniform highp sampler2D uState;
+varying vec4 vState;
+varying float vSelected;
+`;
+  // After project_vertex: look the part up, decide the effective alpha and collapse the vertex when this pass does
+  // not draw it. All three vertices of a triangle belong to one part, so the whole triangle disappears.
+  const stateVertex = (drawn) => `
+{
+  int pid = int(partId.x * 255.0 + 0.5) | (int(partId.y * 255.0 + 0.5) << 8) | (int(partId.z * 255.0 + 0.5) << 16) | (int(partId.w * 255.0 + 0.5) << 24);
+  vec4 st = texelFetch(uState, ivec2(pid & ${STATE_W - 1}, pid >> ${Math.log2(STATE_W)}), 0);
+  float a = floor(st.a * 255.0 + 0.5);
+  float op = floor(partOpacity * 255.0 + 0.5);
+  float eff = a < 0.5 ? 0.0 : (a > 253.5 ? op : min(a, op));
+  vSelected = (a > 253.5 && a < 254.5 && eff > 254.5) ? 1.0 : 0.0;
+  vState = vec4(st.rgb, eff / 255.0);
+  if (!(${drawn})) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+}
+`;
+  const stateFragment = (alpha) => `
+#include <color_fragment>
+diffuseColor.rgb = vState.rgb;
+diffuseColor.a = ${alpha};
+`;
+  function stateShader(mat, key, drawn, alpha) {
+    mat.onBeforeCompile = (s) => {
+      s.uniforms.uState = { value: stateTexture };
+      s.vertexShader = s.vertexShader
+        .replace("#include <common>", `#include <common>${STATE_VERTEX_PARS}`)
+        .replace("#include <project_vertex>", `#include <project_vertex>${stateVertex(drawn)}`);
+      s.fragmentShader = s.fragmentShader
+        .replace("#include <common>", "#include <common>\nvarying vec4 vState;\nvarying float vSelected;")
+        .replace("#include <color_fragment>", stateFragment(alpha));
+    };
+    mat.customProgramCacheKey = () => key;
+    return mat;
+  }
+  // Opaque pass: parts whose effective alpha is 255.
+  const material = stateShader(
+    new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, clippingPlanes: clipping }),
+    "viewport-state", "eff > 254.5", "1.0",
+  );
+  const overviewMaterial = stateShader(
+    new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, clippingPlanes: clipping, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }),
+    "viewport-state-overview", "eff > 254.5", "1.0",
+  );
   // Parts that are transparent in the original model (material opacity < 1, e.g. the rescue-boat launch envelope at
-  // 4 % or glazing at 20 %) are drawn in a second, see-through pass with their own opacity. The state alpha carries
-  // it: 255 = visible and opaque, 1-254 = visible with that opacity, 0 = hidden (or fully transparent in the source).
-  const glassMaterial = new THREE.MeshLambertMaterial({
-    vertexColors: true,
-    side: THREE.DoubleSide,
-    clippingPlanes: clipping,
-    transparent: true,
-    depthWrite: false,
-  });
-  glassMaterial.onBeforeCompile = (s) => {
-    s.fragmentShader = s.fragmentShader.replace(
-      "#include <color_fragment>",
-      "#include <color_fragment>\nif (vColor.a > 0.995 || vColor.a < 0.002) discard;",
-    );
-  };
-  glassMaterial.customProgramCacheKey = () => "viewport-glass";
+  // 4 % or glazing at 20 %) and ghosted context are drawn in a second, see-through pass with that alpha.
+  const glassMaterial = stateShader(
+    new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, clippingPlanes: clipping, transparent: true, depthWrite: false }),
+    "viewport-glass", "eff > 0.5 && eff < 254.5", "vState.a",
+  );
   // X-ray: the selected part is drawn once more on top of everything (semi-transparent), so structure in front of it
-  // never hides it. The state alpha 254 marks the selected part (still opaque in the normal pass).
-  const xrayMaterial = new THREE.MeshBasicMaterial({
-    vertexColors: true,
-    transparent: true,
-    opacity: 0.6,
-    depthTest: false,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  });
-  xrayMaterial.onBeforeCompile = (s) => {
-    s.fragmentShader = s.fragmentShader.replace(
-      "#include <color_fragment>",
-      "#include <color_fragment>\nif (vColor.a < 0.99 || vColor.a > 0.999) discard; diffuseColor.a = 0.6;",
-    );
-  };
-  xrayMaterial.customProgramCacheKey = () => "viewport-xray";
+  // never hides it.
+  const xrayMaterial = stateShader(
+    new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.6, depthTest: false, depthWrite: false, side: THREE.DoubleSide }),
+    "viewport-xray", "vSelected > 0.5", "0.6",
+  );
   const PICK_MIN_ALPHA = 26; // parts below 10 % opacity are practically invisible in the original: not clickable
   // Scenario scene inside the real ship (elements with geom3d, e.g. ships/rcrv/inside.json): the real ship is neutral
   // context, cut just above the scene's deck, and the scene's few components carry the status colours.
@@ -179,8 +218,6 @@ export async function createLocalViewer(
   scene.add(outline);
   const loader = new GLTFLoader();
   loader.setMeshoptDecoder(MeshoptDecoder);
-  const overviewInfos = manifest.overview?.chunks || [];
-  const allInfos = [...manifest.chunks, ...overviewInfos];
   const cache = new Map(),
     requests = new Map(),
     desired = new Set(),
@@ -294,6 +331,8 @@ export async function createLocalViewer(
     stats,
     manifest,
     tiles: cache,
+    state: stateData,
+    stateTexture,
   };
   window.localViewer = debug;
   Object.defineProperty(debug, "rest", {
@@ -315,16 +354,19 @@ export async function createLocalViewer(
     schedule();
   }
   new ResizeObserver(resize).observe(container);
+  // Near/far planes follow the geometry that is actually resident (the whole ship before the first tile arrives).
+  const boundsScratch = { min: [0, 0, 0], max: [0, 0, 0] };
+  function residentDepthBoxes() {
+    if (selectedDb !== null && framedBox) return [framedBox];
+    if (!cache.size) return [allBounds];
+    const out = [];
+    for (const c of cache.values()) out.push(c.info.bounds_mm);
+    return out;
+  }
   controls.addEventListener("change", () => {
     viewRevision++;
     const d = camera.position.distanceTo(controls.target);
-    const range = geometryDepthRange(
-      camera.position,
-      selectedDb !== null && framedBox
-        ? [framedBox]
-        : allInfos.map((c) => c.bounds_mm),
-      d,
-    );
+    const range = geometryDepthRange(camera.position, residentDepthBoxes(), d);
     camera.near = range.near;
     camera.far = range.far;
     camera.updateProjectionMatrix();
@@ -332,6 +374,7 @@ export async function createLocalViewer(
     placeLabel();
     schedule();
   });
+  void boundsScratch;
   renderer.setAnimationLoop(() => {
     if (!active || gpuLost || !container.offsetParent) return;
     if (flight) {
@@ -451,24 +494,28 @@ export async function createLocalViewer(
     fitBox(overviewBounds(), MARGIN.overview, overviewItems().flatMap((c) => cornersOf(c.bounds_mm)), ms, view);
   }
 
+  let badgeText = "";
   function summary() {
-    stats.residentBytes = [...cache.values()].reduce(
-      (s, c) => s + c.info.resident_bytes,
-      0,
-    );
-    stats.residentTriangles = [...cache.values()].reduce(
-      (s, c) => s + c.info.triangles,
-      0,
-    );
+    let bytes = 0, triangles = 0;
+    for (const c of cache.values()) {
+      bytes += c.info.resident_bytes;
+      triangles += c.info.triangles;
+    }
+    stats.residentBytes = bytes;
+    stats.residentTriangles = triangles;
     stats.residentTiles = cache.size;
     stats.pending = requests.size;
-    stats.viewComplete =
-      stats.deferred === 0 &&
-      desired.size > 0 &&
-      [...desired].every((n) => cache.has(n)) &&
-      failed.size === 0;
-    badge.textContent = `Local 3D viewer · ${cache.size}/${desired.size} tiles · ${(stats.residentBytes / 1e6).toFixed(0)} MB geometry estimate${requests.size ? " · loading visible parts…" : selectedDb !== null ? " · component" : camera.position.distanceTo(controls.target) * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) > manifest.streaming.detail_span_mm ? " · overview; zoom in for detail" : ""}${stats.deferred ? " · " + stats.deferred + " detail tiles deferred; zoom in" : ""}${stats.smallDeferred ? " · " + stats.smallDeferred + " small-part tiles appear closer up" : ""}${stats.overviewDeferred ? " · overview incomplete: memory budget" : ""}${geometryNotice ? " · " + geometryNotice : ""}${failed.size ? " · some tiles unavailable; move view to retry" : ""}`;
+    let complete = stats.deferred === 0 && desired.size > 0 && failed.size === 0;
+    if (complete) for (const n of desired) if (!cache.has(n)) { complete = false; break; }
+    stats.viewComplete = complete;
+    const text = `Local 3D viewer · ${cache.size}/${desired.size} tiles · ${(stats.residentBytes / 1e6).toFixed(0)} MB geometry estimate${requests.size ? " · loading visible parts…" : selectedDb !== null ? " · component" : camera.position.distanceTo(controls.target) * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) > manifest.streaming.detail_span_mm ? " · overview; zoom in for detail" : ""}${stats.deferred ? " · " + stats.deferred + " detail tiles deferred; zoom in" : ""}${stats.smallDeferred ? " · " + stats.smallDeferred + " small-part tiles appear closer up" : ""}${stats.overviewDeferred ? " · overview incomplete: memory budget" : ""}${geometryNotice ? " · " + geometryNotice : ""}${failed.size ? " · some tiles unavailable; move view to retry" : ""}`;
+    if (text !== badgeText) {
+      badgeText = text;
+      badge.textContent = text;
+    }
   }
+  // All dbIds the model contains (every tile), so a full recompute covers tiles that are still to arrive.
+  const dbList = Uint32Array.from(new Set(allInfos.flatMap((c) => c.dbIds))).sort();
   function colorState(db, isRest) {
     const id = dbToId.get(db);
     if (selectedDb !== null) return db === selectedDb ? 255 : 0;
@@ -477,81 +524,102 @@ export async function createLocalViewer(
     if (isRest && (!fullModel || filterDbs || override)) return 0;
     return 255;
   }
-  function recolor(c, ids) {
-    const only = ids && new Set(ids.map((id) => idToDb.get(id)));
-    let seeThrough = !!c.glass;
-    for (let v = 0; v < c.dbids.length; v++) {
-      const db = c.dbids[v];
-      if (only && !only.has(db)) continue;
-      const id = dbToId.get(db),
-        st = override?.get(id) ?? results?.elements[id]?.worst;
-      // Rule view: only the rule's parts carry a status colour; the hull around them is neutral context, so the
-      // result of that rule is what stands out (the parts' own results of other rules are not mixed in).
-      const ruleContext = override && !override.has(id) && !sceneMode;
-      // Component view: the selected part in its colour, the real ship around it solid and neutral (cut open above
-      // the part), never a part alone.
-      const selGhost = !sceneMode && selectedDb !== null && db !== selectedDb;
-      const col = linear(
-        COLORS[
-          c.info.group === "rest"
-            ? "none"
-            : sceneMode ||
-                selGhost ||
-                ruleContext ||
-                (simple && context.has(db) && (!st || st === "compliant"))
-              ? "context"
-              : st || "none"
-        ],
-      );
-      const o = v * 4;
-      c.state[o] = Math.round(col[0] * 255);
-      c.state[o + 1] = Math.round(col[1] * 255);
-      c.state[o + 2] = Math.round(col[2] * 255);
-      const shown = sceneMode
-        ? c.info.group === "rest" && !fullModel
-          ? 0
-          : 255
-        : selGhost
-          ? 255
-          : colorState(db, c.info.group === "rest");
-      let alpha =
-        shown && c.opacity && c.opacity[v] < 255 ? c.opacity[v] : shown;
-      // Rule view: the hull around the rule's parts is a light see-through ghost, so parts inside the ship show.
-      if (ruleContext && alpha) alpha = Math.min(alpha, 40);
-      if (!sceneMode && selectedDb !== null && db === selectedDb && alpha === 255) alpha = 254;
-      c.state[o + 3] = alpha;
-      if (alpha > 0 && alpha < 255) seeThrough = true;
+  let ghostParts = 0; // parts with a forced see-through alpha (rule-view context): tiles then need the glass pass
+  function writeState(db) {
+    const id = dbToId.get(db),
+      st = override?.get(id) ?? results?.elements[id]?.worst,
+      isRest = id === undefined;
+    // Rule view: only the rule's parts carry a status colour; the hull around them is neutral context, so the
+    // result of that rule is what stands out (the parts' own results of other rules are not mixed in).
+    const ruleContext = override && !override.has(id) && !sceneMode;
+    // Component view: the selected part in its colour, the real ship around it solid and neutral (cut open above
+    // the part), never a part alone.
+    const selGhost = !sceneMode && selectedDb !== null && db !== selectedDb;
+    const col = LINEAR[
+      sceneMode || selGhost || ruleContext
+        ? "context"
+        : isRest
+          ? "none"
+          : simple && context.has(db) && (!st || st === "compliant")
+            ? "context"
+            : st || "none"
+    ];
+    const shown = sceneMode
+      ? isRest && !fullModel ? 0 : 255
+      : selGhost
+        ? 255
+        : colorState(db, isRest);
+    let alpha = shown;
+    // Rule view: the hull around the rule's parts is a light see-through ghost, so parts inside the ship show.
+    if (ruleContext && alpha) alpha = 40;
+    if (!sceneMode && selectedDb !== null && db === selectedDb && alpha === 255) alpha = 254;
+    const o = db * 4;
+    const was = stateData[o + 3];
+    if (was > 0 && was < 254) ghostParts--;
+    if (alpha > 0 && alpha < 254) ghostParts++;
+    stateData[o] = col[0];
+    stateData[o + 1] = col[1];
+    stateData[o + 2] = col[2];
+    stateData[o + 3] = alpha;
+  }
+  // Effective alpha of one vertex (state and source opacity), as the shader computes it: used for picking.
+  function effectiveAlpha(db, c, v) {
+    const a = stateData[db * 4 + 3];
+    if (!a) return 0;
+    const op = c.opacity ? c.opacity[v] : 255;
+    return a >= 254 ? op : Math.min(a, op);
+  }
+  // Extra passes per tile, created on demand and sharing the tile's geometry: see-through (source transparency or
+  // ghosted parts) and x-ray (the tile holds the selected part).
+  let xrayFor = undefined, xrayNames = new Set();
+  function extraPass(c, key, mat, order) {
+    if (c[key]) return c[key];
+    const pass = new THREE.Mesh(c.geom, mat);
+    pass.raycast = () => {};
+    pass.renderOrder = order;
+    pass.matrixAutoUpdate = false;
+    c.mesh.updateMatrix();
+    pass.matrix.copy(c.mesh.matrix);
+    c.mesh.parent.add(pass);
+    c[key] = pass;
+    return pass;
+  }
+  function tileNeedsGlass(c) {
+    if (c.transparentSource) return true;
+    if (!ghostParts) return false;
+    for (const db of c.info.dbIds) {
+      const a = stateData[db * 4 + 3];
+      if (a > 0 && a < 254) return true;
     }
-    // X-ray pass for the tile holding the selected part (shares the geometry).
-    const holdsSelected = !sceneMode && selectedDb !== null && c.info.dbIds?.includes(selectedDb);
-    if (holdsSelected && !c.xray) {
-      const xray = new THREE.Mesh(c.geom, xrayMaterial);
-      xray.raycast = () => {};
-      xray.renderOrder = 5;
-      xray.matrixAutoUpdate = false;
-      c.mesh.updateMatrix();
-      xray.matrix.copy(c.mesh.matrix);
-      c.mesh.parent.add(xray);
-      c.xray = xray;
+    return false;
+  }
+  function updatePasses(only = null) {
+    if (xrayFor !== selectedDb) {
+      xrayFor = selectedDb;
+      xrayNames = new Set();
+      if (selectedDb !== null) for (const info of allInfos) if (info.dbIds.includes(selectedDb)) xrayNames.add(info.name);
     }
-    if (c.xray) c.xray.visible = holdsSelected;
-    // See-through pass for this tile, created the first time it has see-through vertices (shares the geometry).
-    if (seeThrough && !c.glass) {
-      const glass = new THREE.Mesh(c.geom, glassMaterial);
-      glass.raycast = () => {};
-      glass.renderOrder = 2;
-      glass.matrixAutoUpdate = false;
-      c.mesh.updateMatrix();
-      glass.matrix.copy(c.mesh.matrix);
-      c.mesh.parent.add(glass);
-      c.glass = glass;
+    const holdsSelected = !sceneMode && selectedDb !== null && stateData[selectedDb * 4 + 3] === 254;
+    for (const c of only ? [only] : cache.values()) {
+      const glass = tileNeedsGlass(c);
+      if (glass) extraPass(c, "glass", glassMaterial, 2).visible = true;
+      else if (c.glass) c.glass.visible = false;
+      const xray = holdsSelected && xrayNames.has(c.info.name);
+      if (xray) extraPass(c, "xray", xrayMaterial, 5).visible = true;
+      else if (c.xray) c.xray.visible = false;
     }
-    c.geom.attributes.color.needsUpdate = true;
-    invalidate();
   }
   function recompute(ids) {
-    for (const c of cache.values()) recolor(c, ids);
+    if (ids) {
+      for (const id of ids) {
+        const db = idToDb.get(id);
+        if (db !== undefined && db <= maxDb) writeState(db);
+      }
+    } else for (let i = 0; i < dbList.length; i++) writeState(dbList[i]);
+    stateTexture.needsUpdate = true;
+    updatePasses();
     if (sceneMode) colourScene(ids);
+    invalidate();
     schedule();
   }
   function colourScene(ids) {
@@ -618,6 +686,7 @@ export async function createLocalViewer(
     ctor: a.constructor.name,
     ...more,
   });
+  // Once a tile's buffers are on the GPU, its positions, indices and dbIds move (zero-copy) to the picking worker.
   function afterRender() {
     for (const c of cache.values()) {
       if (c.sent || c.uploaded.size !== c.units.size) continue;
@@ -631,7 +700,8 @@ export async function createLocalViewer(
           : arr instanceof Int16Array
             ? 1 / 32767
             : 1;
-      const ids = c.dbids.slice();
+      const ids = c.dbids;
+      c.dbids = null;
       const transfer = [...new Set([arr.buffer, ix.array.buffer, ids.buffer])];
       picker.postMessage(
         {
@@ -660,25 +730,21 @@ export async function createLocalViewer(
     if (!mesh) throw Error("Tile has no mesh");
     const geom = mesh.geometry,
       col = geom.attributes.color,
-      n = geom.attributes.position.count,
-      dbids = new Uint32Array(n),
+      n = geom.attributes.position.count;
+    if (!col || col.itemSize !== 4) throw Error("Tile has no dbId attribute");
+    // dbId per vertex for the picking worker (the attribute itself stays on the GPU, unchanged, as `partId`).
+    const dbids = new Uint32Array(n),
       raw = col.array;
-    for (let v = 0; v < n; v++)
-      dbids[v] =
-        raw instanceof Uint8Array && !col.isInterleavedBufferAttribute
-          ? (raw[4 * v] |
-              (raw[4 * v + 1] << 8) |
-              (raw[4 * v + 2] << 16) |
-              (raw[4 * v + 3] << 24)) >>>
-            0
-          : (Math.round(col.getX(v) * 255) |
-              (Math.round(col.getY(v) * 255) << 8) |
-              (Math.round(col.getZ(v) * 255) << 16) |
-              (Math.round(col.getW(v) * 255) << 24)) >>>
-            0;
-    const state = new Uint8Array(n * 4);
-    geom.setAttribute("color", new THREE.BufferAttribute(state, 4, true));
+    if (raw instanceof Uint8Array && !col.isInterleavedBufferAttribute) {
+      for (let v = 0; v < n; v++) dbids[v] = (raw[4 * v] | (raw[4 * v + 1] << 8) | (raw[4 * v + 2] << 16) | (raw[4 * v + 3] << 24)) >>> 0;
+    } else {
+      for (let v = 0; v < n; v++)
+        dbids[v] = (Math.round(col.getX(v) * 255) | (Math.round(col.getY(v) * 255) << 8) | (Math.round(col.getZ(v) * 255) << 16) | (Math.round(col.getW(v) * 255) << 24)) >>> 0;
+    }
+    geom.setAttribute("partId", col);
+    geom.deleteAttribute("color");
     // Source opacity per vertex: from the tile (_OPACITY) or, for tiles without it, the manifest's per-part table.
+    // The shader reads it as `partOpacity`; `opacity` (null when everything is opaque) serves the picking filter.
     let opacity = null;
     const opAttr = geom.attributes._opacity;
     if (opAttr) {
@@ -686,12 +752,16 @@ export async function createLocalViewer(
         const o = Math.round(opAttr.getX(v) * 255);
         if (o < 255) (opacity ??= new Uint8Array(n).fill(255))[v] = o;
       }
+      geom.setAttribute("partOpacity", opAttr);
       geom.deleteAttribute("_opacity");
-    } else if (manifest.opacity_by_dbid) {
-      for (let v = 0; v < n; v++) {
-        const o = manifest.opacity_by_dbid[dbids[v]];
-        if (o !== undefined) (opacity ??= new Uint8Array(n).fill(255))[v] = o;
+    } else {
+      const table = manifest.opacity_by_dbid;
+      const bytes = new Uint8Array(n).fill(255);
+      if (table) for (let v = 0; v < n; v++) {
+        const o = table[dbids[v]];
+        if (o !== undefined && o < 255) { bytes[v] = o; opacity = bytes; }
       }
+      geom.setAttribute("partOpacity", new THREE.BufferAttribute(bytes, 1, true));
     }
     mesh.material = info.group === "overview" ? overviewMaterial : material;
     mesh.raycast = () => {};
@@ -707,14 +777,16 @@ export async function createLocalViewer(
         mesh,
         geom,
         dbids,
-        state,
         opacity,
+        transparentSource: opacity !== null,
         readyPromise,
         resolveReady,
         units: new Set(),
         uploaded: new Set(),
         sent: false,
         ready: false,
+        glass: null,
+        xray: null,
       };
     for (const a of [
       geom.attributes.position,
@@ -727,7 +799,9 @@ export async function createLocalViewer(
     }
     cache.set(info.name, c);
     workerChunks.set(c.key, c);
-    recolor(c);
+    updatePasses(c);
+    // Put the tile on the GPU right away (a 1x1 off-screen draw): its picking index is then built in the background
+    // and nothing is uploaded later in the middle of a rotation.
     const fc = mesh.frustumCulled;
     mesh.frustumCulled = false;
     renderer.setRenderTarget(uploadTarget);
@@ -735,8 +809,10 @@ export async function createLocalViewer(
     renderer.setRenderTarget(null);
     mesh.frustumCulled = fc;
     afterRender();
-    renderer.render(scene, camera);
     if (stats.firstPicture === null) {
+      // First picture: draw once right away (a hidden or throttled tab may not deliver animation frames).
+      renderer.render(scene, camera);
+      dirty = false;
       stats.firstPicture = performance.now() - stats.started;
       resolveFirst?.();
     }
@@ -785,6 +861,7 @@ export async function createLocalViewer(
         ? new Set([...override.keys()].map((id) => idToDb.get(id)))
         : null,
       selectedDb,
+      tilesByDb: byDb,
       cutHeight: clipping[0]?.constant ?? Infinity,
       // Screen-size rule: small detail tiles load only when they appear large enough (or are selected).
       eye: camera.position.toArray(),
@@ -844,7 +921,8 @@ export async function createLocalViewer(
   }
   function pump() {
     if (!active || gpuLost) return;
-    const max = manifest.streaming.max_requests || 2;
+    // Tiles are small (tens of KB): keep several requests in flight even from a local disk server.
+    const max = Math.max(manifest.streaming.max_requests || 2, 4);
     for (const name of desired) {
       if (requests.size >= max) break;
       if (cache.has(name) || requests.has(name) || failed.has(name)) continue;
@@ -966,7 +1044,7 @@ export async function createLocalViewer(
     for (const h of hits) {
       if (
         (clipping[0] && clipping[0].distanceToPoint(h.p) < 0) ||
-        h.c.state[h.v * 4 + 3] < PICK_MIN_ALPHA
+        effectiveAlpha(h.db, h.c, h.v) < PICK_MIN_ALPHA
       )
         continue;
       const id = dbToId.get(h.db);
@@ -1110,14 +1188,13 @@ export async function createLocalViewer(
     },
     paintNeutral() {
       for (const id of sceneOverlay.ids()) sceneOverlay.setStatus(id, "none");
-      for (const c of cache.values()) {
-        for (let v = 0; v < c.state.length; v += 4) {
-          c.state[v] = 184;
-          c.state[v + 1] = 191;
-          c.state[v + 2] = 201;
-        }
-        c.geom.attributes.color.needsUpdate = true;
+      for (let i = 0; i < dbList.length; i++) {
+        const o = dbList[i] * 4;
+        stateData[o] = 184;
+        stateData[o + 1] = 191;
+        stateData[o + 2] = 201;
       }
+      stateTexture.needsUpdate = true;
       invalidate();
     },
     async select(id, { fly = true, label = null, status = null } = {}) {

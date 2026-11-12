@@ -413,19 +413,26 @@ def _accessor_values(
     if component_format is None or width is None:
         return []
     fmt, component_size = component_format
-    stride = view.get("byteStride", component_size * width)
+    row_size = component_size * width
+    stride = view.get("byteStride", row_size)
     count = accessor.get("count", 0)
     count = min(count, max_items) if max_items else count
     start = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
     buffer = buffers[view.get("buffer", 0)]
-    values = []
-    for index in range(count):
-        offset = start + index * stride
-        if offset + component_size * width > len(buffer):
-            raise SourceProcessingError("A GLTF accessor extends beyond its buffer.")
-        row = struct.unpack_from("<" + fmt * width, buffer, offset)
-        values.append(row[0] if width == 1 else list(row))
-    return values
+    if count <= 0:
+        return []
+    if stride < row_size or start < 0 or start + (count - 1) * stride + row_size > len(buffer):
+        raise SourceProcessingError("A GLTF accessor extends beyond its buffer.")
+    row_format = "<" + fmt * width
+    if stride == row_size:
+        # Tightly packed (the common case): one C-level pass instead of a Python loop per vertex.
+        rows = struct.iter_unpack(row_format, memoryview(buffer)[start : start + count * row_size])
+    else:
+        unpack = struct.Struct(row_format).unpack_from
+        rows = (unpack(buffer, start + index * stride) for index in range(count))
+    if width == 1:
+        return [row[0] for row in rows]
+    return [list(row) for row in rows]
 
 
 def _accessor_bounds(
@@ -445,10 +452,12 @@ def _accessor_bounds(
     points = [point for point in positions if isinstance(point, list) and len(point) >= 3]
     if not points:
         return None
-    return {
-        "min": [min(float(point[axis]) for point in points) for axis in range(3)],
-        "max": [max(float(point[axis]) for point in points) for axis in range(3)],
-    }
+    xs, ys, zs = (
+        [float(point[0]) for point in points],
+        [float(point[1]) for point in points],
+        [float(point[2]) for point in points],
+    )
+    return {"min": [min(xs), min(ys), min(zs)], "max": [max(xs), max(ys), max(zs)]}
 
 
 def _matrix_multiply(left: list[float], right: list[float]) -> list[float]:

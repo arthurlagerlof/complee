@@ -153,7 +153,7 @@ The public read-only viewer surface includes the app's static files, `/api/healt
 `/api/*` data routes, and `/model/*` viewer assets. These routes require no login. `/model/*` accepts only the existing
 allow-listed reference-model assets; the private bucket and credentials are never sent to the browser. Mutating local
 maintenance endpoints remain loopback-only. The Node service applies in-memory limits of 600 static requests/minute, 120 general API requests/minute,
-30 `/api/check` requests/minute, and 1,200 model requests/minute per client IP to permit full viewport streaming; rate limits reset on restart and are not a
+30 `/api/check` requests/minute, and 4,000 model requests/minute per client IP (a complete viewport streams about 700 overview tiles, and several reviews may share one office address); rate limits reset on restart and are not a
 substitute for an upstream DDoS/WAF service. Keep the app container reachable only through Caddy, restrict SSH (22) to
 trusted administrator IPs, and keep port 8080 private. CORS limits browser access, not direct HTTP callers.
 
@@ -239,7 +239,18 @@ tiles are still taken from `model/stream` until they are re-baked.
 triangles (glazing, envelopes, clearance volumes) are see-through in the original, e.g. the rescue-boat launch envelope on
 layer `ENV_` is 96 % transparent. The viewer draws them in a see-through pass with that opacity (below 10 % they are not
 clickable); the audit checks the opacity of every part against the source. Browser regressions:
-`cd tools/export && node --test --test-concurrency=1 browser-regressions.cjs` (app running).
+`cd tools/export && node --test --test-concurrency=1 browser-regressions.cjs` (app running). Without the real model and
+database, `cd tools/export && node --test viewer-smoke.mjs` builds a small synthetic ship in the same tile layout
+(`synthetic-model.mjs`), starts a stub catalog API and the server, and checks first picture, streaming, selection,
+rule view, filter, picking, what-if re-check, eviction, screenshots and HTTP revalidation in headless Chromium.
+
+**Part state on the GPU.** Every vertex carries its part's dbId (the tile's `COLOR_0` bytes, bound unchanged) and its
+source opacity. The viewer keeps colour and visibility per part in a small texture (one texel per dbId): a selection,
+filter or rule view rewrites that texture, never the vertex buffers of the resident tiles, and hidden parts are
+collapsed in the vertex shader instead of discarded per fragment. A what-if edit re-checks only the edited element
+(`recheckElements` in `src/checker.mjs`) when every active rule reads the element alone. Catalogs, modules and the tile
+manifest are revalidated with ETags (`Cache-Control: no-cache`), tiles stay immutable; the Node proxy asks the
+database API only whether its cached catalog version is still current.
 
 **Corridor scene inside the real ship.** Scenario `rcrv-inside` (database catalog `model-rcrv-inside`) places a simplified, estimated
 example (one corridor, its door, a stair, a guard rail; fictional values, ground truth in `expected-rcrv-inside`)

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { gsap } from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import {
@@ -16,9 +16,13 @@ import {
 } from 'lucide-react'
 import { inspectionPoints, reviewExamples } from './inspectionData'
 import VesselViewer from './VesselViewer'
-import EvidenceIntake from './EvidenceIntake'
-import AiWorkspace from './AiWorkspace'
-import FindingsWorkspace from './FindingsWorkspace'
+
+// The workspaces (and with them three.js, the glTF loader and the API clients) load only when they are opened:
+// the landing page itself stays a small bundle.
+const EvidenceIntake = lazy(() => import('./EvidenceIntake'))
+const AiWorkspace = lazy(() => import('./AiWorkspace'))
+const FindingsWorkspace = lazy(() => import('./FindingsWorkspace'))
+const workspaceFallback = <div className="workspace-loading" role="status"><span className="loading-spinner" /> Loading…</div>
 
 gsap.registerPlugin(ScrollTrigger)
 
@@ -164,9 +168,9 @@ function App() {
       window.clearTimeout(timer)
     }
   }, [loginOpen])
-  if (showFindings) return <FindingsWorkspace onBack={() => { setShowFindings(false); backToMain() }} />
-  if (showAi) return <AiWorkspace onBack={backToMain} />
-  if (!showConcept) return <EvidenceIntake onContinue={continueToInspection} onBack={backToMain} />
+  if (showFindings) return <Suspense fallback={workspaceFallback}><FindingsWorkspace onBack={() => { setShowFindings(false); backToMain() }} /></Suspense>
+  if (showAi) return <Suspense fallback={workspaceFallback}><AiWorkspace onBack={backToMain} /></Suspense>
+  if (!showConcept) return <Suspense fallback={workspaceFallback}><EvidenceIntake onContinue={continueToInspection} onBack={backToMain} /></Suspense>
 
   return (
     <div ref={root} id="top">

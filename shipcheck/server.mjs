@@ -29,7 +29,7 @@ const SHIPCHECK_DATA_API_URL = LOCAL_CATALOG ? '' : process.env.SHIPCHECK_DATA_A
 const ALLOWED_ORIGINS = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
 const MODEL_DIR = path.resolve(ROOT, process.env.MODEL_DIR || 'model');
 const apiRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 120 });
-const modelRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 1_200 });
+const modelRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 4_000 });
 const staticRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 600 });
 const checkRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 30 });
 
@@ -64,10 +64,9 @@ async function databaseCatalog(sourceKey) {
   if (!SHIPCHECK_DATA_API_URL) {
     throw Object.assign(new Error('SHIPCHECK_DATA_API_URL must point to the database-backed Complee API.'), { status: 503 });
   }
-  const target = new URL(`/api/v1/shipcheck/catalog/${sourceKey}`, SHIPCHECK_DATA_API_URL);
-  const response = await fetch(target, { signal: AbortSignal.timeout(90_000) });
-  if (!response.ok) throw Object.assign(new Error(`ShipCheck catalog ${sourceKey} returned ${response.status}`), { status: response.status });
-  return response.json();
+  const entry = await catalogEntry(sourceKey);
+  if (entry.status !== 200) throw Object.assign(new Error(`ShipCheck catalog ${sourceKey} returned ${entry.status}`), { status: entry.status });
+  return JSON.parse(entry.body.toString('utf8'));
 }
 
 // Use only the audited high-precision viewport export by default. MODEL_MANIFEST is an explicit override
@@ -184,7 +183,11 @@ function readBody(req, limit = 200_000) {
   });
 }
 
-function serveStatic(p, res, req) {
+// Static files: content-addressed model tiles are immutable (cached for a year); everything else is revalidated with
+// an ETag (weak, from size and mtime), so the browser keeps the JS modules, the 1.4 MB tile manifest and the CSS in
+// its cache and the server answers 304 instead of sending them again. All file-system calls are asynchronous: a
+// viewport streams hundreds of tiles and must not block the event loop for other clients.
+async function serveStatic(p, res, req) {
   let file = null;
   for (const [prefix, dir] of STATIC) {
     if (!p.startsWith(prefix)) continue;
@@ -193,17 +196,31 @@ function serveStatic(p, res, req) {
     if (candidate.startsWith(base + path.sep) || candidate === base) file = candidate;
     break;
   }
-  if (!file || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+  let stat = null;
+  if (file) {
+    try { stat = await fs.promises.stat(file); } catch { stat = null; }
+  }
+  if (!stat || !stat.isFile()) {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     return res.end('Not found');
   }
   const ext = path.extname(file);
-  const size = fs.statSync(file).size;
-  // Model chunks never change under the same name: cache them for a year. Everything else: always fresh.
-  const cache = ext === '.glb' ? 'public, max-age=31536000, immutable' : 'no-store';
-  const headers = { 'Content-Type': TYPES[ext] || 'application/octet-stream', 'Cache-Control': cache, 'Accept-Ranges': 'bytes' };
+  const size = stat.size;
+  const immutable = ext === '.glb';
+  const etag = `W/"${size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+  const headers = {
+    'Content-Type': TYPES[ext] || 'application/octet-stream',
+    'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
+    'Accept-Ranges': 'bytes',
+    ETag: etag,
+  };
+  const rangeHeader = String(req?.headers?.range || '');
+  if (!rangeHeader && req?.headers?.['if-none-match'] && req.headers['if-none-match'].split(',').map((v) => v.trim()).includes(etag)) {
+    res.writeHead(304, { 'Cache-Control': headers['Cache-Control'], ETag: etag });
+    return res.end();
+  }
   // HTTP Range (single range), e.g. for resuming large model chunks.
-  const m = /^bytes=(\d*)-(\d*)$/.exec(String(req?.headers?.range || ''));
+  const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
   if (m && (m[1] || m[2])) {
     let start = m[1] ? Number(m[1]) : size - Number(m[2]);
     let end = m[1] && m[2] ? Number(m[2]) : size - 1;
@@ -254,6 +271,35 @@ async function runDatabaseCheck(scenarioId) {
   };
   if (expected) result.score = scoreResults(result, expected);
   return result;
+}
+
+// Catalog documents (rules, scenarios, the parts list with ~70,000 records) come from the database API. Each dataset
+// version is immutable and the API identifies it with an ETag, so the proxy keeps the last body per source and asks
+// upstream only whether that version is still current (304: nothing is transferred again). The browser revalidates
+// the same way (Cache-Control: no-cache + ETag), so a reload of the review costs one round trip per catalog instead
+// of a full download. Concurrent requests for one source share a single upstream request.
+const catalogCache = new Map(); // sourceKey -> { etag, body, type, status }
+const catalogInflight = new Map();
+function catalogEntry(sourceKey) {
+  if (catalogInflight.has(sourceKey)) return catalogInflight.get(sourceKey);
+  const job = (async () => {
+    const cached = catalogCache.get(sourceKey);
+    const target = new URL(`/api/v1/shipcheck/catalog/${sourceKey}`, SHIPCHECK_DATA_API_URL);
+    const headers = cached?.etag ? { 'If-None-Match': cached.etag } : {};
+    const upstream = await fetch(target, { headers, signal: AbortSignal.timeout(90_000) });
+    if (upstream.status === 304 && cached) return cached;
+    const body = Buffer.from(await upstream.arrayBuffer());
+    const entry = {
+      status: upstream.status,
+      etag: upstream.ok ? upstream.headers.get('etag') : null,
+      type: upstream.headers.get('content-type') || 'application/json',
+      body,
+    };
+    if (upstream.ok && entry.etag) catalogCache.set(sourceKey, entry);
+    return entry;
+  })().finally(() => catalogInflight.delete(sourceKey));
+  catalogInflight.set(sourceKey, job);
+  return job;
 }
 
 const routes = {
@@ -324,18 +370,16 @@ export async function handleRequest(req, res) {
       return sendJSON(res, 503, { error: 'SHIPCHECK_DATA_API_URL must point to the database-backed Complee API.' });
     }
     try {
-      if (!SHIPCHECK_DATA_API_URL) {
-        return sendJSON(res, 503, { error: 'SHIPCHECK_DATA_API_URL must point to the database-backed Complee API.' });
+      const entry = await catalogEntry(catalogMatch[1]);
+      const headers = { 'Content-Type': entry.type, 'Cache-Control': entry.etag ? 'no-cache' : 'no-store' };
+      if (entry.etag) headers.ETag = entry.etag;
+      const wanted = String(req.headers['if-none-match'] || '').split(',').map((v) => v.trim()).filter(Boolean);
+      if (entry.etag && entry.status === 200 && wanted.includes(entry.etag)) {
+        res.writeHead(304, headers);
+        return res.end();
       }
-      const target = new URL(`/api/v1/shipcheck/catalog/${catalogMatch[1]}`, SHIPCHECK_DATA_API_URL);
-      const upstream = await fetch(target, { signal: AbortSignal.timeout(90_000) });
-      const body = Buffer.from(await upstream.arrayBuffer());
-      res.writeHead(upstream.status, {
-        'Content-Type': upstream.headers.get('content-type') || 'application/json',
-        'Cache-Control': 'no-store',
-        'Content-Length': body.length,
-      });
-      return res.end(body);
+      res.writeHead(entry.status, { ...headers, 'Content-Length': entry.body.length });
+      return res.end(entry.body);
     } catch {
       return sendJSON(res, 502, { error: 'Complee database API is temporarily unavailable.' });
     }
@@ -353,7 +397,7 @@ export async function handleRequest(req, res) {
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') return sendJSON(res, 405, { error: 'Method not allowed' });
   if (s3Model && p.startsWith('/model/')) return s3Model.serve(p.slice('/model/'.length), req, res);
-  serveStatic(p === '/' ? '/evidence.html' : p, res, req);
+  return serveStatic(p === '/' ? '/evidence.html' : p, res, req);
 }
 
 export const server = http.createServer(handleRequest);

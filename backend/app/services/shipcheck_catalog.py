@@ -168,6 +168,12 @@ def read_active_catalog_json(session: Session, source_key: str, cache_dir: Path 
     return data
 
 
+def active_catalog_etag(session: Session, source_key: str) -> str:
+    """A strong validator for the active catalog: dataset versions are immutable and content-addressed, so the
+    content hash identifies the exact document a client holds."""
+    return f'"{_active_version(session, source_key).content_sha256}"'
+
+
 def read_active_catalog(session: Session, source_key: str) -> dict[str, Any]:
     if source_key not in CATALOG_SOURCES:
         raise KeyError(source_key)
