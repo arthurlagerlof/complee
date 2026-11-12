@@ -1,6 +1,7 @@
 // Findings report (HTML, printable to PDF) and CSV. Pure functions: used by the browser (Report / CSV
 // buttons) and by the CLI (node check.mjs --report <scenario>), so both give the same output.
 import { findingsOf, normalizeModel, coverageOf } from './checker.mjs';
+import { readiness } from './readiness.mjs';
 import { commentEvidence, commentSummary, COMMENT_STATUS_LABEL, EVIDENCE_LABEL } from './class-comments.mjs';
 import { scoreLine } from './score.mjs';
 import { traceMatrix, cellLabel } from './trace.mjs';
@@ -95,6 +96,15 @@ ${rows.map((r) => `<tr><td class="${r.done ? 'ok' : 'ni'}">${r.done ? 'Confirmed
 <td>${esc(r.rule_id)}<br><span class="muted">${esc(r.source)} - ${esc(r.clause)}</span></td><td>${esc(r.evidence ?? '')}</td><td>${r.done ? `${esc(r.responsible)}<br><span class="muted">${esc(r.updated.slice(0, 10))}</span>` : ''}</td><td>${esc(r.note)}</td></tr>`).join('\n')}</table>` : ''}`;
 }
 
+// Submission readiness: open work before this revision can go to class or flag.
+export function readinessSection({ results, register, comments, rules, edits }) {
+  const r = readiness({ results, register: register || {}, comments: comments || [], rules, edits });
+  return `<h2>Submission readiness</h2>
+<div class="badge ${r.ready ? 'ok' : 'bad'}">${r.ready ? '✓ Ready to submit' : `✗ Not ready: ${r.blockers} blocker${r.blockers === 1 ? '' : 's'}`}${r.warnings ? ` · ${r.warnings} warning${r.warnings === 1 ? '' : 's'}` : ''}</div>
+${r.items.length ? `<table><tr><th>Level</th><th>Count</th><th>Open work</th></tr>${r.items.map((i) => `<tr><td class="${i.level === 'blocker' ? 'nc' : 'ni'}">${i.level}</td><td>${i.count}</td><td>${esc(i.text)}</td></tr>`).join('')}</table>` : ''}
+<p class="muted">Counts open work only. Compliance is decided by the rule check and, finally, by class and flag.</p>`;
+}
+
 // Class comments: what class asked, what the rule check says now, what was answered.
 export function commentsSection(comments, results) {
   if (!comments?.length) return '';
@@ -171,6 +181,7 @@ ${score ? `<div class="badge ${pass ? 'ok' : 'bad'}">${pass ? '✓' : '✗'} Acc
 ${usedRules.length} rules applied, ${verified}/${rules.length} rule values verified against official text: every "no" must be checked before submission (VERIFY.md).</p>
 ${edits.length ? `<p><b>${edits.length} value(s) edited in this session:</b> ${edits.map((x) => `${esc(x.id)}.${esc(x.key)} ${esc(x.before)} → ${esc(x.after)}`).join('; ')}</p>` : ''}
 ${drafts.length ? `<p><b>Draft rules, not run (no official value):</b> ${drafts.map((d) => `${esc(d.id)}: ${esc(d.reason)}`).join(' ')}</p>` : ''}
+${readinessSection({ results, register, comments, rules, edits: edits.length })}
 <h2>Findings (${rows.length})</h2>
 ${register ? `<p>Findings register: <b>${openCount}</b> of ${rows.length} findings open, ${rows.length - openCount} with a disposition. A disposition records how a finding is handled; it never changes the checker status.</p>` : ''}
 <table><tr><th>Status</th><th>Element</th><th>Group / deck</th><th>Rule</th><th>Source / clause</th><th>Measured</th><th>Required</th><th>Explanation</th><th>Input provenance (model text = mm)</th><th>Basis</th><th>Verified</th><th>Review</th>${register ? '<th>Disposition</th><th>Responsible</th><th>Justification / note</th>' : ''}</tr>

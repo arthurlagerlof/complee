@@ -11,6 +11,8 @@ import { compareRevisions } from './src/compare.mjs';
 import { verifySuggestion } from './src/escape-actions.mjs';
 import { parsePartialJson } from './src/partial-json.mjs';
 import { consistencyIssues, widthCheck } from './src/consistency.mjs';
+import { readiness } from './src/readiness.mjs';
+import { projectFile, readProjectFile } from './src/project-file.mjs';
 import { COMMENT_STATUSES, COMMENT_STATUS_LABEL, EVIDENCE_LABEL, parseComments, addComments, withComment, withoutComment, commentEvidence, commentSummary, commentsCSV } from './src/class-comments.mjs';
 import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, registerSummary, withDisposition, registerCSV, projectKey, manualRows, manualSummary, withManualCheck } from './src/dispositions.mjs';
 import { createFallbackViewer } from './viewer-fallback.js';
@@ -498,6 +500,70 @@ function coverageHTML() {
     <span class="muted">Requirements that are not in the rule catalog are not checked at all. Approval stays with class and flag.</span></div>`;
 }
 
+// Submission readiness: the open work between this revision and a submission, one click from each item to the
+// place where it is cleared. Plus the project file, so the register and comments are not tied to this browser.
+const readinessOf = () => readiness({ results: S.results, register: S.register, comments: S.comments?.comments ?? [], rules: allRules(), edits: S.edits.size });
+let readinessOpen = false;
+function readinessHTML() {
+  if (S.precomputed) return '';
+  const r = readinessOf();
+  const line = (i) => `<li class="${i.level}"><a href="#" class="readyGo" data-id="${esc(i.id)}"><b>${i.count}</b> ${esc(i.text)}</a></li>`;
+  return `<details class="ready ${r.ready ? 'ok' : 'bad'}" id="readyBox" ${readinessOpen ? 'open' : ''}>
+    <summary>${r.ready ? '✓ Ready to submit' : `✗ Not ready to submit: ${r.blockers} blocker${r.blockers === 1 ? '' : 's'}`}${r.warnings ? ` · ${r.warnings} warning${r.warnings === 1 ? '' : 's'}` : ''}</summary>
+    ${r.items.length ? `<ul>${r.items.map(line).join('')}</ul>` : '<p class="muted">No open work recorded for this revision.</p>'}
+    <p class="muted">Counts open work only; compliance is decided by the rule check and, finally, by class and flag.</p>
+    <div class="ready-actions"><button class="tiny" id="projSave" title="Findings register, manual-check confirmations and class comments as one file: back it up or hand it to a colleague">Save project file</button>
+      <button class="tiny" id="projOpen" title="Open a project file saved here or by a colleague">Open project file…</button><input id="projFile" type="file" accept=".json,application/json" hidden></div>
+  </details>`;
+}
+
+function wireReadiness() {
+  const box = $('#readyBox');
+  if (!box) return;
+  box.ontoggle = () => { readinessOpen = box.open; };
+  box.querySelectorAll('.readyGo').forEach((a) => (a.onclick = (e) => { e.preventDefault(); goReadiness(readinessOf().items.find((i) => i.id === a.dataset.id)); }));
+  $('#projSave').onclick = () => {
+    const file = projectFile({ project: S.registerProject, model: S.model.name, revision: revisionLabel(S.sc), register: S.register, comments: S.comments?.comments ?? [], revisions: S.registerMeta?.revisions ?? [] });
+    const name = String(S.model.name || 'project').replace(/[^\w .()-]+/g, '_').slice(0, 60);
+    download(`${name}.complee-project.json`, JSON.stringify(file, null, 1), 'application/json');
+  };
+  $('#projOpen').onclick = () => $('#projFile').click();
+  $('#projFile').onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      const p = readProjectFile(await f.text(), S.registerProject);
+      const here = Object.keys(S.register).length + (S.comments?.comments?.length ?? 0);
+      const msg = `Open "${f.name}"${p.saved ? ` (saved ${new Date(p.saved).toLocaleString('en-GB')})` : ''}: ${Object.keys(p.register).length} register entries and ${p.comments.length} class comments.`
+        + (p.other_project ? `\n\nIt was saved for another project (${p.model ?? p.project}).` : '')
+        + (here ? `\n\nThis replaces the ${here} entries saved in this browser for this project.` : '');
+      if (!confirm(msg)) return;
+      S.register = p.register; saveRegister();
+      S.comments = { comments: p.comments }; saveComments();
+      recheck();
+      if (!$('#registerPanel').hidden) openRegister();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+}
+
+function goReadiness(item) {
+  if (!item) return;
+  const firstWith = (test) => Object.values(S.results.elements).find(test)?.id;
+  switch (item.go) {
+    case 'register': registerTab = 'findings'; registerOpenOnly = true; openRegister(); break;
+    case 'comments': registerTab = 'comments'; commentsOpenOnly = true; openRegister(); break;
+    case 'manual': { const id = firstWith((e) => manualRows({ elements: { [e.id]: e } }, S.register).some((m) => !m.done)); if (id) select(id); break; }
+    case 'edits': $('#edits')?.scrollIntoView({ block: 'center', behavior: 'smooth' }); break;
+    case 'rules': $('#rulesBox')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); break;
+    default: {
+      const id = item.id === 'conflicts' ? firstWith((e) => e.conflicts?.length) : firstWith((e) => e.results.some((r) => r.status === 'not_enough_info'));
+      if (id) select(id);
+    }
+  }
+}
+
 function renderSummary() {
   const s = S.results.summary, e = S.results.element_summary;
   $('#summary').innerHTML = `
@@ -507,7 +573,9 @@ function renderSummary() {
       <div class="pill st-compliant" title="No deviation in the rules checked automatically. This is not a statement of full compliance: see the manual checks.">${s.compliant}<small>no deviation</small></div>
     </div>
     <div class="muted">Rule checks per element. Elements: ${e.non_compliant} red, ${e.not_enough_info} amber, ${e.compliant} green, ${e.no_rule} without a rule. Checked in ${S.lastCheckMs.toFixed(1)} ms.</div>
-    ${coverageHTML()}`;
+    ${coverageHTML()}
+    ${readinessHTML()}`;
+  wireReadiness();
   const issues = S.model.kind === 'parts' ? [] : consistencyIssues(S.norm);
   if (issues.length) {
     $('#summary').insertAdjacentHTML('beforeend', `<div class="note"><b>Data consistency:</b> ${issues.length} declared clear width${issues.length === 1 ? ' is' : 's are'} larger than the modelled geometry: ${issues.map((c) => `<a href="#" class="via" data-id="${esc(c.id)}">${esc(c.id)}</a>`).join(', ')}. The rule check reads the declared value.</div>`);
@@ -1684,6 +1752,7 @@ function wireManualChecks(root) {
 }
 
 function renderRegisterButton() {
+  if ($('#readyBox')) { $('#readyBox').outerHTML = readinessHTML(); wireReadiness(); }
   const s = registerSummary(registerRows(S.results, S.register));
   const attention = s.open + s.stale + s.missing_note;
   const c = commentSummary(S.comments?.comments, null);

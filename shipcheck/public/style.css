@@ -442,3 +442,13 @@ table.register tr.warn td { background: #fffaf0; }
 .cmt-import { border: 1px dashed #b9c1cc; border-radius: 8px; padding: 8px 10px; margin: 8px 0; background: #fafbfc; }
 .cmt-draft { white-space: pre-wrap; }
 .keel-whatif { margin-top: 3px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+
+/* submission readiness */
+.ready { margin-top: 6px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; background: #fff; }
+.ready.bad { border-color: #f3b4b4; background: #fff8f8; }
+.ready.ok { border-color: #bfe3cc; background: #f3fbf6; }
+.ready > summary { cursor: pointer; font-weight: 600; }
+.ready ul { margin: 6px 0; padding-left: 16px; }
+.ready li.blocker a { color: #9b2c2c; }
+.ready li.warning a { color: #8a5300; }
+.ready-actions { display: flex; gap: 6px; flex-wrap: wrap; }
