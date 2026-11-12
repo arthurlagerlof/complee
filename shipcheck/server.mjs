@@ -15,11 +15,15 @@ import { s3ConfigFrom, createS3ModelSource } from './src/model-source-s3.mjs';
 import { createRegulationText } from './src/regulation-text.mjs';
 import { createRateLimiter } from './src/rate-limit.mjs';
 import { isIP } from 'node:net';
+import { bundledCatalogEnabled, readBundledCatalog } from './src/catalog-local.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8080);
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
-const SHIPCHECK_DATA_API_URL = process.env.SHIPCHECK_DATA_API_URL
+// Catalog source. An explicit SHIPCHECK_DATA_API_URL selects the database-backed API. Without it the bundled
+// catalog in shipcheck/catalog/ is used, so the viewer runs on its own (no database, no network).
+const LOCAL_CATALOG = bundledCatalogEnabled();
+const SHIPCHECK_DATA_API_URL = LOCAL_CATALOG ? '' : process.env.SHIPCHECK_DATA_API_URL
   || (process.env.NODE_ENV === 'production' ? '' : 'http://127.0.0.1:8000');
 // CORS: ALLOWED_ORIGINS="https://a.example,https://b.example" (default: localhost on any port only).
 const ALLOWED_ORIGINS = parseAllowedOrigins(process.env.ALLOWED_ORIGINS);
@@ -53,7 +57,10 @@ function applyRateLimit(req, res, pathname) {
   return false;
 }
 
+const localCatalog = readBundledCatalog;
+
 async function databaseCatalog(sourceKey) {
+  if (LOCAL_CATALOG) return localCatalog(sourceKey);
   if (!SHIPCHECK_DATA_API_URL) {
     throw Object.assign(new Error('SHIPCHECK_DATA_API_URL must point to the database-backed Complee API.'), { status: 503 });
   }
@@ -97,7 +104,7 @@ function health() {
     version: VERSION,
     model_source: s3Model ? 'vultr' : 'local',
     model_available: manifest,
-    catalog_source: 'database',
+    catalog_source: LOCAL_CATALOG ? 'bundled' : 'database',
   };
 }
 const evidenceProvider = await createEvidenceProvider({ kind: process.env.EVIDENCE_PROVIDER || 'sinceai' });
@@ -309,6 +316,9 @@ export async function handleRequest(req, res) {
   }
   if (!applyRateLimit(req, res, p)) return;
   const catalogMatch = /^\/api\/catalog\/([a-z0-9-]+)$/.exec(p);
+  if (req.method === 'GET' && catalogMatch && LOCAL_CATALOG) {
+    try { return sendJSON(res, 200, localCatalog(catalogMatch[1])); } catch (e) { return sendJSON(res, e.status || 500, { error: e.message }); }
+  }
   if (req.method === 'GET' && catalogMatch) {
     if (!SHIPCHECK_DATA_API_URL) {
       return sendJSON(res, 503, { error: 'SHIPCHECK_DATA_API_URL must point to the database-backed Complee API.' });

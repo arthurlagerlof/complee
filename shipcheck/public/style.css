@@ -306,3 +306,53 @@ table.trace td.cell:hover { outline: 2px solid var(--accent); }
   .top button, .top .brand, .top .brand span, .top label, .workflow-steps a, .workflow-steps b { white-space: nowrap; flex: none; }
   .top select { max-width: 300px; }
 }
+
+/* ---------- 3D view tools, room labels, escape plan ---------- */
+.view-tools { position: absolute; top: 10px; left: 10px; z-index: 6; display: flex; align-items: center; gap: 2px; padding: 3px; background: rgba(255,255,255,.94); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 2px 8px rgba(29,36,48,.08); }
+.view-tools[hidden] { display: none; }
+.view-tools button { border: 0; padding: 4px 9px; border-radius: 5px; font-size: 12px; background: transparent; }
+.view-tools button:hover { background: var(--soft); }
+.view-tools button.on { background: var(--ink); color: #fff; }
+.view-tools i { width: 1px; height: 18px; background: var(--line); margin: 0 3px; }
+.view-hint { position: absolute; left: 10px; bottom: 8px; z-index: 5; font-size: 11px; color: var(--muted); background: rgba(255,255,255,.8); padding: 2px 8px; border-radius: 6px; pointer-events: none; }
+#threeView[hidden] ~ .view-hint, body.demo-running .view-hint { display: none; }
+.room-labels { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.room-label { position: absolute; transform: translate(-50%, -50%); font-size: 10.5px; line-height: 1.15; font-weight: 600; color: #1d2430; white-space: nowrap; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff; display: none; }
+.room-label.muster { color: #fff; background: #0f9d58; padding: 2px 8px; border-radius: 4px; text-shadow: none; font-size: 11px; box-shadow: 0 1px 4px rgba(0,0,0,.25); }
+.scene-label, .scene-tip { z-index: 4; }
+#escapeBox .len { float: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+#escList { max-height: 300px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; margin-top: 6px; }
+.esc-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+.swatch { display: inline-block; width: 22px; height: 0; border-top: 4px solid #0f9d58; margin-right: 5px; vertical-align: middle; border-radius: 2px; }
+.swatch.secondary { border-top: 3px dashed #1f6feb; }
+.res.route.primary { border-left-color: #0f9d58; }
+.res.route.secondary { border-left-color: #1f6feb; border-left-style: dashed; }
+a.via { color: var(--accent); text-decoration: none; font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; }
+a.via:hover { text-decoration: underline; }
+a.via.bad { color: var(--bad); font-weight: 600; }
+details.assume { margin-top: 8px; font-size: 12px; color: var(--muted); }
+details.assume ul { margin: 4px 0 0; padding-left: 18px; }
+.check-bad { color: var(--bad); font-size: 12px; margin-top: 4px; }
+
+/* ---------- findings register ---------- */
+#registerPanel { z-index: 15; background: #fff; display: flex; flex-direction: column; }
+#registerPanel[hidden] { display: none; }
+table.register { border-collapse: collapse; font-size: 12px; width: 100%; }
+table.register th { position: sticky; top: 0; background: var(--soft); padding: 5px 8px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); z-index: 1; }
+table.register td { padding: 5px 8px; border-bottom: 1px solid var(--soft); vertical-align: top; }
+table.register td.part { cursor: pointer; } table.register td.part:hover { color: var(--accent); }
+table.register tr.warn td { background: #fffaf0; }
+.dispCell { min-width: 420px; }
+.disp, .dispCell { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.disp { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.disp select, .dispCell select { flex: 1 1 190px; min-width: 0; }
+.disp .dispWho, .dispCell .dispWho { flex: 0 1 120px; min-width: 0; }
+.disp .dispNote, .dispCell .dispNote { flex: 2 1 200px; min-width: 0; }
+.dispNote.missing { border-color: var(--info); background: #fffaf0; }
+.disp-warn { flex-basis: 100%; font-size: 11.5px; color: #8a5a00; }
+#registerBtn.attention:not(.on) { border-color: #e8c98a; background: #fffaf0; }
+/* Inspection header: brand and workflow on the first row, model controls and actions on the second. */
+.top:not(.evidence-top) { flex-wrap: wrap; row-gap: 6px; }
+.top-break { flex-basis: 100%; height: 0; }
+#scenario { max-width: 340px; }
+.top #accBadge { display: none; } /* the same figure is in the sidebar; the header keeps to controls */

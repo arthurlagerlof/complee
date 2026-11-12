@@ -3,6 +3,7 @@
 import { findingsOf, normalizeModel } from './checker.mjs';
 import { scoreLine } from './score.mjs';
 import { traceMatrix, cellLabel } from './trace.mjs';
+import { DISPOSITION_LABEL } from './dispositions.mjs';
 
 const LABEL = { compliant: 'Compliant', non_compliant: 'Non-compliant', not_enough_info: 'Not enough info' };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -16,7 +17,7 @@ export function badgeText(score) {
 }
 
 // One row per finding (non-compliant and not enough info), worst first.
-export function reportRows(results, model, rules = []) {
+export function reportRows(results, model, rules = [], { register = null } = {}) {
   const norm = model ? normalizeModel(model) : null;
   const els = new Map((norm?.elements || []).map((e) => [e.id, e]));
   const deckName = (id) => norm?.decks?.find((d) => d.id === id)?.name ?? id ?? '';
@@ -32,6 +33,11 @@ export function reportRows(results, model, rules = []) {
       text: f.text_status ?? ruleById.get(f.rule_id)?.text_status ?? 'paraphrase',
       verified: f.verified ? 'yes' : 'no',
       review: f.review_status ?? ruleById.get(f.rule_id)?.review_status ?? '',
+      // Engineer's disposition (findings register); only present when a register is passed.
+      ...(register ? (() => {
+        const d = register[`${f.element}|${f.rule_id}`];
+        return { disposition: DISPOSITION_LABEL[d?.disposition] ?? DISPOSITION_LABEL.open, responsible: d?.responsible ?? '', note: d?.note ?? '' };
+      })() : {}),
     };
   });
 }
@@ -53,8 +59,32 @@ export function toCSV(rows) {
   return '﻿' + [cols.join(','), ...rows.map((r) => cols.map((c) => q(r[c])).join(','))].join('\r\n');
 }
 
-export function toHTML({ title, scenario, results, model, rules = [], score = null, edits = [], generated = new Date() }) {
-  const rows = reportRows(results, model, rules);
+// Escape-route analysis (src/escape.mjs) as a report section: one row per room.
+export function escapeSection(escape, model) {
+  if (!escape?.available) return '';
+  const norm = normalizeModel(model);
+  const els = new Map(norm.elements.map((e) => [e.id, e]));
+  const label = { two_routes: 'Two independent routes', single_route: 'Single route only', no_route: 'No route', direct: 'Direct access' };
+  const cls = { two_routes: 'ok', direct: 'ok', single_route: 'ni', no_route: 'nc' };
+  const order = { no_route: 0, single_route: 1, two_routes: 2, direct: 3 };
+  const rooms = Object.values(escape.origins).filter((o) => o.room).sort((a, b) => order[a.status] - order[b.status] || (b.primary?.length_mm ?? 0) - (a.primary?.length_mm ?? 0));
+  const m = (r) => (r ? `${(r.length_mm / 1000).toFixed(1)} m` : '');
+  const s = escape.summary;
+  return `<h2>Escape routes (${rooms.length} rooms)</h2>
+<p>${s.two_routes + s.direct} rooms with two independent routes, <b>${s.single_route}</b> with a single route, <b>${s.no_route}</b> without a route to ${escape.musters.map((id) => esc(els.get(id)?.name ?? id)).join(', ')}.
+${escape.blocked.length ? `<b>What-if: ${escape.blocked.map(esc).join(', ')} blocked.</b>` : ''}
+${escape.disconnected.length ? `Not connected: ${escape.disconnected.map((d) => `${esc(d.id)} (${esc(d.reason)})`).join('; ')}.` : ''}</p>
+<table><tr><th>Room</th><th>Deck</th><th>Result</th><th>Shortest route</th><th>Length</th><th>Narrowest stated clear width</th><th>Independent alternative</th><th>Length</th></tr>
+${rooms.map((o) => `<tr><td><b>${esc(o.id)}</b> ${esc(els.get(o.id)?.name ?? '')}</td><td>${esc(els.get(o.id)?.deck ?? '')}</td><td class="${cls[o.status]}">${label[o.status]}</td>
+<td class="muted">${esc(o.primary?.via.join(' > ') ?? '')}</td><td>${m(o.primary)}</td><td>${o.primary?.narrowest ? `${o.primary.narrowest.width_mm} mm at ${esc(o.primary.narrowest.id)}` : ''}</td>
+<td class="muted">${esc(o.secondary?.via.join(' > ') ?? '')}</td><td>${m(o.secondary)}</td></tr>`).join('\n')}
+</table>
+<p class="muted">Route analysis from the model geometry, not a rule result. ${escape.assumptions.map(esc).join(' ')}</p>`;
+}
+
+export function toHTML({ title, scenario, results, model, rules = [], score = null, edits = [], generated = new Date(), register = null, escape = null }) {
+  const rows = reportRows(results, model, rules, { register });
+  const openCount = register ? rows.filter((r) => r.disposition === DISPOSITION_LABEL.open).length : 0;
   const s = results.summary;
   const verified = rules.filter((r) => r.verified).length;
   const applied = new Set(rows.map((r) => r.rule));
@@ -78,11 +108,13 @@ ${usedRules.length} rules applied, ${verified}/${rules.length} rule values verif
 ${edits.length ? `<p><b>${edits.length} value(s) edited in this session:</b> ${edits.map((x) => `${esc(x.id)}.${esc(x.key)} ${esc(x.before)} → ${esc(x.after)}`).join('; ')}</p>` : ''}
 ${drafts.length ? `<p><b>Draft rules, not run (no official value):</b> ${drafts.map((d) => `${esc(d.id)}: ${esc(d.reason)}`).join(' ')}</p>` : ''}
 <h2>Findings (${rows.length})</h2>
-<table><tr><th>Status</th><th>Element</th><th>Group / deck</th><th>Rule</th><th>Source / clause</th><th>Measured</th><th>Required</th><th>Explanation</th><th>Input provenance (model text = mm)</th><th>Basis</th><th>Verified</th><th>Review</th></tr>
+${register ? `<p>Findings register: <b>${openCount}</b> of ${rows.length} findings open, ${rows.length - openCount} with a disposition. A disposition records how a finding is handled; it never changes the checker status.</p>` : ''}
+<table><tr><th>Status</th><th>Element</th><th>Group / deck</th><th>Rule</th><th>Source / clause</th><th>Measured</th><th>Required</th><th>Explanation</th><th>Input provenance (model text = mm)</th><th>Basis</th><th>Verified</th><th>Review</th>${register ? '<th>Disposition</th><th>Responsible</th><th>Justification / note</th>' : ''}</tr>
 ${rows.map((r) => `<tr><td class="${r.status === 'Non-compliant' ? 'nc' : 'ni'}">${esc(r.status)}</td><td><b>${esc(r.element)}</b>${r.objectid !== '' ? `<br><span class="muted">dbId ${esc(r.objectid)}</span>` : ''}<br>${esc(r.name)}</td>
 <td>${esc(r.group)}</td><td>${esc(r.rule)}</td><td>${esc(r.source)}<br><span class="muted">${esc(r.clause)}</span></td><td>${esc(r.measured)}</td><td>${esc(r.required)}</td>
-<td>${esc(r.explanation)}</td><td class="muted">${esc(r.provenance)}</td><td>${esc(r.basis)}</td><td>${r.verified}</td><td>${esc(r.review)}</td></tr>`).join('\n')}
+<td>${esc(r.explanation)}</td><td class="muted">${esc(r.provenance)}</td><td>${esc(r.basis)}</td><td>${r.verified}</td><td>${esc(r.review)}</td>${register ? `<td>${esc(r.disposition)}</td><td>${esc(r.responsible)}</td><td>${esc(r.note)}</td>` : ''}</tr>`).join('\n')}
 </table>
+${escapeSection(escape, model)}
 ${traceSection(results, rules)}
 <h2>Rules applied</h2>
 <table><tr><th>Rule</th><th>Source</th><th>Clause</th><th>Text (${'verbatim or paraphrase'})</th><th>Basis</th><th>Verified</th><th>Review</th></tr>

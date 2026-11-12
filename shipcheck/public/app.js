@@ -5,7 +5,9 @@ import { scoreResults, scoreLine, badgeText } from './src/score.mjs';
 import { partsToModel } from './src/parts-model.mjs';
 import { reportRows, toCSV, toHTML } from './src/report.mjs';
 import { traceMatrix, traceCSV, cellLabel } from './src/trace.mjs';
-import { createViewer } from './viewer3d.js';
+import { createViewer, STATUS_HEX } from './viewer3d.js';
+import { analyzeEscape, ESCAPE_LABEL } from './src/escape.mjs';
+import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, registerSummary, withDisposition, registerCSV } from './src/dispositions.mjs';
 import { createFallbackViewer } from './viewer-fallback.js';
 import { createLocalViewer } from './viewer-stream.js';
 import { loadOfficialText } from './regulation-text.js';
@@ -79,6 +81,8 @@ const S = {
   selected: null, edits: new Map(),
   filter: { status: new Set(['non_compliant', 'not_enough_info', 'compliant', 'null']), family: '', deck: '' },
   lastCheckMs: 0, demo: null, ruleView: null,
+  escape: null, escapeOn: false, blocked: new Set(),
+  register: {},
 };
 const allRules = () => S.coreRules;
 const ruleById = (id) => allRules().find((r) => r.id === id);
@@ -130,6 +134,7 @@ function useViewer(sc) {
   if (!stayLocal) $('#localView').hidden = true;
   $('#fallbackView').hidden = true;
   $('#planBtn').hidden = want !== 'three';
+  $('#viewTools').hidden = want !== 'three';
   // The real model uses its deck cut. SWBS groups are not decks, and it has no exploded-deck mode.
   $('#deck').disabled = want !== 'three';
   const deckControl = $('#deck').closest('label');
@@ -206,6 +211,7 @@ async function init() {
 // in the browser. If the parts file cannot be loaded, the precomputed results are shown read-only.
 async function fetchModel(sc, { signal } = {}) {
   const options = { signal };
+  if (sc.modelData) return { model: structuredClone(sc.modelData) }; // opened from a file
   if (sc.kind !== 'parts') return { model: await fetchCatalog(sc.model, options) };
   try {
     const [parts, meta] = await Promise.all([fetchCatalog(sc.model, options), sc.meta ? fetchCatalog(sc.meta, options) : {}]);
@@ -267,6 +273,8 @@ async function loadScenario(id) {
     S.norm = normalizeModel(S.model);
     S.expected = expected;
     S.edits.clear();
+    S.register = loadRegister(sc.id);
+    closeRegister();
     S.selected = null;
     S.ruleView = null;
     traceState = { findingsOnly: null, limit: TRACE_PAGE };
@@ -278,10 +286,13 @@ async function loadScenario(id) {
     S.baseline = precomputed ? precomputed.score : expected ? scoreResults(checkModel(S.pristine, S.coreRules), expected) : null;
     if (S.baseline && !S.baseline.line) S.baseline.line = scoreLine(S.baseline);
     runCheck();
+    S.blocked = new Set();
+    computeEscape();
     scenarioPending = false;
     useViewer(sc);
     viewer.build(S.norm, S.results);
     viewer.setMode('all');
+    syncEscapeView();
     const decks = S.norm.decks;
     $('#deck').innerHTML = `<option value="all">All decks</option>` +
       (decks.length > 1 ? `<option value="exploded">Exploded</option>` : '') +
@@ -317,11 +328,16 @@ function runCheck() {
 
 function recheck(ids) {
   runCheck();
+  computeEscape();
+  renderEscape();
   viewer.update(S.results, ids);
+  syncEscapeView();
   renderSummary();
   renderRules();
   renderEdits();
   renderList();
+  renderRegisterButton();
+  if (!$('#registerPanel').hidden) openRegister();
   if (S.ruleView) { renderRuleView(S.ruleView); return; }
   if (S.selected) {
     renderResults(S.selected);
@@ -338,8 +354,10 @@ function renderAll() {
   renderSummary();
   renderRules();
   renderEdits();
+  renderEscape();
   renderFilters();
   renderList();
+  renderRegisterButton();
 }
 
 function renderShip() {
@@ -368,7 +386,9 @@ function renderShip() {
       ${sh.propulsion ? row('Propulsion', 'propulsion', (v) => v.value) : ''}
     </table>
     ${S.model.provenance_note ? `<div class="note">${esc(S.model.provenance_note)}</div>` : ''}
-    ${S.model.scope_note ? `<div class="note scope">${esc(S.model.scope_note)}</div>` : ''}`;
+    ${S.model.scope_note ? `<div class="note scope">${esc(S.model.scope_note)}</div>` : ''}
+    ${S.model.kind === 'parts' ? '' : '<button class="tiny" id="dlModel" style="margin-top:6px" title="The model as a ship/1 JSON file: the format Open… reads">Download model (JSON)</button>'}`;
+  if ($('#dlModel')) $('#dlModel').onclick = () => download(`${S.sc.id}.json`, JSON.stringify(S.model, null, 1), 'application/json');
 }
 
 // Draft rules are only mentioned where the model has elements they would apply to.
@@ -387,9 +407,9 @@ function renderScore() {
   }
   const verified = S.coreRules.filter((r) => r.verified).length;
   $('#score').innerHTML = (b ? `
-    <div class="scorebox ${b.pass ? 'pass' : 'fail'}" id="scorebox" title="Computed on the unedited design using the active database catalog (also run by npm test)">
+    <div class="scorebox ${b.pass ? 'pass' : 'fail'}" id="scorebox" title="Computed on the unedited design against the hand-checked expected findings (also run by npm test)">
       <b>${b.pass ? '✓' : '✗'} ${esc(scoreLine(b))}</b>
-      <span class="muted">Ground truth for the unedited design (database catalog)</span>
+      <span class="muted">Ground truth for the unedited design</span>
     </div>` : '') +
     `<div class="muted" style="margin-top:6px">${allRules().length} rules · ${verified}/${S.coreRules.length} values verified against official text <a href="#" id="verifyLink" title="See VERIFY.md">(why?)</a></div>` +
     (relevantDrafts().length ? `<div class="drafts note">${relevantDrafts().map((d) =>
@@ -480,7 +500,10 @@ function select(id, { fly = true } = {}) {
     viewer.setMode(el.deck);
   }
   if (S.ruleView) { S.ruleView = null; viewer.clearHighlight?.(); }
-  viewer.select(id, { fly, label: labelFor(id), status: S.results.elements[id]?.worst });
+  const route = S.escapeOn && S.escape?.origins[id]?.primary;
+  viewer.select(id, { fly: fly && !route, label: labelFor(id), status: S.results.elements[id]?.worst });
+  if (S.escape) syncEscapeView();
+  if (route && fly) viewer.frameRoute?.(route.points);
   document.querySelectorAll('#list .item').forEach((n) => n.classList.toggle('sel', n.dataset.id === id));
   document.querySelector(`#list .item[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'nearest' });
   renderDetail(id);
@@ -496,10 +519,12 @@ function renderDetail(id) {
     ${S.sc.viewer === 'local' ? '<button id="backOverview" class="tiny" style="margin-top:6px">← Back to the whole ship</button>' : ''}
     ${el.note ? `<div class="note"><b>Model note:</b> ${esc(el.note)}</div>` : ''}
     <div id="dComponent"></div>
+    <div id="dEscape"></div>
     <div id="dResults"></div>
     <h2>Design data (what-if editing)</h2>
     <div id="dEditor"></div>`;
   renderComponent(id);
+  renderEscapeDetail(id);
   renderResults(id);
   renderEditor(id);
   if ($('#backOverview')) $('#backOverview').onclick = () => {
@@ -508,6 +533,149 @@ function renderDetail(id) {
     renderList();
     $('#detail').innerHTML = '<p class="muted">Click a part, a finding or a rule.</p>';
   };
+}
+
+// ---------- escape plan (route analysis from the model geometry; never a rule result) ----------
+
+const ESCAPE_CLASS = { two_routes: 'compliant', direct: 'compliant', single_route: 'not_enough_info', no_route: 'non_compliant' };
+const ESCAPE_ORDER = { no_route: 0, single_route: 1, two_routes: 2, direct: 3 };
+const metres = (mm) => `${(mm / 1000).toFixed(1)} m`;
+const escapeRooms = () => Object.values(S.escape?.origins ?? {}).filter((o) => o.room);
+
+function computeEscape() {
+  S.escape = null;
+  if (S.model.kind === 'parts') return;
+  try {
+    const analysis = analyzeEscape(S.norm, { blocked: S.blocked });
+    if (analysis.available) S.escape = analysis;
+  } catch (e) { console.warn('Escape analysis failed:', e); }
+}
+
+function syncEscapeView() {
+  const three = viewer === views.three;
+  $('#escapeBtn').hidden = !S.escape || !three;
+  $('#escapeBtn').classList.toggle('on', S.escapeOn && !!S.escape);
+  $('#escapeBox').hidden = !(S.escapeOn && S.escape);
+  if (!viewer.setEscape) return;
+  if (!S.escapeOn || !S.escape) { viewer.setEscape(S.blocked.size ? { blocked: [...S.blocked] } : null); return; }
+  const rooms = escapeRooms();
+  const selected = S.escape.origins[S.selected];
+  const routes = [];
+  if (selected?.primary) routes.push({ kind: 'primary', points: selected.primary.points });
+  if (selected?.secondary) routes.push({ kind: 'secondary', points: selected.secondary.points });
+  viewer.setEscape({
+    plan: true,
+    tint: Object.fromEntries(rooms.map((o) => [o.id, STATUS_HEX[ESCAPE_CLASS[o.status]]])),
+    blocked: [...S.blocked],
+    network: routes.length ? [] : rooms.filter((o) => o.primary).map((o) => o.primary.points),
+    routes,
+  });
+}
+
+function setEscapeMode(on) {
+  S.escapeOn = on && !!S.escape;
+  renderEscape();
+  syncEscapeView();
+  if (S.selected) renderEscapeDetail(S.selected);
+  if (S.escapeOn && !S.selected) showOverview();
+}
+
+function toggleBlock(id) {
+  if (S.blocked.has(id)) S.blocked.delete(id); else S.blocked.add(id);
+  S.escapeOn = true;
+  computeEscape();
+  renderEscape();
+  syncEscapeView();
+  if (S.selected) renderEscapeDetail(S.selected);
+}
+
+function renderEscape() {
+  const box = $('#escapeBox');
+  if (!S.escape) { box.innerHTML = ''; box.hidden = true; return; }
+  const a = S.escape, s = a.summary;
+  const rooms = escapeRooms().sort((x, y) => ESCAPE_ORDER[x.status] - ESCAPE_ORDER[y.status] || (y.primary?.length_mm ?? 0) - (x.primary?.length_mm ?? 0));
+  const longest = rooms.filter((o) => o.primary).sort((x, y) => y.primary.length_mm - x.primary.length_mm)[0];
+  box.innerHTML = `
+    <h2>Escape plan</h2>
+    <div class="pills">
+      <div class="pill st-non_compliant">${s.no_route}<small>no route</small></div>
+      <div class="pill st-not_enough_info">${s.single_route}<small>single route</small></div>
+      <div class="pill st-compliant">${s.two_routes + s.direct}<small>two routes</small></div>
+    </div>
+    <div class="muted">Walking routes from every room to ${a.musters.map((m) => `<a href="#" class="via" data-id="${esc(m)}">${esc(elById(m)?.name ?? m)}</a>`).join(', ')}.
+      ${longest ? `Longest: <b>${metres(longest.primary.length_mm)}</b> from ${esc(longest.id)}.` : ''}
+      Derived from the model geometry; rule results come only from the checker.</div>
+    ${a.blocked.length ? `<div class="note"><b>What-if, blocked:</b> ${a.blocked.map((id) => `<code>${esc(id)}</code>`).join(' ')} <button class="tiny" id="escReset">clear</button></div>` : ''}
+    ${a.disconnected.length ? `<div class="note"><b>Not connected:</b> ${a.disconnected.map((d) => `<a href="#" class="via" data-id="${esc(d.id)}">${esc(d.id)}</a>: ${esc(d.reason)}`).join('; ')}.</div>` : ''}
+    <div class="esc-legend"><span><i class="swatch primary"></i>Shortest route</span><span><i class="swatch secondary"></i>Independent alternative</span></div>
+    <div id="escList">${rooms.map((o) => {
+      const el = elById(o.id);
+      return `<div class="item esc ${S.selected === o.id ? 'sel' : ''}" data-id="${esc(o.id)}" title="${esc(ESCAPE_LABEL[o.status])}">
+        <span class="dot st-${ESCAPE_CLASS[o.status]}"></span>
+        <span><b>${esc(o.id)}</b> ${esc(el?.name ?? '')} <span class="deckTag">· ${esc(el?.deck ?? '')}</span><span class="len">${o.primary ? metres(o.primary.length_mm) : '–'}</span></span>
+      </div>`;
+    }).join('')}</div>
+    <div style="display:flex;gap:6px;margin-top:6px"><button id="escCsv">Export routes (CSV)</button></div>
+    <details class="assume"><summary>How the routes are derived</summary><ul>${a.assumptions.map((t) => `<li>${esc(t)}</li>`).join('')}</ul></details>`;
+  box.querySelectorAll('.item.esc').forEach((n) => (n.onclick = () => select(n.dataset.id)));
+  box.querySelectorAll('a.via').forEach((n) => (n.onclick = (e) => { e.preventDefault(); select(n.dataset.id); }));
+  if ($('#escReset')) $('#escReset').onclick = () => { S.blocked.clear(); toggleBlockRefresh(); };
+  $('#escCsv').onclick = exportEscapeCSV;
+}
+
+function toggleBlockRefresh() {
+  computeEscape();
+  renderEscape();
+  syncEscapeView();
+  if (S.selected) renderEscapeDetail(S.selected);
+}
+
+function routeHTML(title, r, kind) {
+  const decks = [...new Set(r.points.map((p) => p.deck))];
+  const bad = r.via.filter((v) => S.results.elements[v]?.worst === 'non_compliant');
+  return `<div class="res route ${kind}">
+    <div class="head"><span>${title}</span><span>${metres(r.length_mm)}</span></div>
+    <div class="expl">${r.via.map((v) => `<a href="#" class="via${bad.includes(v) ? ' bad' : ''}" data-id="${esc(v)}" title="${esc(elById(v)?.name ?? '')}">${esc(v)}</a>`).join(' → ')}</div>
+    <div class="muted">${decks.length} deck${decks.length > 1 ? 's' : ''} · ${r.verticals.length} stair / ladder · ${r.doors.length} door${r.doors.length === 1 ? '' : 's'}${r.narrowest ? ` · narrowest stated clear width ${r.narrowest.width_mm} mm at ${esc(r.narrowest.id)}` : ''}</div>
+    ${bad.length ? `<div class="check-bad">Passes ${bad.map(esc).join(', ')}: non-compliant in the rule check.</div>` : ''}
+  </div>`;
+}
+
+function renderEscapeDetail(id) {
+  const box = $('#dEscape');
+  if (!box) return;
+  const o = S.escape?.origins[id], el = elById(id), isBlocked = S.blocked.has(id);
+  if (!S.escape || (!o && !isBlocked)) { box.innerHTML = ''; return; }
+  const canBlock = isBlocked || (o && !o.room && !S.escape.musters.includes(id));
+  const broken = S.escape.disconnected.filter((d) => d.id === id);
+  let html = '<h2>Escape routes</h2>';
+  if (isBlocked) html += '<div class="note"><b>Blocked (what-if).</b> Routes are searched without this element.</div>';
+  if (o) {
+    html += `<span class="badge st-${ESCAPE_CLASS[o.status]}">${esc(ESCAPE_LABEL[o.status])}</span>`;
+    if (o.primary) html += routeHTML('Shortest route to the muster station', o.primary, 'primary');
+    if (o.secondary) html += routeHTML('Independent alternative', o.secondary, 'secondary');
+    if (o.status === 'single_route') html += `<div class="na">Every route found passes ${o.shared_gates.map((g) => `<code>${esc(g)}</code>`).join(', ')}. No route avoids all of them.</div>`;
+    if (o.status === 'no_route') html += '<div class="na">The model contains no connected way from here to a muster station.</div>';
+  }
+  for (const d of broken) html += `<div class="note"><b>Not connected:</b> ${esc(d.reason)}.</div>`;
+  if (canBlock) html += `<button id="blockBtn" class="tiny" style="margin-top:6px" title="What-if: fire or obstruction. The model is not changed.">${isBlocked ? 'Unblock' : `Block this ${esc(el.type.replace('_', ' '))} (what-if)`}</button>`;
+  if (!S.escapeOn) html += ' <button id="showEscape" class="tiny" style="margin-top:6px">Show in the model</button>';
+  box.innerHTML = html;
+  box.querySelectorAll('a.via').forEach((n) => (n.onclick = (e) => { e.preventDefault(); select(n.dataset.id); }));
+  if ($('#blockBtn')) $('#blockBtn').onclick = () => toggleBlock(id);
+  if ($('#showEscape')) $('#showEscape').onclick = () => { setEscapeMode(true); select(id); };
+}
+
+function exportEscapeCSV() {
+  const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const rows = [['room', 'name', 'deck', 'status', 'shortest_m', 'shortest_via', 'narrowest_clear_width_mm', 'narrowest_at', 'alternative_m', 'alternative_via']];
+  for (const o of escapeRooms()) {
+    const el = elById(o.id);
+    rows.push([o.id, el?.name, el?.deck, ESCAPE_LABEL[o.status],
+      o.primary ? (o.primary.length_mm / 1000).toFixed(1) : '', o.primary?.via.join(' > '), o.primary?.narrowest?.width_mm, o.primary?.narrowest?.id,
+      o.secondary ? (o.secondary.length_mm / 1000).toFixed(1) : '', o.secondary?.via.join(' > ')]);
+  }
+  download(`${S.sc.id}-escape-routes.csv`, rows.map((r) => r.map(q).join(',')).join('\n'), 'text/csv');
 }
 
 // ---------- rest part (full model, not checked by any rule) ----------
@@ -692,6 +860,7 @@ function renderResults(id) {
         ${r.basis !== 'explicit' ? `<span class="tag grey" title="${esc(ruleById(r.rule_id)?.basis_note || '')}">basis: ${esc(r.basis)}</span>` : ''}
         ${r.reference_url ? `<a class="tag grey" href="${esc(r.reference_url)}" target="_blank" rel="noopener">official source ↗</a>` : ''}
       </div>
+      ${r.status !== 'compliant' ? dispositionHTML(id, r) : ''}
       </div>`).join('') || '<p class="muted">No rule in the current rule set applies to this element.</p>';
 
   // "Also required": related rules not applied to this element, and where they are checked in the model.
@@ -719,6 +888,7 @@ function renderResults(id) {
     ${na ? `<h2>Considered, not applicable (${e.not_applicable.length})</h2>${na}` : ''}`;
   document.querySelectorAll('#dResults .goto').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); select(a.dataset.id); }));
   document.querySelectorAll('#dResults .ruleLink').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); showRule(a.dataset.rule); }));
+  wireDispositions($('#dResults'));
 }
 
 function lengthParams() {
@@ -814,6 +984,7 @@ const TRACE_PAGE = 300;
 let traceState = { findingsOnly: null, limit: TRACE_PAGE };
 
 function openTrace() {
+  closeRegister();
   const panel = $('#tracePanel');
   if (traceState.findingsOnly == null) traceState.findingsOnly = S.norm.elements.length > 2000;
   const m = traceMatrix(S.results, allRules(), { findingsOnly: traceState.findingsOnly });
@@ -846,15 +1017,132 @@ function openTrace() {
 }
 function closeTrace() { $('#tracePanel').hidden = true; $('#traceBtn').classList.remove('on'); }
 
+// ---------- findings register: how each finding is handled (never changes a rule result) ----------
+
+const registerKey = (scenarioId) => `complee.register.${scenarioId}`;
+function loadRegister(scenarioId) {
+  try { const v = JSON.parse(localStorage.getItem(registerKey(scenarioId)) || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch { return {}; }
+}
+function saveRegister() {
+  try { localStorage.setItem(registerKey(S.sc.id), JSON.stringify(S.register)); } catch (e) { console.warn('The findings register could not be saved in this browser:', e.message); }
+}
+const currentFinding = (key) => findingsOf(S.results).find((f) => findingKey(f) === key);
+
+function dispositionControls(row) {
+  return `<select class="dispSel" data-key="${esc(row.key)}" title="How this finding is handled">${DISPOSITIONS.map((d) => `<option value="${d.id}" ${row.disposition === d.id ? 'selected' : ''}>${esc(d.label)}</option>`).join('')}</select>
+    <input class="dispWho" data-key="${esc(row.key)}" value="${esc(row.responsible)}" placeholder="Responsible" maxlength="80">
+    <input class="dispNote${row.missing_note ? ' missing' : ''}" data-key="${esc(row.key)}" value="${esc(row.note)}" placeholder="${needsNote(row.disposition) ? 'Justification (required)' : 'Note'}" maxlength="600">`;
+}
+
+function dispositionHTML(elementId, r) {
+  const row = registerRows(S.results, S.register).find((x) => x.key === `${elementId}|${r.rule_id}`);
+  if (!row) return '';
+  return `<div class="disp">${dispositionControls(row)}
+    ${row.stale ? '<div class="disp-warn">The value or result changed after this disposition was written. Review it again.</div>' : ''}
+    ${row.missing_note ? '<div class="disp-warn">This disposition needs a written justification.</div>' : ''}</div>`;
+}
+
+function wireDispositions(root) {
+  const commit = (n, patch) => {
+    const finding = currentFinding(n.dataset.key);
+    if (!finding) return;
+    S.register = withDisposition(S.register, finding, patch);
+    saveRegister();
+    renderRegisterButton();
+    // Redraw both places a disposition is shown; focus is not lost because this runs on change, not on input.
+    if (!$('#registerPanel').hidden) openRegister();
+    if (S.selected && $('#dStatus')) renderResults(S.selected);
+  };
+  root.querySelectorAll('.dispSel').forEach((n) => (n.onchange = () => commit(n, { disposition: n.value })));
+  root.querySelectorAll('.dispWho').forEach((n) => (n.onchange = () => commit(n, { responsible: n.value.trim() })));
+  root.querySelectorAll('.dispNote').forEach((n) => (n.onchange = () => commit(n, { note: n.value.trim() })));
+}
+
+function renderRegisterButton() {
+  const s = registerSummary(registerRows(S.results, S.register));
+  const attention = s.open + s.stale + s.missing_note;
+  $('#registerBtn').textContent = `Findings register${s.total ? ` (${s.open} open)` : ''}`;
+  $('#registerBtn').classList.toggle('attention', attention > 0 && s.total > 0);
+}
+
+let registerOpenOnly = false;
+function openRegister() {
+  closeTrace();
+  const panel = $('#registerPanel');
+  const all = registerRows(S.results, S.register), s = registerSummary(all);
+  const current = all.filter((r) => !r.resolved && (!registerOpenOnly || r.disposition === 'open' || r.stale || r.missing_note));
+  const resolved = all.filter((r) => r.resolved);
+  const row = (r) => `<tr class="${r.stale || r.missing_note ? 'warn' : ''}">
+      <td><span class="badge st-${r.status}">${LABEL[r.status]}</span></td>
+      <td class="part" data-id="${esc(r.element)}" data-rule="${esc(r.rule_id)}"><b>${esc(r.element)}</b> ${esc(r.name)}</td>
+      <td>${esc(r.rule_id)}</td><td>${esc(r.measured)}</td><td>${esc(r.required)}</td>
+      <td class="dispCell">${dispositionControls(r)}${r.stale ? '<div class="disp-warn">Value changed since the disposition: review again.</div>' : ''}${r.missing_note ? '<div class="disp-warn">Justification required.</div>' : ''}</td>
+      <td class="muted">${r.updated ? esc(new Date(r.updated).toLocaleDateString('en-GB')) : ''}</td></tr>`;
+  panel.innerHTML = `<div class="trace-head">
+      <b>Findings register</b>
+      <span class="muted">${s.total} finding${s.total === 1 ? '' : 's'} · ${s.open} open · ${s.total - s.open} with a disposition${s.stale ? ` · <b class="check-bad">${s.stale} to review again</b>` : ''}${s.missing_note ? ` · <b class="check-bad">${s.missing_note} without justification</b>` : ''}${S.edits.size ? ' · includes what-if values' : ''}</span>
+      <label><input type="checkbox" id="regOpen" ${registerOpenOnly ? 'checked' : ''}> needs attention only</label>
+      <span class="grow"></span>
+      <button id="regCsv">Download CSV</button><button id="regClose">Close</button>
+    </div>
+    <div class="trace-wrap">
+    <p class="muted" style="margin:8px 0">A disposition records how a finding is handled and by whom. It never changes the result of the rule check. Saved in this browser for this model; export the CSV or the report to share it.</p>
+    ${current.length ? `<table class="register"><thead><tr><th>Check result</th><th>Element</th><th>Rule</th><th>Measured</th><th>Required</th><th>Disposition · responsible · justification</th><th>Updated</th></tr></thead><tbody>${current.map(row).join('')}</tbody></table>`
+      : `<p class="muted">${s.total ? 'No finding needs attention.' : 'The rule check reports no findings for this model.'}</p>`}
+    ${resolved.length ? `<h2>No longer reported by the check (${resolved.length})</h2>
+      <table class="register"><tbody>${resolved.map((r) => `<tr><td><b>${esc(r.element)}</b> ${esc(r.name)}</td><td>${esc(r.rule_id)}</td><td>was: ${esc(r.measured)}</td><td>${esc(DISPOSITION_LABEL[r.disposition])}</td><td>${esc(r.responsible)}</td><td>${esc(r.note)}</td><td><button class="tiny regDrop" data-key="${esc(r.key)}">remove</button></td></tr>`).join('')}</tbody></table>` : ''}
+    </div>`;
+  panel.hidden = false;
+  $('#registerBtn').classList.add('on');
+  $('#regClose').onclick = closeRegister;
+  $('#regOpen').onchange = (e) => { registerOpenOnly = e.target.checked; openRegister(); };
+  $('#regCsv').onclick = () => download(`findings-register-${S.sc.id}.csv`, registerCSV(registerRows(S.results, S.register)), 'text/csv');
+  panel.querySelectorAll('.regDrop').forEach((b) => (b.onclick = () => { const next = { ...S.register }; delete next[b.dataset.key]; S.register = next; saveRegister(); openRegister(); }));
+  panel.querySelectorAll('td.part').forEach((n) => (n.onclick = () => {
+    closeRegister();
+    select(n.dataset.id);
+    const card = document.querySelector(`#dResults .res[data-rule="${CSS.escape(n.dataset.rule)}"]`);
+    if (card) { card.scrollIntoView({ block: 'center', behavior: 'smooth' }); pulse(card); }
+  }));
+  wireDispositions(panel);
+}
+function closeRegister() { $('#registerPanel').hidden = true; $('#registerBtn').classList.remove('on'); }
+
+// ---------- open a model from a file (ship/1 JSON, the format "Export edited model" writes) ----------
+
+let fileCounter = 0;
+async function openModelFile(file) {
+  try {
+    if (file.size > 30_000_000) throw new Error('The file is larger than 30 MB.');
+    let json;
+    try { json = JSON.parse(await file.text()); } catch { throw new Error('The file is not valid JSON.'); }
+    if (!json || typeof json !== 'object' || !Array.isArray(json.elements)) throw new Error('A ship model needs an "elements" list (ship/1 format; "Download model (JSON)" in the left panel gives an example).');
+    if (!Array.isArray(json.decks) && !json.deck) throw new Error('A ship model needs "decks" (or a single "deck").');
+    const norm = normalizeModel(structuredClone(json)); // throws on an unsupported unit
+    const ids = new Set();
+    for (const e of norm.elements) {
+      if (!e.id || !e.type) throw new Error('Every element needs an "id" and a "type".');
+      if (ids.has(e.id)) throw new Error(`Element id "${e.id}" is used twice.`);
+      ids.add(e.id);
+    }
+    const id = `file-${++fileCounter}-${file.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40)}`;
+    S.scenarios.push({ id, name: `File: ${file.name}`, viewer: 'three', modelData: json });
+    $('#scenario').insertAdjacentHTML('beforeend', `<option value="${esc(id)}">${esc(`File: ${file.name}`)}</option>`);
+    await loadScenario(id);
+  } catch (e) {
+    $('#detail').innerHTML = `<p class="check-bad"><b>Could not open ${esc(file.name)}.</b> ${esc(e.message)}</p>`;
+  }
+}
+
 // ---------- report export (shared with the CLI: src/report.mjs) ----------
 
 function exportCSV() {
-  download(`findings-${S.sc.id}.csv`, toCSV(reportRows(S.results, S.model, allRules())), 'text/csv');
+  download(`findings-${S.sc.id}.csv`, toCSV(reportRows(S.results, S.model, allRules(), { register: S.register })), 'text/csv');
 }
 
 function exportReport() {
   const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(),
-    score: S.baseline, edits: [...S.edits.values()] });
+    score: S.baseline, edits: [...S.edits.values()], register: S.register, escape: S.escape });
   const w = window.open('', '_blank');
   if (w) { w.document.write(html); w.document.close(); } else download(`report-${S.sc.id}.html`, html, 'text/html');
 }
@@ -1193,6 +1481,20 @@ $('#fullBtn').onclick = () => {
   $('#cutSel').value = ''; // the viewer drops the deck cut on this switch; keep the selector in step
 };
 $('#planBtn').onclick = () => { viewer.setPlan(!viewer.plan); $('#planBtn').classList.toggle('on', viewer.plan); };
+$('#escapeBtn').onclick = () => setEscapeMode(!S.escapeOn);
+$('#registerBtn').onclick = () => ($('#registerPanel').hidden ? openRegister() : closeRegister());
+$('#manageLink').onclick = (e) => { e.preventDefault(); openRegister(); };
+$('#openBtn').onclick = () => $('#openFile').click();
+$('#openFile').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) openModelFile(f); };
+$('#viewTools').onclick = (e) => {
+  const b = e.target.closest('button');
+  if (!b || viewer !== views.three) return;
+  if (b.dataset.view) { $('#planBtn').classList.remove('on'); viewer.setView(b.dataset.view); }
+  else if (b.dataset.act === 'fit') { if (S.selected) viewer.flyToElement(S.selected, 600); else viewer.overview(600); }
+  else if (b.dataset.act === 'all') { S.selected = null; viewer.select(null); syncEscapeView(); renderList(); viewer.overview(600); }
+  else if (b.dataset.act === 'labels') { viewer.setLabels(!viewer.labels); b.classList.toggle('on', viewer.labels); }
+  else if (b.dataset.act === 'shell') { viewer.setShell(!viewer.shell); b.classList.toggle('on', viewer.shell); }
+};
 
 window.__shipcheck = S; // for debugging in the console
 Object.defineProperty(window, '__shipcheckViewer', { get: () => viewer }); // read-only: the active viewer (tests, console)
@@ -1237,6 +1539,8 @@ async function showWhenReady() {
 
 init().then(async () => {
   await showWhenReady();
+  if (new URLSearchParams(location.search).has('escape')) setEscapeMode(true);
+  if (location.hash === '#manage') openRegister();
   if (new URLSearchParams(location.search).has('demo')) runDemo();
 }).catch((e) => {
   loadingScreen.fail(e.message);

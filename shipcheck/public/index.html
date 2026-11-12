@@ -29,19 +29,23 @@
 </div>
 <header class="top">
   <div class="brand"><b>Complee</b><span>class &amp; regulatory compliance</span></div>
-  <nav class="workflow-steps" aria-label="Review workflow"><a href="evidence.html"><span>1</span> Add evidence</a><i></i><b><span>2</span> Review design</b><i></i><a href="index.html?scenario=rcrv-3d#manage"><span>3</span> Manage findings</a></nav>
-  <label>Scenario <select id="scenario"></select></label>
+  <nav class="workflow-steps" aria-label="Review workflow"><a href="evidence.html"><span>1</span> Add evidence</a><i></i><b><span>2</span> Review design</b><i></i><a href="index.html#manage" id="manageLink"><span>3</span> Manage findings</a></nav>
+  <span class="top-break"></span>
+  <label>Model <select id="scenario"></select></label>
+  <button id="openBtn" title="Open a ship model file (ship/1 JSON)">Open…</button><input id="openFile" type="file" accept=".json,application/json" hidden>
   <label>Decks <select id="deck"></select></label>
   <button id="planBtn" title="Top-down plan view">Plan view</button>
+  <button id="escapeBtn" hidden title="Escape routes from every room to the muster station">Escape plan</button>
   <button id="simpleBtn" hidden title="Show only the shell, the decks and the checked parts">Simple view</button>
   <button id="fullBtn" hidden title="Show the complete exterior overview and request nearby full-detail parts as you zoom">Full model</button>
   <select id="cutSel" hidden title="Cut above a deck and look at it in plan view"><option value="">No deck cut</option></select>
   <span id="accBadge" class="accbadge" hidden title="Ground truth of the unedited design: the same files and scoring as npm test"></span>
   <span class="grow"></span>
-  <button id="demoBtn" class="primary" title="Scripted run-through (Esc to stop)">&#9654; Demo run-through</button>
+  <button id="registerBtn" title="How each finding is handled: disposition, responsible, justification">Findings register</button>
   <button id="traceBtn" title="Parts × rules table; click a cell to jump to the part">Traceability</button>
-  <button id="reportBtn" title="Printable findings report">Report</button>
+  <button id="reportBtn" class="primary" title="Printable report: findings, register, escape routes, traceability, rules">Report</button>
   <button id="csvBtn" title="Download findings as CSV">CSV</button>
+  <button id="demoBtn" title="Scripted run-through (Esc to stop)">&#9654; Demo run-through</button>
 </header>
 <main>
   <aside id="side">
@@ -49,6 +53,7 @@
     <section id="score"></section>
     <section id="summary"></section>
     <section id="edits"></section>
+    <section id="escapeBox" hidden></section>
     <section id="rulesBox"></section>
     <section>
       <h2>Findings</h2>
@@ -68,6 +73,20 @@
     <div id="localView" class="viewpane" hidden></div>
     <div id="fallbackView" class="viewpane" hidden></div>
     <div id="tracePanel" class="viewpane" hidden></div>
+    <div id="registerPanel" class="viewpane" hidden></div>
+    <div id="viewTools" class="view-tools" hidden>
+      <button data-view="iso" title="Perspective from the port quarter">3D</button>
+      <button data-view="top" title="Look straight down">Top</button>
+      <button data-view="side" title="Side view (profile)">Side</button>
+      <button data-view="bow" title="From the bow">Bow</button>
+      <i></i>
+      <button data-act="fit" title="Fit the selection (or the whole ship) to the window. Double-click an element does the same.">Fit</button>
+      <button data-act="all" title="Clear the selection and show the whole ship">Whole ship</button>
+      <i></i>
+      <button data-act="labels" class="on" title="Room names">Labels</button>
+      <button data-act="shell" class="on" title="Hull and deckhouse shell">Shell</button>
+    </div>
+    <div id="viewHint" class="view-hint">Drag: rotate · right-drag: move · wheel: zoom to the pointer · double-click: focus</div>
     <div id="caption" hidden></div>
   </section>
   <aside id="detail"><p class="muted">Click an element in the model or in the list to see every rule that applies, why it passes or fails, and where each value comes from.</p></aside>

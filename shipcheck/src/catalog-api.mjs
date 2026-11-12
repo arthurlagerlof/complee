@@ -4,8 +4,26 @@ export function catalogApiBase() {
   return String(globalThis.process?.env?.SHIPCHECK_DATA_API_URL || DEFAULT_API_BASE).replace(/\/+$/, '');
 }
 
-export async function fetchCatalog(sourceKey, { fetchImpl = fetch, signal } = {}) {
+// In Node without a configured database API, the bundled catalog (shipcheck/catalog/) is the source.
+async function bundled() {
+  if (!globalThis.process?.versions?.node || globalThis.process.env.SHIPCHECK_DATA_API_URL) return null;
+  const local = await import('./catalog-local.mjs');
+  return local.bundledCatalogEnabled() ? local : null;
+}
+
+/** Whether a catalog entry can be read at all (bundled mode: only what is in shipcheck/catalog/). */
+export async function catalogAvailable(sourceKey) {
+  const local = await bundled();
+  return local ? local.hasBundledCatalog(sourceKey) : true;
+}
+
+export async function fetchCatalog(sourceKey, { fetchImpl, signal } = {}) {
   if (!/^[a-z0-9-]+$/.test(sourceKey)) throw new Error('Invalid catalog source key.');
+  if (!fetchImpl) {
+    const local = await bundled();
+    if (local) return local.readBundledCatalog(sourceKey);
+    fetchImpl = fetch;
+  }
   const url = `${catalogApiBase()}/api/v1/shipcheck/catalog/${sourceKey}`;
   const response = await fetchImpl(url, { signal, cache: 'no-store' });
   if (!response.ok) {

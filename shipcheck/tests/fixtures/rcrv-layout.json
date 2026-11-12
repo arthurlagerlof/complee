@@ -980,7 +980,7 @@
     "x": 21500,
     "y": -2450,
     "lx": 3750,
-    "ly": 1850,
+    "ly": 1750,
     "h": 2500
    },
    "props": {
@@ -998,7 +998,7 @@
     "x": 25250,
     "y": -2450,
     "lx": 3750,
-    "ly": 1850,
+    "ly": 1750,
     "h": 2500
    },
    "props": {
@@ -1016,7 +1016,7 @@
     "x": 29000,
     "y": -3550,
     "lx": 1100,
-    "ly": 2950,
+    "ly": 2750,
     "h": 150
    },
    "props": {
@@ -1084,9 +1084,9 @@
    "deck": "01",
    "source": "estimated",
    "geom": {
-    "x": 30100,
+    "x": 21500,
     "y": -600,
-    "lx": 13900,
+    "lx": 22500,
     "ly": 1200,
     "h": 150
    },
@@ -1262,7 +1262,7 @@
    "id": "01-ESC1",
    "type": "ladder",
    "name": "Escape ladder, 01 level forward to main deck",
-   "deck": "01",
+   "deck": "MD",
    "source": "estimated",
    "geom": {
     "x": 46500,
@@ -1282,8 +1282,8 @@
    "deck": "01",
    "source": "estimated",
    "geom": {
-    "x": 21500,
-    "y": 5000,
+    "x": 21900,
+    "y": 4400,
     "lx": 2000,
     "ly": 1000,
     "h": 2700
@@ -1595,6 +1595,204 @@
    "props": {
     "height": 1070
    }
+  },
+  {
+   "id": "01-D2",
+   "type": "door",
+   "name": "Fire door, science berthing to 01 main corridor",
+   "deck": "01",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 29000,
+    "y": -800,
+    "lx": 1100,
+    "ly": 200,
+    "h": 2100
+   },
+   "props": {
+    "clear_width": 1000,
+    "zone": "circulation"
+   }
+  },
+  {
+   "id": "01-C4",
+   "type": "corridor",
+   "name": "Forward cross passage to escape ladder",
+   "deck": "01",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 46500,
+    "y": -1250,
+    "lx": 1000,
+    "ly": 4250,
+    "h": 150
+   },
+   "props": {
+    "clear_width": 1000,
+    "dead_end_length": 0,
+    "zone": "circulation"
+   }
+  },
+  {
+   "id": "01-D1",
+   "type": "door",
+   "name": "Door, laundry to science lounge",
+   "deck": "01",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 25950,
+    "y": 4000,
+    "lx": 100,
+    "ly": 900,
+    "h": 2100
+   },
+   "props": {
+    "clear_width": 900
+   }
+  },
+  {
+   "id": "MD-D4",
+   "type": "door",
+   "name": "Door, science stores to bosun store",
+   "deck": "MD",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 51950,
+    "y": -450,
+    "lx": 100,
+    "ly": 900,
+    "h": 2100
+   },
+   "props": {
+    "clear_width": 900
+   }
+  },
+  {
+   "id": "LD-D1",
+   "type": "door",
+   "name": "Watertight door, propulsion motor room to engine room",
+   "deck": "LD",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 21950,
+    "y": -450,
+    "lx": 100,
+    "ly": 900,
+    "h": 2000
+   },
+   "props": {
+    "clear_width": 800
+   }
+  },
+  {
+   "id": "LD-D2",
+   "type": "door",
+   "name": "Door, science hold to bow thruster room",
+   "deck": "LD",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 51950,
+    "y": -450,
+    "lx": 100,
+    "ly": 900,
+    "h": 2000
+   },
+   "props": {
+    "clear_width": 800
+   }
+  },
+  {
+   "id": "LD-LAD2",
+   "type": "ladder",
+   "name": "Ladder, science hold to science stores",
+   "deck": "LD",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 47000,
+    "y": 2500,
+    "lx": 1000,
+    "ly": 800,
+    "h": 3800
+   },
+   "props": {
+    "zone": "service"
+   }
+  },
+  {
+   "id": "LD-LAD4",
+   "type": "ladder",
+   "name": "Ladder and hatch, propulsion motor room to working deck",
+   "deck": "LD",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 15000,
+    "y": 3200,
+    "lx": 1000,
+    "ly": 800,
+    "h": 3800
+   },
+   "props": {
+    "zone": "machinery"
+   }
+  },
+  {
+   "id": "MD-MUSTER",
+   "type": "muster_station",
+   "name": "Muster station, aft working deck",
+   "deck": "MD",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 6000,
+    "y": -3000,
+    "lx": 7000,
+    "ly": 6000,
+    "h": 40
+   },
+   "props": {
+    "zone": "open_deck",
+    "capacity": 31
+   },
+   "note": "Assembly area for all 31 berths; position estimated."
+  },
+  {
+   "id": "MD-LR-P",
+   "type": "liferaft",
+   "name": "Liferaft station, port",
+   "deck": "MD",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 8000,
+    "y": 4900,
+    "lx": 2400,
+    "ly": 900,
+    "h": 900
+   },
+   "props": {
+    "zone": "open_deck"
+   }
+  },
+  {
+   "id": "MD-LR-S",
+   "type": "liferaft",
+   "name": "Liferaft station, starboard",
+   "deck": "MD",
+   "source": "estimated (added for the escape-route network)",
+   "geom": {
+    "x": 8000,
+    "y": -5800,
+    "lx": 2400,
+    "ly": 900,
+    "h": 900
+   },
+   "props": {
+    "zone": "open_deck"
+   }
   }
- ]
+ ],
+ "escape": {
+  "muster_types": [
+   "muster_station"
+  ],
+  "note": "Openings are inferred from shared boundaries; a gap of 100 mm or more is a closed bulkhead."
+ }
 }

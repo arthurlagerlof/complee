@@ -6,7 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseFeetInch, inchToMM, parseWeightKg, parseOpening } from '../src/units.mjs';
 import { streamArray } from '../src/json-stream.mjs';
-import { fetchCatalog } from '../src/catalog-api.mjs';
+import { fetchCatalog, catalogAvailable } from '../src/catalog-api.mjs';
+
+const HAVE_PARTS = await catalogAvailable('model-rcrv-parts');
 
 test('feet-inch strings are parsed exactly, unknown text gives null', () => {
   assert.equal(parseFeetInch(`5'-4 9/16"`), 64.5625);
@@ -39,7 +41,7 @@ test('streamArray yields every object across chunk boundaries, including braces 
   assert.deepEqual(got, items);
 });
 
-test('database parts catalog: counts match and values keep their original text', async () => {
+test('database parts catalog: counts match and values keep their original text', { skip: HAVE_PARTS ? false : 'production model not in the bundled catalog (set SHIPCHECK_DATA_API_URL)' }, async () => {
   const j = await fetchCatalog('model-rcrv-parts');
   assert.equal(j.parts.length, j.counts.kept);
   assert.equal(j.source.model_unit, 'in');

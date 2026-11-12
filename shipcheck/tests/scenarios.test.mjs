@@ -2,23 +2,33 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { loadScenarios, loadModel, readJSON, runCheck } from '../src/load.mjs';
 
-test('all database scenarios are available, including streamed and simplified model examples', async () => {
+const DATABASE = !!process.env.SHIPCHECK_DATA_API_URL;
+
+test('all scenarios of the catalog are available, including the simplified model example', async () => {
   const scenarios = await loadScenarios();
-  assert.deepEqual(scenarios.map((s) => s.id).sort(), ['cruise', 'rcrv-3d', 'rcrv-inside', 'rcrv-layout']);
-  const production = scenarios.find((s) => s.id === 'rcrv-3d');
-  assert.equal(production.viewer, 'local', 'the production model uses the server-side model gateway');
+  const ids = scenarios.map((s) => s.id).sort();
+  if (DATABASE) {
+    assert.deepEqual(ids, ['cruise', 'rcrv-3d', 'rcrv-inside', 'rcrv-layout']);
+    const production = scenarios.find((s) => s.id === 'rcrv-3d');
+    assert.equal(production.viewer, 'local', 'the production model uses the server-side model gateway');
+    assert.equal(scenarios.find((s) => s.id === 'rcrv-inside').viewer, 'local', 'the in-ship scene uses the same streamed real-model viewer');
+  } else {
+    // Bundled catalog: every scenario whose model file is bundled, the general arrangement first.
+    // The scene inside the production model needs the streamed 3D model, so it is not offered either.
+    assert.deepEqual(ids, ['cruise', 'rcrv-layout']);
+    assert.equal(scenarios[0].id, 'rcrv-layout', 'the bundled general arrangement opens by default');
+  }
   const inside = scenarios.find((s) => s.id === 'rcrv-inside');
-  assert.equal(inside.viewer, 'local', 'the in-ship scene uses the same streamed real-model viewer');
-  assert.equal(inside.scene, true);
-  for (const e of (await loadModel(inside)).elements) assert.ok(e.geom3d?.min?.length === 3 && e.geom3d?.max?.length === 3, `${e.id} has a position in the real model`);
+  if (inside) assert.equal(inside.scene, true);
+  if (inside) for (const e of (await loadModel(inside)).elements) assert.ok(e.geom3d?.min?.length === 3 && e.geom3d?.max?.length === 3, `${e.id} has a position in the real model`);
   const simplified = scenarios.find((s) => s.id === 'rcrv-layout');
-  assert.equal(simplified.name, 'Simplified research vessel (example)');
+  assert.match(simplified.name, DATABASE ? /^Simplified research vessel \(example\)$/ : /general arrangement and escape plan/);
   assert.equal(simplified.model, 'ships/rcrv/layout.json');
   assert.equal(simplified.expected, 'tests/expected/rcrv-layout.json');
   assert.equal(simplified.viewer, 'three');
 });
 
-test('production layout preserves fixture inputs and clearly identifies estimated example geometry', async () => {
+test('production layout preserves fixture inputs and clearly identifies estimated example geometry', { skip: DATABASE ? 'the database copy predates the escape-route network of the bundled layout' : false }, async () => {
   const scenario = (await loadScenarios()).find((s) => s.id === 'rcrv-layout');
   const model = await loadModel(scenario);
   const { name, provenance_note, ...inputs } = model;

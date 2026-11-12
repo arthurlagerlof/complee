@@ -33,7 +33,7 @@ test('server: CORS headers for an allowed and a disallowed origin, preflight, he
   const h = await ok.json();
   assert.equal(h.status, 'ok');
   assert.equal(typeof h.version, 'string');
-  assert.equal(h.catalog_source, 'database');
+  assert.equal(h.catalog_source, process.env.SHIPCHECK_DATA_API_URL ? 'database' : 'bundled');
   assert.equal(typeof h.model_available, 'boolean');
   assert.equal('model_requests' in h, false, 'health does not expose internal S3 request diagnostics');
   assert.equal(ok.headers.get('x-content-type-options'), 'nosniff');
