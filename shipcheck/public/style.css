@@ -88,6 +88,13 @@ blockquote { margin: 6px 0 0; padding: 2px 0 2px 8px; border-left: 3px solid var
 .also { border: 1px dashed #b9c1cc; border-radius: 6px; padding: 6px 10px; margin: 6px 0; }
 .also b { display: block; }
 .na { font-size: 12px; color: var(--muted); margin: 3px 0; }
+.coverage { margin-top: 6px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fafbfc; font-size: 12px; }
+.badge.manual { background: #fff4e0; color: #8a5300; }
+.manual-item { border: 1px solid #f0d9a8; background: #fffaf0; border-radius: 6px; padding: 6px 10px; margin: 6px 0; }
+.manual-item.done { border-color: #bfe3cc; background: #f3fbf6; }
+.manual-item .head { display: flex; flex-direction: column; gap: 2px; }
+.manual-ctl { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; font-size: 12px; }
+.manual-ctl input:not([type=checkbox]) { flex: 1 1 140px; min-width: 0; }
 .note { background: #fffbea; border: 1px solid #f3e3a5; border-radius: 6px; padding: 5px 8px; margin: 6px 0; font-size: 12px; }
 
 .editor { width: 100%; border-collapse: collapse; font-size: 12px; }

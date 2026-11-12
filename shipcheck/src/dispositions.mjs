@@ -3,7 +3,8 @@
 // result: the status column always comes from the deterministic checker.
 //
 // store: { "<element>|<rule>": { disposition, responsible, note, updated, measured, status } }
-import { findingsOf } from './checker.mjs';
+// Manual checks share the store: { kind: 'manual', done, responsible, note, updated } under the same key form.
+import { findingsOf, manualChecksOf } from './checker.mjs';
 
 export const DISPOSITIONS = [
   { id: 'open', label: 'Open' },
@@ -58,7 +59,7 @@ export function registerRows(results, store = {}) {
     });
   }
   for (const [key, d] of Object.entries(store)) {
-    if (seen.has(key)) continue;
+    if (seen.has(key) || d?.kind === 'manual') continue;
     const [element, rule_id] = key.split('|');
     rows.push({
       key, element, name: d.name ?? '', deck: d.deck ?? '', rule_id, status: 'compliant',
@@ -103,4 +104,33 @@ export function registerCSV(rows) {
   const lines = rows.map((r) => [STATUS_LABEL[r.status], r.element, r.name, r.deck, r.rule_id, r.measured, r.required,
     DISPOSITION_LABEL[r.disposition], r.responsible, r.note, r.updated, r.revision, r.stale ? 'yes: value changed since the disposition' : ''].map(q).join(','));
   return '﻿' + [head.join(','), ...lines].join('\r\n');
+}
+
+// ---------- manual checks ----------
+// Requirements the checker cannot decide: a person confirms each one per element, with name and a note on the
+// evidence (drawing, certificate, inspection). Unconfirmed items stay open; nothing is confirmed automatically.
+
+/** One row per manual check of the current model, with its confirmation from the store. */
+export function manualRows(results, store = {}) {
+  return manualChecksOf(results).map((m) => {
+    const key = findingKey(m);
+    const d = store[key]?.kind === 'manual' ? store[key] : null;
+    return { ...m, key, done: !!d?.done, responsible: d?.responsible ?? '', note: d?.note ?? '', updated: d?.updated ?? '', revision: d?.revision ?? '' };
+  });
+}
+
+export function manualSummary(rows) {
+  return { total: rows.length, done: rows.filter((r) => r.done).length, open: rows.filter((r) => !r.done).length };
+}
+
+/** Returns a new store with the manual check updated. Confirming needs the name of the person who checked it. */
+export function withManualCheck(store, item, patch, now = new Date()) {
+  const key = findingKey(item);
+  const prev = store[key]?.kind === 'manual' ? store[key] : {};
+  const entry = { done: false, responsible: '', note: '', ...prev, ...patch, kind: 'manual' };
+  const next = { ...store };
+  if (!entry.done && !entry.responsible.trim() && !entry.note.trim()) { delete next[key]; return next; }
+  if (entry.done && !entry.responsible.trim()) throw new Error('Enter who checked it before confirming a manual check.');
+  next[key] = { ...entry, updated: now.toISOString(), name: item.name, deck: item.deck };
+  return next;
 }

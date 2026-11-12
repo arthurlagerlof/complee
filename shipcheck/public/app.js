@@ -1,6 +1,6 @@
 // ShipCheck UI. The pass/fail decision always comes from the shared deterministic checker
 // (src/checker.mjs), which runs right here in the browser so edits re-check instantly.
-import { checkModel, recheckElements, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK } from './src/checker.mjs';
+import { checkModel, recheckElements, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK, coverageOf } from './src/checker.mjs';
 import { scoreResults, scoreLine, badgeText } from './src/score.mjs';
 import { partsToModel } from './src/parts-model.mjs';
 import { reportRows, toCSV, toHTML } from './src/report.mjs';
@@ -11,7 +11,7 @@ import { compareRevisions } from './src/compare.mjs';
 import { verifySuggestion } from './src/escape-actions.mjs';
 import { parsePartialJson } from './src/partial-json.mjs';
 import { consistencyIssues, widthCheck } from './src/consistency.mjs';
-import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, registerSummary, withDisposition, registerCSV, projectKey } from './src/dispositions.mjs';
+import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, registerSummary, withDisposition, registerCSV, projectKey, manualRows, manualSummary, withManualCheck } from './src/dispositions.mjs';
 import { createFallbackViewer } from './viewer-fallback.js';
 import { createLocalViewer } from './viewer-stream.js';
 import { loadOfficialText } from './regulation-text.js';
@@ -55,7 +55,7 @@ const fetchCatalog = (file, opt) => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const LABEL = { compliant: 'Compliant', non_compliant: 'Non-compliant', not_enough_info: 'Not enough info', null: 'No rule' };
+const LABEL = { compliant: 'No deviation found', non_compliant: 'Non-compliant', not_enough_info: 'Not enough info', null: 'No rule' };
 const ORDER = { non_compliant: 0, not_enough_info: 1, compliant: 2, null: 3 };
 const EDIT_SOURCE = 'what-if, not in model';
 
@@ -443,15 +443,27 @@ function renderScore() {
   $('#verifyLink').onclick = (e) => { e.preventDefault(); alert('All rule values are marked verified:false until the team has checked them against the official text. VERIFY.md lists each value with the source to check against.'); };
 }
 
+// What the automatic check covers and what is left to a person: shown next to the result, so "no deviation" is
+// never read as full compliance.
+function coverageHTML() {
+  const c = coverageOf(S.results, allRules());
+  const m = manualSummary(manualRows(S.results, S.register));
+  const tip = c.by_source.map((x) => `${x.source}: ${x.automatic} automatic, ${x.manual} manual`).join('\n');
+  return `<div class="coverage" title="${esc(tip)}">
+    <b>Coverage:</b> ${c.automatic} rules checked automatically (${c.automatic_verified} with verified values) · ${m.total ? `<b>${m.open} of ${m.total}</b> manual checks open` : 'no manual checks for this model'}.
+    <span class="muted">Requirements that are not in the rule catalog are not checked at all. Approval stays with class and flag.</span></div>`;
+}
+
 function renderSummary() {
   const s = S.results.summary, e = S.results.element_summary;
   $('#summary').innerHTML = `
     <div class="pills" id="pills">
       <div class="pill st-non_compliant">${s.non_compliant}<small>non-compliant</small></div>
       <div class="pill st-not_enough_info">${s.not_enough_info}<small>missing info</small></div>
-      <div class="pill st-compliant">${s.compliant}<small>compliant</small></div>
+      <div class="pill st-compliant" title="No deviation in the rules checked automatically. This is not a statement of full compliance: see the manual checks.">${s.compliant}<small>no deviation</small></div>
     </div>
-    <div class="muted">Rule checks per element. Elements: ${e.non_compliant} red, ${e.not_enough_info} amber, ${e.compliant} green, ${e.no_rule} without a rule. Checked in ${S.lastCheckMs.toFixed(1)} ms.</div>`;
+    <div class="muted">Rule checks per element. Elements: ${e.non_compliant} red, ${e.not_enough_info} amber, ${e.compliant} green, ${e.no_rule} without a rule. Checked in ${S.lastCheckMs.toFixed(1)} ms.</div>
+    ${coverageHTML()}`;
   const issues = S.model.kind === 'parts' ? [] : consistencyIssues(S.norm);
   if (issues.length) {
     $('#summary').insertAdjacentHTML('beforeend', `<div class="note"><b>Data consistency:</b> ${issues.length} declared clear width${issues.length === 1 ? ' is' : 's are'} larger than the modelled geometry: ${issues.map((c) => `<a href="#" class="via" data-id="${esc(c.id)}">${esc(c.id)}</a>`).join(', ')}. The rule check reads the declared value.</div>`);
@@ -909,7 +921,9 @@ function renderRuleView(ruleId) {
 
 function renderResults(id) {
   const e = S.results.elements[id];
-  $('#dStatus').innerHTML = `<span class="badge st-${e.worst ?? 'none'}">${LABEL[e.worst]}</span>`;
+  const manual = manualRows({ elements: { [id]: e } }, S.register);
+  const manualOpen = manual.filter((m) => !m.done).length;
+  $('#dStatus').innerHTML = `<span class="badge st-${e.worst ?? 'none'}">${LABEL[e.worst]}</span>${manualOpen ? ` <span class="badge manual" title="Requirements a person has to confirm">${manualOpen} manual check${manualOpen === 1 ? '' : 's'} open</span>` : ''}`;
   const gov = (e.conflicts || []).map((c) =>
     `<div class="gov conflict"><b>Rule conflict on ${esc(c.parameter)}:</b> ${esc(c.lower.rule_id)} requires ${esc(c.lower.required)}, ${esc(c.upper.rule_id)} requires ${esc(c.upper.required)}. No design can meet both; clarify with the flag state or class which one applies.</div>`).join('')
     + Object.entries(e.governing).filter(([, g]) => g.count > 1).map(([p, g]) =>
@@ -958,11 +972,15 @@ function renderResults(id) {
     <h2>Rules applied (${e.results.length})</h2>${cards}
     <h2 id="alsoHead">Also required (${related.length})</h2>
     ${also || '<p class="muted">No related rules outside the ones applied above.</p>'}
+    ${manual.length ? `<h2>Manual checks (${manual.length - manualOpen} of ${manual.length} confirmed)</h2>
+      <p class="muted">Not decidable from the model data. Confirm each one with the evidence named; nothing here is confirmed automatically.</p>
+      ${manual.map(manualHTML).join('')}` : ''}
     ${sup ? `<h2>Replaced by a higher-ranking rule (${e.superseded.length})</h2>${sup}` : ''}
     ${na ? `<h2>Considered, not applicable (${e.not_applicable.length})</h2>${na}` : ''}`;
   document.querySelectorAll('#dResults .goto').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); select(a.dataset.id); }));
   document.querySelectorAll('#dResults .ruleLink').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); showRule(a.dataset.rule); }));
   wireDispositions($('#dResults'));
+  wireManualChecks($('#dResults'));
   document.querySelectorAll('#dResults .explainBtn').forEach((b) => (b.onclick = () => explainFinding(id, b.dataset.rule)));
 }
 
@@ -1536,6 +1554,46 @@ function wireDispositions(root) {
   root.querySelectorAll('.dispSel').forEach((n) => (n.onchange = () => commit(n, { disposition: n.value })));
   root.querySelectorAll('.dispWho').forEach((n) => (n.onchange = () => commit(n, { responsible: n.value.trim() })));
   root.querySelectorAll('.dispNote').forEach((n) => (n.onchange = () => commit(n, { note: n.value.trim() })));
+}
+
+function manualHTML(m) {
+  return `<div class="manual-item${m.done ? ' done' : ''}">
+    <div class="head"><b>${esc(m.rule_id)}</b><span class="muted">${esc(m.source)} - ${esc(m.clause)}</span></div>
+    <blockquote>“${esc(m.rule_text)}”</blockquote>
+    ${m.evidence ? `<div class="na">Evidence: ${esc(m.evidence)}</div>` : ''}
+    ${m.applicability === 'unknown' ? `<div class="na">${esc(m.reason)}</div>` : ''}
+    <div class="manual-ctl">
+      <label><input type="checkbox" class="manDone" data-key="${esc(m.key)}" ${m.done ? 'checked' : ''}> Checked</label>
+      <input class="manWho" data-key="${esc(m.key)}" value="${esc(m.responsible)}" placeholder="Checked by (required)" maxlength="80">
+      <input class="manNote" data-key="${esc(m.key)}" value="${esc(m.note)}" placeholder="Evidence reference, e.g. drawing no." maxlength="600">
+    </div>
+    ${m.done && m.updated ? `<div class="na">Confirmed by ${esc(m.responsible)}, ${esc(new Date(m.updated).toLocaleDateString('en-GB'))}${m.revision ? ` (revision ${esc(m.revision)})` : ''}.</div>` : ''}
+    <div class="manual-err check-bad" hidden></div>
+  </div>`;
+}
+
+function wireManualChecks(root) {
+  const commit = (n, patch) => {
+    const item = manualRows(S.results, S.register).find((m) => m.key === n.dataset.key);
+    if (!item) return;
+    const box = n.closest('.manual-item');
+    // Take the name typed in the same row along, so "type name, tick box" works in one go.
+    const who = box.querySelector('.manWho').value.trim();
+    try {
+      S.register = withManualCheck(S.register, item, { responsible: who, ...patch, revision: revisionLabel(S.sc) });
+    } catch (err) {
+      if (n.classList.contains('manDone')) n.checked = false;
+      const msg = box.querySelector('.manual-err');
+      msg.textContent = err.message; msg.hidden = false;
+      return;
+    }
+    saveRegister();
+    renderSummary();
+    if (S.selected) renderResults(S.selected);
+  };
+  root.querySelectorAll('.manDone').forEach((n) => (n.onchange = () => commit(n, { done: n.checked })));
+  root.querySelectorAll('.manWho').forEach((n) => (n.onchange = () => commit(n, { responsible: n.value.trim() })));
+  root.querySelectorAll('.manNote').forEach((n) => (n.onchange = () => commit(n, { note: n.value.trim() })));
 }
 
 function renderRegisterButton() {

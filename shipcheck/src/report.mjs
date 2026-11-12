@@ -1,11 +1,11 @@
 // Findings report (HTML, printable to PDF) and CSV. Pure functions: used by the browser (Report / CSV
 // buttons) and by the CLI (node check.mjs --report <scenario>), so both give the same output.
-import { findingsOf, normalizeModel } from './checker.mjs';
+import { findingsOf, normalizeModel, coverageOf } from './checker.mjs';
 import { scoreLine } from './score.mjs';
 import { traceMatrix, cellLabel } from './trace.mjs';
-import { DISPOSITION_LABEL } from './dispositions.mjs';
+import { DISPOSITION_LABEL, manualRows, manualSummary } from './dispositions.mjs';
 
-const LABEL = { compliant: 'Compliant', non_compliant: 'Non-compliant', not_enough_info: 'Not enough info' };
+const LABEL = { compliant: 'No deviation found', non_compliant: 'Non-compliant', not_enough_info: 'Not enough info' };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 export function badgeText(score) {
@@ -76,6 +76,24 @@ ${e.changed.length ? `<h3>Changed design values (${e.changed.length} elements)</
 ${e.added.length ? `<p>Added: ${e.added.map((x) => esc(x.id)).join(', ')}.</p>` : ''}${e.removed.length ? `<p>Removed: ${e.removed.map((x) => esc(x.id)).join(', ')}.</p>` : ''}`;
 }
 
+// Coverage and manual checks: what the automatic check did not decide, and who confirmed what.
+export function coverageSection(results, rules, register) {
+  const c = coverageOf(results, rules);
+  const rows = manualRows(results, register || {});
+  const m = manualSummary(rows);
+  return `<h2>Coverage of this check</h2>
+<p>${c.automatic} rules were checked automatically (${c.automatic_verified} with values verified against the official text).
+${m.total ? `<b>${m.open}</b> of ${m.total} manual checks are open.` : 'No manual checks apply to this model.'}
+"No deviation found" means no deviation in the automatically checked rules with the data in the model. It is not a statement
+of full compliance: requirements that are not in the rule catalog are not checked, and approval stays with class and flag.</p>
+<table><tr><th>Instrument</th><th>Checked automatically</th><th>Manual checks</th></tr>
+${c.by_source.map((x) => `<tr><td>${esc(x.source)}</td><td>${x.automatic}</td><td>${x.manual}</td></tr>`).join('')}</table>
+${rows.length ? `<h3>Manual checks (${m.done} of ${m.total} confirmed)</h3>
+<table><tr><th>Status</th><th>Element</th><th>Requirement</th><th>Source / clause</th><th>Evidence to look at</th><th>Confirmed by</th><th>Evidence reference</th></tr>
+${rows.map((r) => `<tr><td class="${r.done ? 'ok' : 'ni'}">${r.done ? 'Confirmed' : 'Open'}</td><td><b>${esc(r.element)}</b> ${esc(r.name)}</td><td>${esc(r.rule_text)}${r.applicability === 'unknown' ? `<br><span class="muted">${esc(r.reason)}</span>` : ''}</td>
+<td>${esc(r.rule_id)}<br><span class="muted">${esc(r.source)} - ${esc(r.clause)}</span></td><td>${esc(r.evidence ?? '')}</td><td>${r.done ? `${esc(r.responsible)}<br><span class="muted">${esc(r.updated.slice(0, 10))}</span>` : ''}</td><td>${esc(r.note)}</td></tr>`).join('\n')}</table>` : ''}`;
+}
+
 // Rule hierarchy: conflicting limits and rules replaced by a higher-ranking one (with the stated basis).
 export function hierarchySection(results) {
   const els = Object.values(results.elements || {});
@@ -135,7 +153,7 @@ th{background:#f3f5f8}.nc{color:#b42318;font-weight:600}.ok{color:#1d6b3d}.ni{co
 <h1>Compliance findings: ${esc(title)}</h1>
 <div class="muted">Scenario ${esc(scenario)} · generated ${esc(generated.toLocaleString('en-GB'))} by Complee. Pass/fail is decided by the deterministic checker only (no AI).</div>
 ${score ? `<div class="badge ${pass ? 'ok' : 'bad'}">${pass ? '✓' : '✗'} Accuracy: ${esc(badgeText(score))}</div><div class="muted">${esc(scoreLine(score))} (ground truth of the unedited design, same as npm test)</div>` : ''}
-<p>Result: <b>${s.non_compliant}</b> non-compliant, <b>${s.not_enough_info}</b> not enough info, <b>${s.compliant}</b> compliant rule checks.
+<p>Result: <b>${s.non_compliant}</b> non-compliant, <b>${s.not_enough_info}</b> not enough info, <b>${s.compliant}</b> rule checks without deviation.
 ${usedRules.length} rules applied, ${verified}/${rules.length} rule values verified against official text: every "no" must be checked before submission (VERIFY.md).</p>
 ${edits.length ? `<p><b>${edits.length} value(s) edited in this session:</b> ${edits.map((x) => `${esc(x.id)}.${esc(x.key)} ${esc(x.before)} → ${esc(x.after)}`).join('; ')}</p>` : ''}
 ${drafts.length ? `<p><b>Draft rules, not run (no official value):</b> ${drafts.map((d) => `${esc(d.id)}: ${esc(d.reason)}`).join(' ')}</p>` : ''}
@@ -146,6 +164,7 @@ ${rows.map((r) => `<tr><td class="${r.status === 'Non-compliant' ? 'nc' : 'ni'}"
 <td>${esc(r.group)}</td><td>${esc(r.rule)}${r.same_requirement_as ? `<br><span class="muted">same requirement as ${esc(r.same_requirement_as)}</span>` : ''}</td><td>${esc(r.source)}<br><span class="muted">${esc(r.clause)}</span></td><td>${esc(r.measured)}</td><td>${esc(r.required)}</td>
 <td>${esc(r.explanation)}</td><td class="muted">${esc(r.provenance)}</td><td>${esc(r.basis)}</td><td>${r.verified}</td><td>${esc(r.review)}</td>${register ? `<td>${esc(r.disposition)}</td><td>${esc(r.responsible)}</td><td>${esc(r.note)}</td>` : ''}</tr>`).join('\n')}
 </table>
+${coverageSection(results, rules, register)}
 ${hierarchySection(results)}
 ${comparisonSection(comparison)}
 ${escapeSection(escape, model)}

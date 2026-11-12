@@ -49,6 +49,16 @@ Reference URLs in the database-backed `rules` catalog point to the convention ov
 | `DQ-DESIGN-STATUS` | VFI must be "Final" | internal data-quality check (no official value) | 2,459 items are "Preliminary". |
 | `DQ-ERROR-VALUES` | no field may hold "Error" / "---" | internal data-quality check (no official value) | 4 raised manholes (032-LDRMHS.dwg). |
 
+### Manual checks (`check: "manual"`)
+
+Requirements no algorithm can decide from the model. They are listed per element for a person to confirm and are never counted as a pass. Only the wording and the clause need checking; there is no value.
+
+| Rule id | Requirement | Check against | Notes |
+| --- | --- | --- | --- |
+| `MAN-SOLAS-II-2-13-LLL` | escape routes in passenger ships marked by low-location lighting or photoluminescent indicators (≤ 300 mm above deck) | SOLAS II-2/13 (marking of escape routes, passenger ships) and FSS Code Ch. 11 | Paraphrase; confirm the clause number and the 300 mm figure. |
+| `MAN-SOLAS-II-2-13-DOOR-OPEN` | doors in escape routes open in the direction of escape without keys or tools | SOLAS II-2/13 | Paraphrase; the exact wording differs for passenger and cargo ships. Confirm the clauses. |
+| `MAN-SOLAS-II-2-9-FIRE-DOOR` | fire doors in A-class divisions self-closing, operable from each side by one person | SOLAS II-2/9 (fire doors) | Paraphrase; applies only to doors in A-class divisions, which the model does not mark. Confirm the clauses for passenger and cargo ships. |
+
 **ShipCheck classifications to review** (in `src/parts-model.mjs`, applied to the model's text fields):
 - Material family: `CS …` and `ASTM A36/A53/A106/A131/A500` = carbon steel; `AL …` = aluminium; `SS …` = stainless; `DETA`, `FABREEKA`, `ASTM E-84` = non-structural (deck covering, resilient pads, fire-test standard). Anything else (`AIR AIR` on 21 superpanel plates) = unknown.
 - Pipe material family from `MC` (steel, copper alloy, plastic, flexible, cast iron, aluminium, insulation).

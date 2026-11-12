@@ -8,7 +8,7 @@
 
 export const UNIT_TO_MM = { mm: 1, cm: 10, m: 1000, in: 25.4, ft: 304.8 };
 export const STATUS_RANK = { non_compliant: 3, not_enough_info: 2, compliant: 1 };
-export const CHECK_TYPES = ['min', 'max', 'not_adjacent_zone', 'distance_min_hull', 'count_min', 'requires', 'in_set', 'table_lookup', 'data_quality'];
+export const CHECK_TYPES = ['min', 'max', 'not_adjacent_zone', 'distance_min_hull', 'count_min', 'requires', 'in_set', 'table_lookup', 'data_quality', 'manual'];
 const ADJACENCY_TOLERANCE_MM = 50;
 const DEFAULT_DECK_HEIGHT_MM = 2800;
 const SHIP_LENGTH_KEYS = new Set(['length_overall', 'beam', 'draft', 'depth']);
@@ -685,11 +685,11 @@ function limitAnalysis(results) {
 
 // Checks that read only the element itself (plus the ship particulars): an edit to one element can be re-checked
 // alone. The others look at neighbours, zones or counts and need the whole model again.
-const LOCAL_CHECKS = new Set(['in_set', 'table_lookup', 'data_quality', 'min', 'max']);
+const LOCAL_CHECKS = new Set(['in_set', 'table_lookup', 'data_quality', 'min', 'max', 'manual']);
 
 function checkElement(el, rules, ctx) {
   const { model } = ctx;
-  const all = [], not_applicable = [];
+  const all = [], not_applicable = [], manual = [];
   const unknownApplicability = new Set();
   for (const rule of rules) {
     const ec = elementCondition(rule, el, model);
@@ -699,6 +699,14 @@ function checkElement(el, rules, ctx) {
     }
     const sc = shipCondition(rule, model);
     if (sc.ok === false) { not_applicable.push({ rule_id: rule.id, source: rule.source, reason: sc.reason }); continue; }
+    if (rule.check === 'manual') {
+      // A requirement no algorithm can decide (qualitative, "to the satisfaction of the Administration", ...):
+      // listed for a person to confirm, never counted as a pass.
+      manual.push({ rule_id: rule.id, source: rule.source, clause: rule.clause, rule_text: rule.text, text_status: rule.text_status || 'paraphrase',
+        verified: rule.verified === true, reference_url: rule.reference_url || null, evidence: rule.evidence || null,
+        ...(sc.ok === 'unknown' ? { applicability: 'unknown', reason: `Applies only if confirmed: ${sc.missing} is missing in the ship particulars.` } : { applicability: 'applies' }) });
+      continue;
+    }
     if (sc.ok === 'unknown') {
       unknownApplicability.add(rule.id);
       all.push(result(rule, 'not_enough_info', {
@@ -718,7 +726,7 @@ function checkElement(el, rules, ctx) {
   const { results, superseded } = applyHierarchy(all, rules, unknownApplicability);
   const { governing, conflicts } = limitAnalysis(results);
   const worst = results.reduce((w, r) => (STATUS_RANK[r.status] > (STATUS_RANK[w] || 0) ? r.status : w), null);
-  return { id: el.id, name: el.name, type: el.type, deck: el.deck, worst, results, not_applicable, superseded, governing, conflicts };
+  return { id: el.id, name: el.name, type: el.type, deck: el.deck, worst, results, not_applicable, superseded, governing, conflicts, manual };
 }
 
 function checkContext(rawModel, allRules) {
@@ -810,6 +818,35 @@ export function recheckElements(previous, rawModel, allRules, ids, { inPlace = f
     summary,
     element_summary: elementSummary,
     elements,
+  };
+}
+
+// Manual checks of all elements (requirements a person has to confirm), in model order.
+export function manualChecksOf(results) {
+  const out = [];
+  for (const e of Object.values(results.elements)) for (const m of e.manual || []) out.push({ element: e.id, name: e.name, deck: e.deck, ...m });
+  return out;
+}
+
+// What the automatic check covers, per instrument: rules run automatically vs. requirements left to a person, counted
+// over the rules that apply to at least one element of this model. Requirements that are not in the catalog at all
+// are not covered by either and are not counted here.
+export function coverageOf(results, rules) {
+  const auto = new Map(), manual = new Map();
+  const add = (map, source, id) => { if (!map.has(source)) map.set(source, new Set()); map.get(source).add(id); };
+  for (const e of Object.values(results.elements)) {
+    for (const r of [...e.results, ...(e.superseded || [])]) add(auto, r.source, r.rule_id);
+    for (const m of e.manual || []) add(manual, m.source, m.rule_id);
+  }
+  const sources = [...new Set([...auto.keys(), ...manual.keys()])].sort();
+  const bySource = sources.map((source) => ({ source, automatic: auto.get(source)?.size ?? 0, manual: manual.get(source)?.size ?? 0 }));
+  const verified = new Set(rules.filter((r) => r.verified === true).map((r) => r.id));
+  const autoIds = new Set([...auto.values()].flatMap((x) => [...x]));
+  return {
+    by_source: bySource,
+    automatic: autoIds.size,
+    manual: new Set([...manual.values()].flatMap((x) => [...x])).size,
+    automatic_verified: [...autoIds].filter((id) => verified.has(id)).length,
   };
 }
 

@@ -18,7 +18,7 @@ export function traceMatrix(results, rules = [], { findingsOnly = false } = {}) 
     rows.push({ id: e.id, name: e.name, deck: e.deck, worst, cells });
   }
   rows.sort((a, b) => ORDER[a.worst] - ORDER[b.worst] || String(a.id).localeCompare(String(b.id), 'en', { numeric: true }));
-  const order = rules.map((r) => r.id);
+  const order = rules.filter((r) => r.check !== 'manual').map((r) => r.id); // manual checks are not pass/fail cells
   const cols = [...used].sort((a, b) => (order.indexOf(a) + 1 || 1e9) - (order.indexOf(b) + 1 || 1e9));
   const byId = Object.fromEntries(rules.map((r) => [r.id, r]));
   return {
