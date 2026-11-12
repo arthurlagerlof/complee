@@ -193,13 +193,22 @@ test('first picture, streaming, state texture, picking, re-check, eviction, reva
   const shot = await page.evaluate(() => window.__shipcheckViewer.screenshot());
   assert.ok(shot.startsWith('data:image/png;base64,') && shot.length > 5000);
 
+  // Taking hold of the camera stops a running flight where it is (it no longer pulls the view back).
+  await page.evaluate(() => window.__shipcheckViewer.overview());
+  await page.waitForFunction(() => window.localViewer.flying, null, { timeout: 5000 });
+  await page.evaluate(() => window.localViewer.controls.dispatchEvent({ type: 'start' }));
+  assert.equal(await page.evaluate(() => window.localViewer.flying), false, 'the user stops the flight');
+  await page.evaluate(() => window.localViewer.controls.dispatchEvent({ type: 'end' }));
+
   // Eviction: looking far away from the ship releases every tile and its picking index (a selected component would
-  // stay resident on purpose, so the selection is cleared first).
+  // stay resident on purpose, so the selection is cleared first). The move is made as the user would: grab, move.
   await page.evaluate(() => {
     window.__shipcheckViewer.clearSelection();
     const { camera, controls } = window.localViewer;
+    controls.dispatchEvent({ type: 'start' });
     controls.target.set(500000, 0, 500000); camera.position.set(520000, 10000, 520000); controls.update();
     controls.dispatchEvent({ type: 'change' });
+    controls.dispatchEvent({ type: 'end' });
   });
   await page.waitForFunction(() => window.localViewer.tiles.size === 0 && !window.localViewer.stats.pending, null, { timeout: 30000 });
   assert.ok((await page.evaluate(() => window.localViewer.stats.evicted)) > 0);

@@ -243,6 +243,8 @@ clickable); the audit checks the opacity of every part against the source. Brows
 database, `cd tools/export && node --test viewer-smoke.mjs` builds a small synthetic ship in the same tile layout
 (`synthetic-model.mjs`), starts a stub catalog API and the server, and checks first picture, streaming, selection,
 rule view, filter, picking, what-if re-check, eviction, screenshots and HTTP revalidation in headless Chromium.
+`node --test deck-viewer-smoke.mjs` does the same for the deck viewer with the bundled catalog (idle view draws no
+frames, selection, what-if re-check against a full check, escape plan, findings register).
 
 **Part state on the GPU.** Every vertex carries its part's dbId (the tile's `COLOR_0` bytes, bound unchanged) and its
 source opacity. The viewer keeps colour and visibility per part in a small texture (one texel per dbId): a selection,

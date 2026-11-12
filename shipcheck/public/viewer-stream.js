@@ -193,7 +193,17 @@ diffuseColor.a = ${alpha};
       await new Promise((r) => setTimeout(r, 100));
     }
   }
+  // userMoves counts the times the user took hold of the camera (drag, wheel, touch): a flight still running then
+  // stops where it is, and a flight that was about to start (after its tiles arrived) does not start.
+  let userMoves = 0;
+  function cancelFlight() {
+    const f = flight;
+    flight = null;
+    f?.resolve(false);
+  }
+  // Resolves true when the flight arrived, false when it was replaced or the user took over.
   function flyTo(target, position, ms = 1200, onStep = null) {
+    cancelFlight();
     const from = { t: controls.target.clone(), p: camera.position.clone() };
     const done = (k) => {
       controls.target.lerpVectors(from.t, target, k);
@@ -201,11 +211,10 @@ diffuseColor.a = ${alpha};
       onStep?.(k);
     };
     if (!ms || !container.offsetParent) {
-      flight = null;
       done(1);
       controls.update();
       invalidate();
-      return Promise.resolve();
+      return Promise.resolve(true);
     }
     return new Promise((resolve) => {
       flight = { t0: performance.now(), ms, done, resolve };
@@ -334,6 +343,7 @@ diffuseColor.a = ${alpha};
     state: stateData,
     stateTexture,
   };
+  Object.defineProperty(debug, "flying", { get: () => !!flight });
   window.localViewer = debug;
   Object.defineProperty(debug, "rest", {
     get: () => [...cache.values()].filter((c) => c.info.group === "rest"),
@@ -363,6 +373,13 @@ diffuseColor.a = ${alpha};
     for (const c of cache.values()) out.push(c.info.bounds_mm);
     return out;
   }
+  controls.addEventListener("start", () => {
+    userMoves++;
+    cancelFlight();
+    // The user now frames the view: a resize keeps their camera instead of snapping back to the last framed box.
+    framedBox = null;
+    framedPoints = null;
+  });
   controls.addEventListener("change", () => {
     viewRevision++;
     const d = camera.position.distanceTo(controls.target);
@@ -389,7 +406,7 @@ diffuseColor.a = ${alpha};
       if (k >= 1) {
         const f = flight;
         flight = null;
-        f.resolve();
+        f.resolve(true);
       }
     }
     controls.update();
@@ -665,7 +682,7 @@ diffuseColor.a = ${alpha};
     // Entering: first the ship is cut open from the top down to the deck (camera still), then the camera dives in.
     focusBox = box.clone().expandByScalar(5000);
     if (!clipping.length) setCut(top);
-    const startCut = clipping[0].constant;
+    const startCut = clipping[0].constant, moves = userMoves;
     if (ms && startCut > cut + 1) {
       await flyTo(controls.target.clone(), camera.position.clone(), ms * 0.45, (k) => {
         clipping[0].constant = startCut + (cut - startCut) * k;
@@ -676,7 +693,8 @@ diffuseColor.a = ${alpha};
       schedule();
       await waitForTiles(4000);
     }
-    await flyTo(new THREE.Vector3(...f.target), new THREE.Vector3(...f.position), ms * 0.55);
+    // The user took over during the entry: keep their camera (the scene is cut open already).
+    if (userMoves === moves) await flyTo(new THREE.Vector3(...f.target), new THREE.Vector3(...f.position), ms * 0.55);
     schedule();
   }
   const desc = (a, more = {}) => ({
@@ -1245,9 +1263,10 @@ diffuseColor.a = ${alpha};
         framedPoints = null;
         focusBox = contextBox(b).expandByScalar(2000);
         schedule();
+        const moves = userMoves;
         await waitForTiles(3000);
         if (version !== selectionVersion) return;
-        flyTo(new THREE.Vector3(...f.target), new THREE.Vector3(...f.position), 1100);
+        if (userMoves === moves) flyTo(new THREE.Vector3(...f.target), new THREE.Vector3(...f.position), 1100);
         schedule();
       }
       showBox(b, label, status);

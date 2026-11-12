@@ -108,6 +108,10 @@ export function createViewer(container, { onPick } = {}) {
   let framedBox = null, framedMargin = 1.1, viewportWidth = 0, viewportHeight = 0;
   let labelsOn = true, shellOn = true, blocked = new Set();
   let escape = null, escapeGroup = null, runners = [];
+  // Render on demand: a frame is drawn only after something changed (camera, size, a viewer call, a flight, the
+  // escape runners). An idle view costs no GPU time, which matters for imported models with thousands of elements.
+  let dirty = true, frames = 0;
+  const invalidate = () => { dirty = true; };
   const lineMaterials = new Set();
   const selBox = new THREE.Box3Helper(new THREE.Box3(), 0x1f6feb);
   selBox.visible = false;
@@ -136,6 +140,7 @@ export function createViewer(container, { onPick } = {}) {
     fitOrtho();
     for (const m of lineMaterials) m.resolution.set(w, h);
     if (changed && framedBox) frameBox(framedBox, 0, framedMargin);
+    invalidate();
   }
   new ResizeObserver(resize).observe(container);
 
@@ -399,7 +404,10 @@ export function createViewer(container, { onPick } = {}) {
     previous?.cancel();
   }
 
-  for (const control of [controlsP, controlsO]) control.addEventListener('start', () => { cancelFlight(); framedBox = null; });
+  for (const control of [controlsP, controlsO]) {
+    control.addEventListener('start', () => { cancelFlight(); framedBox = null; });
+    control.addEventListener('change', invalidate);
+  }
 
   function flyTo(target, pos, ms = 900, done = () => {}) {
     cancelFlight();
@@ -626,7 +634,16 @@ export function createViewer(container, { onPick } = {}) {
     if (id) flyToElement(id, 700); else overview(700);
   });
   renderer.domElement.addEventListener('pointerleave', () => { tip.style.display = 'none'; });
+  // Hover tooltip: at most one raycast per animation frame, however fast the pointer moves.
+  let hoverEvent = null, hoverQueued = false;
   renderer.domElement.addEventListener('pointermove', (e) => {
+    hoverEvent = e;
+    if (hoverQueued) return;
+    hoverQueued = true;
+    requestAnimationFrame(() => { hoverQueued = false; if (hoverEvent) hover(hoverEvent); });
+  });
+  renderer.domElement.addEventListener('pointerleave', () => { hoverEvent = null; });
+  function hover(e) {
     if (e.buttons || !model) { tip.style.display = 'none'; return; }
     const id = pickAt(e);
     const el = id && elById[id];
@@ -638,7 +655,7 @@ export function createViewer(container, { onPick } = {}) {
     tip.style.display = 'block';
     tip.style.left = `${Math.min(e.clientX - r.left + 14, r.width - 260)}px`;
     tip.style.top = `${e.clientY - r.top + 14}px`;
-  });
+  }
 
   const projected = new THREE.Vector3(), corner = new THREE.Vector3();
   function updateLabel() {
@@ -683,8 +700,12 @@ export function createViewer(container, { onPick } = {}) {
     if (!container.offsetParent) return; // hidden (the real model is shown): do not draw frames
     // A pane can be rebuilt while hidden, before ResizeObserver delivers its visible size.
     if (container.clientWidth !== viewportWidth || container.clientHeight !== viewportHeight) resize();
-    if (flight) flight.update(now);
-    controls.update();
+    if (flight) { flight.update(now); dirty = true; }
+    if (controls.update()) dirty = true; // damping still moving the camera
+    if (runners.length) dirty = true;
+    if (!dirty) return;
+    dirty = false;
+    frames++;
     if (!plan) {
       // Clip planes follow the zoom, so the model stays on screen from the whole ship down to one door.
       const d = persp.position.distanceTo(controlsP.target);
@@ -699,9 +720,18 @@ export function createViewer(container, { onPick } = {}) {
   });
   resize();
 
-  return {
-    build, update, paintNeutral, select, flyToElement, setMode, setPlan, setFilter, overview,
-    setEscape, frameRoute, setLabels, setShell, setView,
-    get mode() { return mode; }, get plan() { return plan; }, get labels() { return labelsOn; }, get shell() { return shellOn; },
+  // Every call that changes what is shown requests a frame (and again when a returned promise settles).
+  const redraws = (fn) => (...args) => {
+    const out = fn(...args);
+    invalidate();
+    if (out && typeof out.then === 'function') out.then(invalidate, invalidate);
+    return out;
   };
+  const api = { build, update, paintNeutral, select, flyToElement, setMode, setPlan, setFilter, overview, setEscape, frameRoute, setLabels, setShell, setView };
+  for (const key of Object.keys(api)) api[key] = redraws(api[key]);
+  // Live getters (Object.assign would copy their current values instead).
+  return Object.defineProperties(api, Object.getOwnPropertyDescriptors({
+    get mode() { return mode; }, get plan() { return plan; }, get labels() { return labelsOn; }, get shell() { return shellOn; },
+    get frames() { return frames; },
+  }));
 }

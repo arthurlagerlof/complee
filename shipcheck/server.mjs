@@ -15,7 +15,8 @@ import { s3ConfigFrom, createS3ModelSource } from './src/model-source-s3.mjs';
 import { createRegulationText } from './src/regulation-text.mjs';
 import { createRateLimiter } from './src/rate-limit.mjs';
 import { isIP } from 'node:net';
-import { bundledCatalogEnabled, readBundledCatalog } from './src/catalog-local.mjs';
+import { bundledCatalogEnabled, readBundledCatalog, LOCAL_CATALOG_FILES, catalogDir } from './src/catalog-local.mjs';
+import crypto from 'node:crypto';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8080);
@@ -58,6 +59,22 @@ function applyRateLimit(req, res, pathname) {
 }
 
 const localCatalog = readBundledCatalog;
+// Bundled catalog as a response: serialized once per file version (size + mtime), with a content ETag, so a reload
+// revalidates (304) instead of re-reading and re-sending the JSON. Scenarios depend on which model files exist and
+// are small: they are serialized on every request.
+const localCatalogCache = new Map(); // sourceKey -> { stamp, entry }
+function localCatalogEntry(sourceKey) {
+  let stamp = null;
+  if (sourceKey !== 'scenarios' && LOCAL_CATALOG_FILES[sourceKey]) {
+    try { const st = fs.statSync(path.join(catalogDir(), LOCAL_CATALOG_FILES[sourceKey])); stamp = `${st.size}-${st.mtimeMs}`; } catch { stamp = null; }
+  }
+  const hit = stamp && localCatalogCache.get(sourceKey);
+  if (hit && hit.stamp === stamp) return hit.entry;
+  const body = Buffer.from(JSON.stringify(localCatalog(sourceKey)));
+  const entry = { status: 200, type: 'application/json', body, etag: `"${crypto.createHash('sha256').update(body).digest('hex')}"` };
+  if (stamp) localCatalogCache.set(sourceKey, { stamp, entry });
+  return entry;
+}
 
 async function databaseCatalog(sourceKey) {
   if (LOCAL_CATALOG) return localCatalog(sourceKey);
@@ -362,15 +379,16 @@ export async function handleRequest(req, res) {
   }
   if (!applyRateLimit(req, res, p)) return;
   const catalogMatch = /^\/api\/catalog\/([a-z0-9-]+)$/.exec(p);
-  if (req.method === 'GET' && catalogMatch && LOCAL_CATALOG) {
-    try { return sendJSON(res, 200, localCatalog(catalogMatch[1])); } catch (e) { return sendJSON(res, e.status || 500, { error: e.message }); }
-  }
   if (req.method === 'GET' && catalogMatch) {
-    if (!SHIPCHECK_DATA_API_URL) {
+    if (!LOCAL_CATALOG && !SHIPCHECK_DATA_API_URL) {
       return sendJSON(res, 503, { error: 'SHIPCHECK_DATA_API_URL must point to the database-backed Complee API.' });
     }
+    let entry;
+    if (LOCAL_CATALOG) {
+      try { entry = localCatalogEntry(catalogMatch[1]); } catch (e) { return sendJSON(res, e.status || 500, { error: e.message }); }
+    }
     try {
-      const entry = await catalogEntry(catalogMatch[1]);
+      entry ??= await catalogEntry(catalogMatch[1]);
       const headers = { 'Content-Type': entry.type, 'Cache-Control': entry.etag ? 'no-cache' : 'no-store' };
       if (entry.etag) headers.ETag = entry.etag;
       const wanted = String(req.headers['if-none-match'] || '').split(',').map((v) => v.trim()).filter(Boolean);
