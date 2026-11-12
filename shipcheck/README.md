@@ -22,6 +22,18 @@ for every part, which rules apply, whether it passes, **why**, and where every v
 > Included: the checker, database-backed RCRV and cruise catalogs, the evidence intake, the demo run-through ([DEMO_SCRIPT.md](DEMO_SCRIPT.md)) and the HTML/CSV report.
 > The optional AI rule drafting and the viewer role switch remain on the branch `shipcheck-full`.
 
+## AutoCAD drawings
+
+**Open…** reads an AutoCAD general-arrangement drawing saved as DXF (R12 to current, ASCII) in the browser and checks it:
+layers named `<DECK>-<TYPE>` (`MD-CORRIDOR`, `01-DOOR`, `MD-OUTLINE`) carry the elements, closed polylines and block
+references are the footprints, block attributes and `KEY=VALUE` text are the values, and layer `COMPLEE-SHIP` holds the
+ship particulars. Every value keeps its layer and entity handle; widths without a written value are measured from the
+geometry and labelled so; anything not drawn or written stays missing. **AutoCAD markup** writes the results back as a
+DXF (R12) in the drawing's coordinates, one frame and the rule text per checked element on `COMPLEE_<DECK>_<STATUS>`
+layers, to attach as an XREF. DWG is not read (save as DXF). Guide: `public/autocad.html` (in the app: *AutoCAD guide*);
+sample: `demo/autocad-sample.dxf` (written with ezdxf by `tools/autocad/make_sample.py`); code: `src/dxf.mjs`,
+`src/autocad.mjs`; tests: `tests/autocad.test.mjs` and `tools/export/autocad-smoke.mjs` (browser).
+
 ## Run (Node 20+)
 
 ```bash

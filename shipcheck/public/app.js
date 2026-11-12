@@ -11,6 +11,7 @@ import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, r
 import { createFallbackViewer } from './viewer-fallback.js';
 import { createLocalViewer } from './viewer-stream.js';
 import { loadOfficialText } from './regulation-text.js';
+import { dxfToModel, resultsToDxf } from './src/autocad.mjs';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -142,6 +143,7 @@ function useViewer(sc) {
   $('#fallbackView').hidden = true;
   $('#planBtn').hidden = want !== 'three';
   $('#viewTools').hidden = want !== 'three';
+  $('#dxfBtn').hidden = want !== 'three'; // layout models have plan geometry to mark up; the parts model does not
   // The real model uses its deck cut. SWBS groups are not decks, and it has no exploded-deck mode.
   $('#deck').disabled = want !== 'three';
   const deckControl = $('#deck').closest('label');
@@ -1123,8 +1125,14 @@ let fileCounter = 0;
 async function openModelFile(file) {
   try {
     if (file.size > 30_000_000) throw new Error('The file is larger than 30 MB.');
-    let json;
-    try { json = JSON.parse(await file.text()); } catch { throw new Error('The file is not valid JSON.'); }
+    let json, cad = null;
+    if (/\.dwg$/i.test(file.name)) throw new Error('DWG is AutoCAD\'s binary format and cannot be read here. In AutoCAD use SAVEAS and choose "AutoCAD DXF", then open that file.');
+    const text = await file.text();
+    if (/\.dxf$/i.test(file.name) || /^\s*0\s*\r?\n\s*SECTION\b/.test(text)) {
+      ({ model: json, report: cad } = dxfToModel(text, { filename: file.name })); // throws with a message for the engineer
+    } else {
+      try { json = JSON.parse(text); } catch { throw new Error('The file is neither an AutoCAD DXF drawing nor valid JSON.'); }
+    }
     if (!json || typeof json !== 'object' || !Array.isArray(json.elements)) throw new Error('A ship model needs an "elements" list (ship/1 format; "Download model (JSON)" in the left panel gives an example).');
     if (!Array.isArray(json.decks) && !json.deck) throw new Error('A ship model needs "decks" (or a single "deck").');
     const norm = normalizeModel(structuredClone(json)); // throws on an unsupported unit
@@ -1137,10 +1145,37 @@ async function openModelFile(file) {
     const id = `file-${++fileCounter}-${file.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40)}`;
     S.scenarios.push({ id, name: `File: ${file.name}`, viewer: 'three', modelData: json });
     $('#scenario').insertAdjacentHTML('beforeend', `<option value="${esc(id)}">${esc(`File: ${file.name}`)}</option>`);
-    await loadScenario(id);
+    if (await loadScenario(id) && cad) $('#detail').innerHTML = cadReportHTML(cad);
   } catch (e) {
-    $('#detail').innerHTML = `<p class="check-bad"><b>Could not open ${esc(file.name)}.</b> ${esc(e.message)}</p>`;
+    $('#detail').innerHTML = `<p class="check-bad"><b>Could not open ${esc(file.name)}.</b> ${esc(e.message)}</p>
+      <p class="muted">AutoCAD drawings are read as DXF with the layer convention &lt;DECK&gt;-&lt;TYPE&gt;:
+      <a href="autocad.html" target="_blank" rel="noopener">AutoCAD guide</a> · <a href="demo/autocad-sample.dxf" download>sample drawing</a>.</p>`;
   }
+}
+
+// What was read from an AutoCAD drawing, and what was not: shown after the import.
+function cadReportHTML(r) {
+  const f = S.results.element_summary;
+  return `<h1>AutoCAD drawing imported</h1>
+    <div class="muted">${esc(r.file)}${r.version ? ` · DXF ${esc(r.version)}` : ''} · drawing unit ${esc(r.units)}${r.units_stated ? '' : ' (not stated in the file)'}</div>
+    <p><b>${r.elements}</b> elements on <b>${r.decks}</b> deck${r.decks === 1 ? '' : 's'} checked:
+      <span class="badge st-non_compliant">${f.non_compliant} non-compliant</span>
+      <span class="badge st-not_enough_info">${f.not_enough_info} not enough info</span>
+      <span class="badge st-compliant">${f.compliant} compliant</span></p>
+    ${r.warnings.length ? `<h2>To check in the drawing (${r.warnings.length})</h2>${r.warnings.map((w) => `<div class="note">${esc(w)}</div>`).join('')}` : ''}
+    <h2>Layers read</h2>
+    <table class="kv">${r.layers.map((l) => `<tr><td>${esc(l.layer)}</td><td>${esc(l.type.replace(/_/g, ' '))} · deck ${esc(l.deck)}${l.type === 'outline' ? '' : ` · ${l.elements} element${l.elements === 1 ? '' : 's'}`}</td></tr>`).join('')}</table>
+    ${r.skipped_layers.length ? `<h2>Not imported</h2><div class="na">Layers outside the naming convention &lt;DECK&gt;-&lt;TYPE&gt;: ${r.skipped_layers.map((l) => `<code>${esc(l.layer)}</code> (${l.entities})`).join(', ')}.</div>` : ''}
+    ${r.ignored_entities.length ? `<div class="na">Entity types not read: ${esc(r.ignored_entities.join(', '))}.</div>` : ''}
+    <p class="muted" style="margin-top:8px">Every value shows its layer and entity handle. Widths without a written value are measured from the geometry and labelled so.
+      <b>AutoCAD markup</b> (top bar) writes the results back as a DXF in the drawing's coordinates. <a href="autocad.html" target="_blank" rel="noopener">AutoCAD guide</a></p>`;
+}
+
+function exportDXF() {
+  const { dxf, frames, findings } = resultsToDxf(S.model, S.results);
+  if (!frames) { alert('No checked element with geometry to mark up.'); return; }
+  download(`${S.sc.id}-complee-markup.dxf`, dxf, 'application/dxf');
+  void findings;
 }
 
 // ---------- report export (shared with the CLI: src/report.mjs) ----------
@@ -1458,6 +1493,7 @@ $('#demoBtn').onclick = runDemo;
 $('#reportBtn').onclick = exportReport;
 $('#traceBtn').onclick = () => ($('#tracePanel').hidden ? openTrace() : closeTrace());
 $('#csvBtn').onclick = exportCSV;
+$('#dxfBtn').onclick = exportDXF;
 addEventListener('keydown', (e) => {
   if (!S.demo) return;
   if (e.key === 'Escape') { S.demo.stop = true; S.demo.next?.(); return; }

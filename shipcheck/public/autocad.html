@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Complee - AutoCAD guide</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="style.css" />
+<style>
+  body { overflow: auto; }
+  .guide { max-width: 860px; margin: 0 auto; padding: 24px 20px 60px; line-height: 1.55; }
+  .guide h1 { font-size: 24px; margin: 6px 0 4px; } .guide h2 { font-size: 17px; margin: 26px 0 8px; }
+  .guide table { border-collapse: collapse; width: 100%; margin: 8px 0; } .guide td, .guide th { border: 1px solid #dde2e8; padding: 6px 9px; text-align: left; vertical-align: top; font-size: 13.5px; }
+  .guide th { background: #f3f5f8; } .guide code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; }
+  .guide ol, .guide ul { padding-left: 22px; } .guide li { margin: 3px 0; }
+</style>
+</head>
+<body>
+<div class="guide">
+  <p><a href="index.html">← Back to the review</a></p>
+  <h1>AutoCAD drawings in Complee</h1>
+  <p class="muted">A general-arrangement drawing is opened as DXF, checked against the rule set, and the results are written
+    back as a DXF markup in the drawing's own coordinates. Nothing is uploaded: the file is read in your browser.</p>
+
+  <h2>1. In three steps</h2>
+  <ol>
+    <li>In AutoCAD: <code>SAVEAS</code> → <b>AutoCAD DXF</b> (any version from R12 to current, ASCII). DWG is a closed binary format and is not read.</li>
+    <li>In Complee: <b>Open…</b> and choose the <code>.dxf</code> file. The right panel lists what was read and what was not.</li>
+    <li><b>AutoCAD markup</b> downloads the results as DXF. In AutoCAD: <code>XATTACH</code> the file at insertion point 0,0,0, scale 1.
+      Each checked element has a frame on a layer <code>COMPLEE_&lt;DECK&gt;_NON_COMPLIANT</code> (red), <code>…_NOT_ENOUGH_INFO</code> (orange)
+      or <code>…_COMPLIANT</code> (green), with the rule, the measured and the required value as text.</li>
+  </ol>
+  <p>Try it with the <a href="demo/autocad-sample.dxf" download>sample drawing</a> (two decks, three planted findings, fictional values).</p>
+
+  <h2>2. Layer convention</h2>
+  <p>The layer name says what an entity is: <code>&lt;DECK&gt;-&lt;TYPE&gt;</code>, for example <code>MD-CORRIDOR</code> or <code>01-DOOR</code>.
+    The type is the last part of the name; <code>-</code>, <code>_</code>, <code>|</code> and <code>$</code> separate the parts, upper or lower case.
+    A layer with only a type (<code>STAIRS</code>) belongs to a single deck called <code>DECK</code>.</p>
+  <table>
+    <tr><th>Type word (last part of the layer name)</th><th>Element</th></tr>
+    <tr><td><code>OUTLINE</code>, <code>DECKLINE</code>, <code>HULL</code></td><td>Deck outline and deck data (see 4)</td></tr>
+    <tr><td><code>CORRIDOR</code>, <code>PASSAGE</code></td><td>Corridor</td></tr>
+    <tr><td><code>DOOR</code></td><td>Door</td></tr>
+    <tr><td><code>STAIR</code>, <code>LADDER</code>, <code>TRUNK</code>, <code>RAMP</code></td><td>Stair, ladder, escape trunk, ramp</td></tr>
+    <tr><td><code>MUSTER</code>, <code>ASSEMBLY</code></td><td>Muster station</td></tr>
+    <tr><td><code>RAIL</code>, <code>GUARDRAIL</code></td><td>Guard rail</td></tr>
+    <tr><td><code>SPACE</code>, <code>ROOM</code>, <code>CABIN</code>, <code>COMPARTMENT</code></td><td>Room</td></tr>
+    <tr><td><code>MACHINERY</code>, <code>ENGINEROOM</code></td><td>Machinery space</td></tr>
+    <tr><td><code>TANK</code>, <code>FUELTANK</code>, <code>LIFERAFT</code></td><td>Tank, fuel tank, liferaft</td></tr>
+  </table>
+  <p>Layers with other names (dimensions, title block, hatching) are not imported and are listed after the import.</p>
+
+  <h2>3. Elements and their values</h2>
+  <ul>
+    <li><b>One element</b> is a closed polyline or a block reference on a type layer. Its footprint is the bounding box of the entity;
+      a shape that is not a rectangle gets a note saying so. Open lines and arcs are not elements.</li>
+    <li><b>Name:</b> text or multiline text placed inside the footprint, on the same layer.</li>
+    <li><b>Values:</b> block attributes, or lines <code>KEY=VALUE</code> in that text: <code>CLEAR_WIDTH=850mm</code>, <code>SILL_HEIGHT=300mm</code>,
+      <code>HEIGHT=37.4in</code>, <code>WEATHERTIGHT=YES</code>, <code>ZONE=open_deck</code>. Units: mm, cm, m, in, ft; a number without unit is in drawing units.
+      <code>ID=</code> sets the element id (otherwise deck, type and the entity handle), <code>TYPE=</code> overrides the layer's type.</li>
+    <li><b>Measured widths:</b> a corridor, stair, ramp or ladder without <code>CLEAR_WIDTH</code> gets the drawn width, a door the drawn door width.
+      The value is labelled "measured from the drawing geometry, not a stated clear width". A written value always wins.</li>
+    <li><b>Missing values stay missing.</b> A sill height or rail height that is not written is reported as <i>not enough info</i>, never assumed.</li>
+    <li><b>Height in 3D:</b> the entity's <i>Thickness</i> property, or <code>EXTRUSION=2700</code>. A stair without it is assumed to reach the next deck (noted on the element).</li>
+    <li><b>Traceability:</b> every value shows the file, the layer and the entity handle it came from.</li>
+  </ul>
+
+  <h2>4. Decks and ship particulars</h2>
+  <ul>
+    <li>Layer <code>&lt;DECK&gt;-OUTLINE</code>: the closed deck outline, text with <code>NAME=</code>, <code>ELEVATION=</code> and <code>HEIGHT=</code>
+      (the outline's own elevation is used when <code>ELEVATION</code> is not written), and optionally one <b>POINT</b>.</li>
+    <li>Decks drawn side by side on one sheet: put a POINT on each deck's outline layer at the same reference position of the ship
+      (for example aft perpendicular on the centreline). Complee stacks the decks on these points, and the markup is written back at them.</li>
+    <li>Stairs connect two decks only when the decks have elevations.</li>
+    <li>Layer <code>COMPLEE-SHIP</code>: text with the ship particulars the rules depend on, one per line:
+      <code>NAME=</code>, <code>TYPE=research</code> (or passenger, cargo, special_purpose), <code>LENGTH_OVERALL=60.6m</code>, <code>BEAM=</code>,
+      <code>GROSS_TONNAGE=</code>, <code>CLASS_SOCIETY=DNV</code>, <code>OPERATING_AREA=US, Caribbean</code>, <code>BERTHS=</code>.
+      Without them, rules that depend on the ship report <i>not enough info</i>.</li>
+    <li>Drawing unit: the <code>UNITS</code> setting of the drawing (millimetres, centimetres, metres, inches, feet). A drawing without a unit is read
+      as millimetres (inches for an imperial drawing) and flagged.</li>
+  </ul>
+
+  <h2>5. Limits</h2>
+  <ul>
+    <li>2D plan geometry only: 3D solids, hatches, dimensions, ellipses and splines are not read (they are counted in the import summary).</li>
+    <li>Footprints are axis-aligned boxes; a rotated block is covered by its bounding box.</li>
+    <li>Results are an aid for the engineer's review. Rule values are unverified until checked against the official text.</li>
+  </ul>
+</div>
+</body>
+</html>

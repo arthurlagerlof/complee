@@ -160,7 +160,7 @@ const localOnly = (req) => { if (!isLoopback(req)) throw Object.assign(new Error
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.js': 'text/javascript',
   '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.csv': 'text/csv', '.png': 'image/png',
-  '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.wasm': 'application/wasm',
+  '.glb': 'model/gltf-binary', '.dxf': 'application/dxf', '.gltf': 'model/gltf+json', '.wasm': 'application/wasm',
 };
 // URL prefix -> folder on disk. Anything else is 404.
 const STATIC = [
