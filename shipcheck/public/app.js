@@ -8,8 +8,9 @@ import { traceMatrix, traceCSV, cellLabel } from './src/trace.mjs';
 import { createViewer, STATUS_HEX } from './viewer3d.js';
 import { analyzeEscape, ESCAPE_LABEL } from './src/escape.mjs';
 import { compareRevisions } from './src/compare.mjs';
+import { verifySuggestion } from './src/escape-actions.mjs';
 import { consistencyIssues, widthCheck } from './src/consistency.mjs';
-import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, registerSummary, withDisposition, registerCSV } from './src/dispositions.mjs';
+import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, registerSummary, withDisposition, registerCSV, projectKey } from './src/dispositions.mjs';
 import { createFallbackViewer } from './viewer-fallback.js';
 import { createLocalViewer } from './viewer-stream.js';
 import { loadOfficialText } from './regulation-text.js';
@@ -282,7 +283,7 @@ async function loadScenario(id) {
     S.norm = normalizeModel(S.model);
     S.expected = expected;
     S.edits.clear();
-    S.register = loadRegister(sc.id);
+    S.register = loadRegister(sc, model);
     closeRegister();
     S.selected = null;
     S.ruleView = null;
@@ -310,6 +311,8 @@ async function loadScenario(id) {
     S.filter.deck = '';
     S.filter.text = '';
     S.compare = null;
+    S.explain = new Map();
+    S.escAi = null;
     setMeasureMode(false);
     renderAll();
     $('#detail').innerHTML = `<p class="muted">Click an element in the model or in the list to see every rule that applies, why it passes or fails, and where each value comes from.</p>`;
@@ -643,12 +646,15 @@ function renderEscape() {
         <span><b>${esc(o.id)}</b> ${esc(el?.name ?? '')} <span class="deckTag">· ${esc(el?.deck ?? '')}</span><span class="len">${o.primary ? metres(o.primary.length_mm) : '–'}</span></span>
       </div>`;
     }).join('')}</div>
-    <div style="display:flex;gap:6px;margin-top:6px"><button id="escCsv">Export routes (CSV)</button></div>
+    <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button id="escAiBtn" class="ai-btn" ${s.single_route + s.no_route ? '' : 'disabled'} title="AI proposes design changes; Complee recomputes every proposal and shows only those that give rooms a second independent route">✦ Suggest improvements</button><button id="escCsv">Export routes (CSV)</button></div>
+    <div id="escAi">${escAiHTML()}</div>
     <details class="assume"><summary>How the routes are derived</summary><ul>${a.assumptions.map((t) => `<li>${esc(t)}</li>`).join('')}</ul></details>`;
   box.querySelectorAll('.item.esc').forEach((n) => (n.onclick = () => select(n.dataset.id)));
   box.querySelectorAll('a.via').forEach((n) => (n.onclick = (e) => { e.preventDefault(); select(n.dataset.id); }));
   if ($('#escReset')) $('#escReset').onclick = () => { S.blocked.clear(); toggleBlockRefresh(); };
   $('#escCsv').onclick = exportEscapeCSV;
+  $('#escAiBtn').onclick = suggestEscapeImprovements;
+  wireEscAi();
 }
 
 function toggleBlockRefresh() {
@@ -888,6 +894,7 @@ function renderResults(id) {
         ${r.basis !== 'explicit' ? `<span class="tag grey" title="${esc(ruleById(r.rule_id)?.basis_note || '')}">basis: ${esc(r.basis)}</span>` : ''}
         ${r.reference_url ? `<a class="tag grey" href="${esc(r.reference_url)}" target="_blank" rel="noopener">official source ↗</a>` : ''}
       </div>
+      ${r.status !== 'compliant' ? `<div class="ai-row"><button class="tiny ai-btn explainBtn" data-rule="${esc(r.rule_id)}" title="Plain-language explanation, exceptions to check and ways to resolve it (AI)">✦ Explain</button></div><div class="ai-out" data-explain="${esc(r.rule_id)}">${explainHTML(id, r)}</div>` : ''}
       ${r.status !== 'compliant' ? dispositionHTML(id, r) : ''}
       </div>`).join('') || '<p class="muted">No rule in the current rule set applies to this element.</p>';
 
@@ -917,6 +924,7 @@ function renderResults(id) {
   document.querySelectorAll('#dResults .goto').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); select(a.dataset.id); }));
   document.querySelectorAll('#dResults .ruleLink').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); showRule(a.dataset.rule); }));
   wireDispositions($('#dResults'));
+  document.querySelectorAll('#dResults .explainBtn').forEach((b) => (b.onclick = () => explainFinding(id, b.dataset.rule)));
 }
 
 function lengthParams() {
@@ -1102,14 +1110,174 @@ function comparisonHTML() {
   </div>`;
 }
 
+// ---------- AI assistance (backend model chain; the rule checker keeps every decision) ----------
+
+async function assist(name, payload) {
+  const res = await fetch(`api/assist/${name}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  let data = null;
+  try { data = await res.json(); } catch { /* reported below */ }
+  if (!res.ok) throw new Error(data?.error || `The AI service answered ${res.status}.`);
+  return data;
+}
+
+const aiFooter = (r) => `<div class="ai-foot">AI-generated by ${esc(r.model)} in ${(r.duration_ms / 1000).toFixed(1)} s${r.attempts?.length > 1 ? ` (after ${r.attempts.length - 1} fallback${r.attempts.length > 2 ? 's' : ''})` : ''}. Check against the official rule text before relying on it.</div>`;
+
+function explainKey(id, r) { return `${id}|${r.rule_id}|${r.measured ?? ''}|${r.status}`; }
+
+function explainHTML(id, r) {
+  const st = S.explain?.get(explainKey(id, r));
+  if (!st) return '';
+  if (st.loading) return '<div class="ai-wait"><span class="spin"></span>Asking the AI… (usually 3–6 s)</div>';
+  if (st.error) return `<div class="check-bad">${esc(st.error)}</div>`;
+  const x = st.data.result || {};
+  const list = (title, items) => (items?.length ? `<div class="ai-h">${title}</div><ul>${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '');
+  return `<div class="ai-box">
+    <p>${esc(x.summary || '')}</p>
+    ${list('Why', x.reasons)}
+    ${list('Exceptions and alternatives to check', x.exceptions_to_check)}
+    ${x.options?.length ? `<div class="ai-h">Ways to resolve it</div><ol>${x.options.map((o) => `<li><b>${esc(o.change)}</b><br><span class="muted">${esc(o.effect)}</span></li>`).join('')}</ol>` : ''}
+    ${list('Questions for the reviewer', x.questions)}
+    ${aiFooter(st.data)}
+  </div>`;
+}
+
+async function explainFinding(id, ruleId) {
+  const e = S.results.elements[id], r = e?.results.find((x) => x.rule_id === ruleId);
+  if (!r) return;
+  const key = explainKey(id, r);
+  if (S.explain.get(key)?.loading || S.explain.get(key)?.data) { if (S.explain.get(key)?.data) S.explain.delete(key); renderResults(id); return; }
+  const rule = ruleById(ruleId) || {};
+  const el = elById(id) || {};
+  const ship = Object.fromEntries(Object.entries(S.model.ship || {}).map(([k, v]) => [k, v && typeof v === 'object' && 'value' in v ? `${v.value}${v.unit && v.unit !== 'mm' ? ` ${v.unit}` : ''}` : v]));
+  S.explain.set(key, { loading: true });
+  renderResults(id);
+  try {
+    const data = await assist('explain-finding', {
+      rule: { id: rule.id, source: rule.source, clause: rule.clause, text: rule.text, text_status: rule.text_status, verified: rule.verified, check: rule.check, parameter: rule.parameter, value: rule.value, unit: rule.unit, applies_to: rule.applies_to },
+      finding: { element: id, name: el.name, type: el.type, deck: deckName(el.deck), status: r.status, measured: r.measured, required: r.required, explanation: r.explanation, inputs: r.inputs },
+      ship,
+    });
+    S.explain.set(key, { data });
+  } catch (err) {
+    S.explain.set(key, { error: err.message });
+  }
+  if (S.selected === id) renderResults(id);
+}
+
+// Escape-route suggestions: the AI proposes actions; every proposal is applied to a copy of the model and the routes
+// are recomputed. Only proposals that give rooms a second independent route (and make none worse) are offered.
+function escAiHTML() {
+  const st = S.escAi;
+  if (!st) return '';
+  if (st.loading) return '<div class="ai-wait"><span class="spin"></span>The AI proposes changes; Complee recomputes each one…</div>';
+  if (st.error) return `<div class="check-bad">${esc(st.error)}</div>`;
+  const good = st.items.filter((i) => i.check.ok), dropped = st.items.filter((i) => !i.check.ok);
+  return `<div class="ai-box">
+    ${good.length ? good.map((i, n) => `<div class="esc-sug ${st.shown === i ? 'on' : ''}">
+      <b>${esc(i.s.title)}</b>
+      <div class="muted">${esc(i.s.rationale || '')}</div>
+      <div class="ok-line">✓ Recomputed: ${i.check.improved.length === 1 ? '1 room gets' : `${i.check.improved.length} rooms get`} a second independent route (${i.check.improved.map((r) => `<a href="#" class="via" data-id="${esc(r)}">${esc(r)}</a>`).join(', ')})</div>
+      ${i.ruleIssues.length ? `<div class="disp-warn">⚠ The rule check finds ${i.ruleIssues.length} issue${i.ruleIssues.length === 1 ? '' : 's'} in the proposed elements: ${i.ruleIssues.map((f) => `${esc(f.rule_id)} ${esc(f.measured ?? 'missing')} (required ${esc(f.required)})`).join('; ')}. Adjust before adopting it.</div>` : '<div class="ok-line">✓ The proposed elements pass the rule check.</div>'}
+      <div class="esc-sug-actions"><button class="tiny escShow" data-n="${st.items.indexOf(i)}">${st.shown === i ? 'Hide' : 'Show in 3D'}</button><button class="tiny escOpen" data-n="${st.items.indexOf(i)}" title="Open the model with this change as a new revision (compare and register carry over)">Open as revision</button></div>
+    </div>`).join('') : '<p class="muted">None of the proposals gave a room a second independent route.</p>'}
+    ${dropped.length ? `<details class="assume"><summary>${dropped.length} proposal${dropped.length === 1 ? '' : 's'} dropped after recomputing</summary><ul>${dropped.map((i) => `<li><b>${esc(i.s.title)}</b>: ${esc(i.check.problems.join('; ') || (i.check.worse.length ? `makes ${i.check.worse.join(', ')} worse` : 'no room gains a second route'))}</li>`).join('')}</ul></details>` : ''}
+    ${aiFooter(st.data)}
+  </div>`;
+}
+
+function wireEscAi() {
+  const box = $('#escAi');
+  if (!box) return;
+  box.querySelectorAll('a.via').forEach((n) => (n.onclick = (e) => { e.preventDefault(); select(n.dataset.id); }));
+  box.querySelectorAll('.escShow').forEach((b) => (b.onclick = () => {
+    const item = S.escAi.items[Number(b.dataset.n)];
+    S.escAi.shown = S.escAi.shown === item ? null : item;
+    const ghosts = S.escAi.shown ? normalizeModel(structuredClone({ ...S.model, elements: item.check.added })).elements : [];
+    views.three.setGhosts(ghosts);
+    renderEscape();
+  }));
+  box.querySelectorAll('.escOpen').forEach((b) => (b.onclick = () => {
+    const item = S.escAi.items[Number(b.dataset.n)];
+    const name = `${(S.sc.modelData ? S.sc.name.replace(/^File: /, '').replace(/\.json$/i, '') : S.model.name)} - ${item.s.title}`.slice(0, 80);
+    openModelFile(new File([JSON.stringify(item.check.model)], `${name.replace(/[^\w .()-]+/g, '_')}.json`));
+  }));
+}
+
+async function suggestEscapeImprovements() {
+  const a = S.escape;
+  if (!a) return;
+  const rooms = Object.values(a.origins).filter((o) => o.room && o.status !== 'two_routes' && o.status !== 'direct');
+  const analysis = {
+    muster_stations: a.musters,
+    rooms_needing_a_second_route: rooms.map((o) => ({ room: o.id, status: o.status, every_route_passes: o.shared_gates ?? [], shortest_route: o.primary?.via ?? [] })),
+    not_connected: a.disconnected,
+    blocked_what_if: a.blocked,
+    method: 'Two routes are independent when the second uses no stair, ladder, escape trunk or door of the first.',
+  };
+  const elements = S.norm.elements.filter((e) => e.geom_mm && !e.virtual).map((e) => ({
+    id: e.id, type: e.type, name: e.name, deck: e.deck,
+    x: Math.round(e.geom_mm.x), y: Math.round(e.geom_mm.y), lx: Math.round(e.geom_mm.lx), ly: Math.round(e.geom_mm.ly),
+    ...(['stair', 'ladder', 'escape_trunk'].includes(e.type) ? { leads_up_to_next_deck: true } : {}),
+  }));
+  const decks = S.norm.decks.map((d) => ({ id: d.id, name: d.name, elevation_mm: d.elevation_mm }));
+  // Minimum clear widths of the rules that apply in this model, so proposals are sized to pass the check.
+  const applied = new Set(Object.values(S.results.elements).flatMap((e) => e.results.map((r) => r.rule_id)));
+  analysis.minimum_clear_width_mm = {};
+  for (const r of allRules()) {
+    if (!applied.has(r.id) || r.check !== 'min' || r.parameter !== 'clear_width' || typeof r.value !== 'number') continue;
+    const mm = r.value * (UNIT_TO_MM[r.unit] ?? 1);
+    for (const t of r.applies_to?.types ?? []) analysis.minimum_clear_width_mm[t] = Math.max(analysis.minimum_clear_width_mm[t] ?? 0, mm);
+  }
+  S.escAi = { loading: true };
+  views.three.setGhosts([]);
+  renderEscape();
+  try {
+    const data = await assist('escape-suggestions', { analysis, elements, decks });
+    const current = S.escape;
+    const items = (data.result?.suggestions ?? []).map((s) => {
+      const check = verifySuggestion(S.model, s, current);
+      // The rule check of the proposal itself: a new passage or door has to meet the same rules as the rest.
+      const added = new Set(check.added.map((e) => e.id));
+      const ruleIssues = check.added.length ? findingsOf(checkModel(structuredClone(check.model), allRules())).filter((f) => added.has(f.element)) : [];
+      return { s, check, ruleIssues };
+    }).sort((a, b) => (b.check.ok - a.check.ok) || (a.ruleIssues.length - b.ruleIssues.length) || (b.check.improved.length - a.check.improved.length));
+    S.escAi = { data, items, shown: null };
+  } catch (err) {
+    S.escAi = { error: err.message };
+  }
+  renderEscape();
+}
+
 // ---------- findings register: how each finding is handled (never changes a rule result) ----------
 
-const registerKey = (scenarioId) => `complee.register.${scenarioId}`;
-function loadRegister(scenarioId) {
-  try { const v = JSON.parse(localStorage.getItem(registerKey(scenarioId)) || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch { return {}; }
+// One register per project, shared by all its revisions: dispositions written for revision A are still there when
+// revision B is opened. A disposition whose value changed since then is flagged "review again" (registerRows).
+const registerKey = (key) => `complee.register.${key}`;
+const readJSON = (key, fallback) => {
+  try { const v = JSON.parse(localStorage.getItem(key) || 'null'); return v && typeof v === 'object' && !Array.isArray(v) ? v : fallback; } catch { return fallback; }
+};
+const revisionLabel = (sc) => (sc.modelData ? sc.name.replace(/^File: /, '') : sc.name);
+function loadRegister(sc, model) {
+  S.registerProject = projectKey(model);
+  let store = readJSON(registerKey(S.registerProject), null);
+  // Registers written before registers were per project were stored per scenario: take them over once.
+  if (!store) {
+    store = readJSON(registerKey(sc.id), {});
+    if (Object.keys(store).length) { try { localStorage.removeItem(registerKey(sc.id)); } catch { /* keep it */ } }
+  }
+  const meta = readJSON(registerKey(`${S.registerProject}.meta`), { revisions: [] });
+  const current = revisionLabel(sc);
+  const previous = meta.last;
+  S.registerCarried = previous && previous !== current && Object.keys(store).length ? { from: previous, count: Object.keys(store).length } : null;
+  meta.last = current;
+  if (!meta.revisions.includes(current)) meta.revisions.push(current);
+  meta.revisions = meta.revisions.slice(-50);
+  S.registerMeta = meta;
+  try { localStorage.setItem(registerKey(`${S.registerProject}.meta`), JSON.stringify(meta)); } catch { /* storage full or blocked */ }
+  return store;
 }
 function saveRegister() {
-  try { localStorage.setItem(registerKey(S.sc.id), JSON.stringify(S.register)); } catch (e) { console.warn('The findings register could not be saved in this browser:', e.message); }
+  try { localStorage.setItem(registerKey(S.registerProject), JSON.stringify(S.register)); } catch (e) { console.warn('The findings register could not be saved in this browser:', e.message); }
 }
 const currentFinding = (key) => findingsOf(S.results).find((f) => findingKey(f) === key);
 
@@ -1131,7 +1299,7 @@ function wireDispositions(root) {
   const commit = (n, patch) => {
     const finding = currentFinding(n.dataset.key);
     if (!finding) return;
-    S.register = withDisposition(S.register, finding, patch);
+    S.register = withDisposition(S.register, finding, { ...patch, revision: revisionLabel(S.sc) });
     saveRegister();
     renderRegisterButton();
     // Redraw both places a disposition is shown; focus is not lost because this runs on change, not on input.
@@ -1162,7 +1330,7 @@ function openRegister() {
       <td class="part" data-id="${esc(r.element)}" data-rule="${esc(r.rule_id)}"><b>${esc(r.element)}</b> ${esc(r.name)}</td>
       <td>${esc(r.rule_id)}</td><td>${esc(r.measured)}</td><td>${esc(r.required)}</td>
       <td class="dispCell">${dispositionControls(r)}${r.stale ? '<div class="disp-warn">Value changed since the disposition: review again.</div>' : ''}${r.missing_note ? '<div class="disp-warn">Justification required.</div>' : ''}</td>
-      <td class="muted">${r.updated ? esc(new Date(r.updated).toLocaleDateString('en-GB')) : ''}</td></tr>`;
+      <td class="muted">${r.updated ? esc(new Date(r.updated).toLocaleDateString('en-GB')) : ''}${r.revision ? `<br>${esc(r.revision)}` : ''}</td></tr>`;
   panel.innerHTML = `<div class="trace-head">
       <b>Findings register</b>
       <span class="muted">${s.total} finding${s.total === 1 ? '' : 's'} · ${s.open} open · ${s.total - s.open} with a disposition${s.stale ? ` · <b class="check-bad">${s.stale} to review again</b>` : ''}${s.missing_note ? ` · <b class="check-bad">${s.missing_note} without justification</b>` : ''}${S.edits.size ? ' · includes what-if values' : ''}</span>
@@ -1173,8 +1341,9 @@ function openRegister() {
     </div>
     <div class="trace-wrap">
     ${comparisonHTML()}
-    <p class="muted" style="margin:8px 0">A disposition records how a finding is handled and by whom. It never changes the result of the rule check. Saved in this browser for this model; export the CSV or the report to share it.</p>
-    ${current.length ? `<table class="register"><thead><tr><th>Check result</th><th>Element</th><th>Rule</th><th>Measured</th><th>Required</th><th>Disposition · responsible · justification</th><th>Updated</th></tr></thead><tbody>${current.map(row).join('')}</tbody></table>`
+    ${S.registerCarried ? `<div class="note"><b>Carried over from ${esc(S.registerCarried.from)}:</b> ${S.registerCarried.count} disposition${S.registerCarried.count === 1 ? '' : 's'} of the earlier revision${s.stale ? `; <b>${s.stale}</b> must be reviewed again because the value or result changed` : ''}${s.resolved ? `; ${s.resolved} no longer reported by the check` : ''}.</div>` : ''}
+    <p class="muted" style="margin:8px 0">A disposition records how a finding is handled and by whom. It never changes the result of the rule check. One register per project, shared by all its revisions (${(S.registerMeta?.revisions ?? []).length} seen); saved in this browser. Export the CSV or the report to share it.</p>
+    ${current.length ? `<table class="register"><thead><tr><th>Check result</th><th>Element</th><th>Rule</th><th>Measured</th><th>Required</th><th>Disposition · responsible · justification</th><th>Updated · revision</th></tr></thead><tbody>${current.map(row).join('')}</tbody></table>`
       : `<p class="muted">${s.total ? 'No finding needs attention.' : 'The rule check reports no findings for this model.'}</p>`}
     ${resolved.length ? `<h2>No longer reported by the check (${resolved.length})</h2>
       <table class="register"><tbody>${resolved.map((r) => `<tr><td><b>${esc(r.element)}</b> ${esc(r.name)}</td><td>${esc(r.rule_id)}</td><td>was: ${esc(r.measured)}</td><td>${esc(DISPOSITION_LABEL[r.disposition])}</td><td>${esc(r.responsible)}</td><td>${esc(r.note)}</td><td><button class="tiny regDrop" data-key="${esc(r.key)}">remove</button></td></tr>`).join('')}</tbody></table>` : ''}

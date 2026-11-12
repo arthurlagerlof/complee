@@ -60,16 +60,29 @@ test('escape: rooms are never a shortcut between corridors, and a 100 mm gap is 
   assert.ok(!a.origins['01-SR1'].primary.via.includes('01-CR5'));
 });
 
-test('escape what-if: blocking the main stair reroutes the crew and cuts off the science berthing', () => {
+test('escape what-if: blocking the main stair sends everyone above the main deck down the forward escape ladder', () => {
   const a = analyzeEscape(model(), { blocked: new Set(['MD-ST1']) });
   assert.deepEqual(a.blocked, ['MD-ST1']);
   assert.equal(a.origins['MD-ST1'], undefined);
-  assert.equal(a.origins['03-WH'].status, 'no_route', 'the pilothouse has only the stair tower');
-  // Without the stair landing the forward escape ladder cannot be reached either.
-  assert.equal(a.origins['01-CR1'].status, 'no_route');
+  for (const id of ['03-WH', '01-CR1', '01-SR1', '02-SR1']) {
+    assert.ok(a.origins[id].primary.via.includes('01-ESC1'), `${id} leaves by the escape ladder`);
+    assert.ok(!a.origins[id].primary.via.includes('MD-ST1'), `${id} does not use the blocked stair`);
+    assert.equal(a.origins[id].status, 'single_route', `${id}: with the stair gone the ladder is the only way`);
+  }
   const door = analyzeEscape(model(), { blocked: new Set(['MD-D1']) });
   assert.ok(door.origins['MD-MAINLAB'].primary.via.includes('MD-D3'), 'labs leave through the hangar door instead');
   assert.ok(!door.origins['MD-MAINLAB'].primary.via.includes('MD-D1'));
+});
+
+test('escape: the alternative never even crosses a stair landing or door of the shortest route', () => {
+  // Regression: an alternative once crossed the main stair landing on deck 01, so blocking that stair cut both routes.
+  const a = analyzeEscape(model());
+  for (const o of rooms(a)) {
+    if (!o.secondary) continue;
+    for (const gate of [...o.primary.verticals, ...o.primary.doors]) assert.ok(!o.secondary.via.includes(gate), `${o.id}: ${gate} is on both routes`);
+    const without = analyzeEscape(model(), { blocked: new Set(o.primary.verticals) });
+    assert.notEqual(without.origins[o.id].status, 'no_route', `${o.id}: blocking the first route's stairs must leave a way out`);
+  }
 });
 
 test('escape: a model without a muster station is not analysed as if it had one', () => {

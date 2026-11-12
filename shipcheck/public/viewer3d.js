@@ -324,6 +324,7 @@ export function createViewer(container, { onPick } = {}) {
     model = m; results = r; selectedId = null; selBox.visible = false;
     blocked = new Set(); escape = null; escapeGroup = null; runners = [];
     clearMeasure();
+    ghosts = [];
     model.decks.forEach((d, i) => (deckIndex[d.id] = i));
 
     buildShell();
@@ -573,6 +574,31 @@ export function createViewer(container, { onPick } = {}) {
 
   function setFilter(ids) { filterIds = ids; applyFilter(); }
   function setLabels(on) { labelsOn = on; }
+  // AI proposals (not in the design): translucent green boxes with a dashed outline, per deck.
+  let ghosts = [];
+  function setGhosts(list) {
+    for (const g of ghosts) { g.parent?.remove(g); g.traverse((o) => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); }
+    ghosts = [];
+    for (const item of list ?? []) {
+      const gm = item.geom_mm, group = deckGroups[item.deck];
+      if (!gm || !group) continue;
+      const geo = new THREE.BoxGeometry(Math.max(gm.lx, 30) * M, Math.max(gm.h, 30) * M, Math.max(gm.ly, 30) * M);
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x16a34a, transparent: true, opacity: 0.45, depthWrite: false, emissive: 0x0b5d2a }));
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), new THREE.LineDashedMaterial({ color: 0x0b5d2a, dashSize: 0.3, gapSize: 0.2 }));
+      edges.computeLineDistances();
+      mesh.add(edges);
+      mesh.position.set((gm.x + gm.lx / 2) * M, (gm.z + gm.h / 2) * M, -(gm.y + gm.ly / 2) * M);
+      mesh.renderOrder = 9;
+      group.add(mesh);
+      ghosts.push(mesh);
+    }
+    if (ghosts.length) {
+      const box = new THREE.Box3();
+      for (const g of ghosts) box.expandByObject(g);
+      frameBox(box.expandByScalar(6), 800, 1.4, new THREE.Vector3(-0.4, 1, 0.7));
+    }
+  }
+
   function setShell(on) { shellOn = on; root.children.forEach((c) => { if (c.userData.shell) c.visible = shellOn && mode === 'all'; }); }
 
   // ---------- escape-route overlay ----------
@@ -958,12 +984,12 @@ export function createViewer(container, { onPick } = {}) {
     if (out && typeof out.then === 'function') out.then(invalidate, invalidate);
     return out;
   };
-  const api = { build, update, paintNeutral, select, flyToElement, setMode, setPlan, setFilter, overview, setEscape, frameRoute, setLabels, setShell, setView, setMeasure, setSource };
+  const api = { build, update, paintNeutral, select, flyToElement, setMode, setPlan, setFilter, overview, setEscape, frameRoute, setLabels, setShell, setView, setMeasure, setSource, setGhosts };
   for (const key of Object.keys(api)) api[key] = redraws(api[key]);
   // Live getters (Object.assign would copy their current values instead).
   return Object.defineProperties(api, Object.getOwnPropertyDescriptors({
     get mode() { return mode; }, get plan() { return plan; }, get labels() { return labelsOn; }, get shell() { return shellOn; },
-    get frames() { return frames; }, get measuring() { return measureOn; },
+    get frames() { return frames; }, get ghostCount() { return ghosts.length; }, get measuring() { return measureOn; },
     get cameraDistance() { return persp.position.distanceTo(controlsP.target); },
   }));
 }

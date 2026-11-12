@@ -206,6 +206,38 @@ async function receiveRvt(req, res, url) {
   return sendJSON(res, 202, rvtConverter.start(tmp, { name, sha: hash.digest('hex'), bytes }));
 }
 
+// AI assistance (explain a finding, escape-route suggestions) runs in the Python backend, which holds the model chain
+// and the API keys. The viewer forwards the request; this server never sees a key. The AI costs money and uses the
+// backend's keys, so it is open to this computer only unless AI_ALLOW_REMOTE=true.
+const AI_API_URL = (process.env.AI_API_URL || process.env.SHIPCHECK_DATA_API_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+async function forwardAssist(req, res, name) {
+  if (process.env.AI_ALLOW_REMOTE !== 'true' && !isLoopback(req)) return sendJSON(res, 403, { error: 'AI assistance is only available on the computer that runs Complee.' });
+  let body;
+  try {
+    body = req.method === 'POST' ? JSON.stringify(await readBody(req, 400_000)) : undefined;
+  } catch (e) {
+    return sendJSON(res, 400, { error: e.message });
+  }
+  try {
+    const upstream = await fetch(`${AI_API_URL}/api/v1/ai/assist/${name}`, {
+      method: req.method, body, headers: body ? { 'Content-Type': 'application/json' } : {},
+      signal: AbortSignal.timeout(180_000),
+    });
+    const text = await upstream.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch { /* reported below */ }
+    if (!upstream.ok) {
+      const message = data?.error?.message || data?.detail || `The AI service answered ${upstream.status}.`;
+      return sendJSON(res, upstream.status >= 500 ? 502 : upstream.status, { error: typeof message === 'string' ? message : 'The AI service failed.' });
+    }
+    return sendJSON(res, 200, data);
+  } catch (e) {
+    return sendJSON(res, 503, { error: e.name === 'TimeoutError'
+      ? 'The AI service did not answer within 3 minutes.'
+      : 'The AI service is not running. Start the backend (cd backend; .venv\\Scripts\\python -m uvicorn app.main:app --port 8000).' });
+  }
+}
+
 const isLoopback = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req?.socket?.remoteAddress);
 const localOnly = (req) => { if (!isLoopback(req)) throw Object.assign(new Error('Only available on this computer'), { status: 403 }); };
 
@@ -457,6 +489,8 @@ export async function handleRequest(req, res) {
     }
   }
   if (req.method === 'POST' && p === '/api/convert/rvt') return receiveRvt(req, res, url);
+  const assistMatch = /^\/api\/assist\/(status|explain-finding|escape-suggestions)$/.exec(p);
+  if (assistMatch) return forwardAssist(req, res, assistMatch[1]);
   const convertMatch = /^\/api\/convert\/jobs\/([0-9a-f-]{36})(\/ifc)?$/.exec(p);
   if (req.method === 'GET' && convertMatch) {
     const job = rvtConverter.job(convertMatch[1]);

@@ -20,23 +20,33 @@ export const SEMANTIC_TYPES = new Set(['door', 'stair', 'ramp', 'guard_rail', 's
 
 const text = (v) => (v && typeof v === 'object' && 'value' in v ? v.value : v) ?? '';
 
+// The project's own length unit: the one listed in IfcProject.UnitsInContext. A file can also contain other length
+// units (Revit writes IfcSIUnit METRE as the base of its FOOT conversion unit), so the first unit found is not enough.
 function lengthUnitInMetres(WebIFC, api, id) {
   const prefix = { MILLI: 1e-3, CENTI: 1e-2, DECI: 1e-1, KILO: 1e3 };
+  const factor = (u) => {
+    if (!u || text(u.UnitType) !== 'LENGTHUNIT') return null;
+    if (u.type === WebIFC.IFCSIUNIT) return prefix[text(u.Prefix)] ?? 1;
+    const name = String(text(u.Name)).toUpperCase();
+    if (name.includes('FOOT') || name.includes('FEET')) return 0.3048;
+    if (name.includes('INCH')) return 0.0254;
+    const measure = u.ConversionFactor && api.GetLine(id, u.ConversionFactor.value);
+    const value = Number(text(measure?.ValueComponent));
+    const base = measure?.UnitComponent && api.GetLine(id, measure.UnitComponent.value);
+    const baseFactor = base ? factor(base) : null;
+    return Number.isFinite(value) && baseFactor ? value * baseFactor : null;
+  };
   try {
-    const si = api.GetLineIDsWithType(id, WebIFC.IFCSIUNIT);
-    for (let i = 0; i < si.size(); i++) {
-      const u = api.GetLine(id, si.get(i));
-      if (text(u.UnitType) === 'LENGTHUNIT') return prefix[text(u.Prefix)] ?? 1;
+    const projects = api.GetLineIDsWithType(id, WebIFC.IFCPROJECT);
+    if (projects.size()) {
+      const project = api.GetLine(id, projects.get(0));
+      const assignment = project.UnitsInContext && api.GetLine(id, project.UnitsInContext.value);
+      for (const ref of assignment?.Units ?? []) {
+        const f = factor(api.GetLine(id, ref.value));
+        if (f) return f;
+      }
     }
-    const cb = api.GetLineIDsWithType(id, WebIFC.IFCCONVERSIONBASEDUNIT);
-    for (let i = 0; i < cb.size(); i++) {
-      const u = api.GetLine(id, cb.get(i));
-      if (text(u.UnitType) !== 'LENGTHUNIT') continue;
-      const name = String(text(u.Name)).toUpperCase();
-      if (name.includes('FOOT')) return 0.3048;
-      if (name.includes('INCH')) return 0.0254;
-    }
-  } catch { /* fall through: metres */ }
+  } catch { /* fall back to metres */ }
   return 1;
 }
 
@@ -49,6 +59,7 @@ export function convertIfc(WebIFC, api, bytes, fileName = 'model.ifc') {
   if (!/^\s*ISO-10303-21\s*;/.test(head) || !/FILE_SCHEMA\s*\(\s*\(\s*'IFC/i.test(head)) {
     throw new Error('Not an IFC file (expected an IFC STEP file: ISO-10303-21 with FILE_SCHEMA IFC2X3 or IFC4). IFC-ZIP and ifcXML are not supported.');
   }
+  try { api.SetLogLevel?.(WebIFC.LogLevel?.LOG_LEVEL_OFF ?? 6); } catch { /* older web-ifc */ }
   const id = api.OpenModel(bytes, { COORDINATE_TO_ORIGIN: false });
   if (id == null || id < 0) throw new Error('The file could not be read as IFC.');
   try {
@@ -91,17 +102,44 @@ export function convertIfc(WebIFC, api, bytes, fileName = 'model.ifc') {
 
     // ---- storeys -> decks ----
     const decks = [];
+    const storeyOf = new Map(); // element expressID -> deck (IfcRelContainedInSpatialStructure)
+    // Height of a placement: the z of every IfcLocalPlacement up the chain (storeys are not rotated in practice).
+    const placementZ = (ref, depth = 0) => {
+      if (!ref || depth > 20) return 0;
+      const p = api.GetLine(id, ref.value);
+      const axis = p?.RelativePlacement && api.GetLine(id, p.RelativePlacement.value);
+      const point = axis?.Location && api.GetLine(id, axis.Location.value);
+      const z = Number(text(point?.Coordinates?.[2]));
+      return (Number.isFinite(z) ? z : 0) + placementZ(p?.PlacementRelTo, depth + 1);
+    };
     try {
       const ids = api.GetLineIDsWithType(id, WebIFC.IFCBUILDINGSTOREY);
+      const byExpress = new Map();
       for (let i = 0; i < ids.size(); i++) {
         const s = api.GetLine(id, ids.get(i));
+        let z = null;
+        try { z = placementZ(s.ObjectPlacement); } catch { /* use Elevation below */ }
         const elevation = Number(text(s.Elevation));
-        decks.push({ id: `L${String(i + 1).padStart(2, '0')}`, name: String(text(s.Name) || text(s.LongName) || `Storey ${i + 1}`), elevation: Math.round((Number.isFinite(elevation) ? elevation : 0) * unit * 1000) });
+        const metres = z != null && (z !== 0 || !Number.isFinite(elevation)) ? z : (Number.isFinite(elevation) ? elevation : 0);
+        const deck = { id: `L${String(i + 1).padStart(2, '0')}`, name: String(text(s.Name) || text(s.LongName) || `Storey ${i + 1}`), elevation: Math.round(metres * unit * 1000) };
+        decks.push(deck);
+        byExpress.set(ids.get(i), deck);
+      }
+      const rels = api.GetLineIDsWithType(id, WebIFC.IFCRELCONTAINEDINSPATIALSTRUCTURE);
+      for (let i = 0; i < rels.size(); i++) {
+        const r = api.GetLine(id, rels.get(i));
+        const deck = byExpress.get(r.RelatingStructure?.value);
+        if (deck) for (const el of r.RelatedElements ?? []) storeyOf.set(el.value, deck);
       }
     } catch { /* no storeys */ }
     decks.sort((a, b) => a.elevation - b.elevation);
     // Storeys at the same elevation (within 10 mm) are one deck.
-    for (let i = decks.length - 1; i > 0; i--) if (Math.abs(decks[i].elevation - decks[i - 1].elevation) < 10) { decks[i - 1].name += ` / ${decks[i].name}`; decks.splice(i, 1); }
+    for (let i = decks.length - 1; i > 0; i--) {
+      if (Math.abs(decks[i].elevation - decks[i - 1].elevation) >= 10) continue;
+      decks[i - 1].name += ` / ${decks[i].name}`;
+      for (const [el, d] of storeyOf) if (d === decks[i]) storeyOf.set(el, decks[i - 1]);
+      decks.splice(i, 1);
+    }
 
     // ---- elements ----
     const elements = [], geometry = new Map();
@@ -133,6 +171,7 @@ export function convertIfc(WebIFC, api, bytes, fileName = 'model.ifc') {
         source: `IFC ${cls} #${expressID}`,
         props: { ifc_class: cls, ...(text(line?.ObjectType) ? { object_type: String(text(line.ObjectType)) } : {}), ...(text(line?.Tag) ? { tag: String(text(line.Tag)) } : {}) },
         _box: { min, max },
+        _express: expressID,
       });
       geometry.set(elId, { positions, normals, indices, color: e.color });
     }
@@ -144,7 +183,8 @@ export function convertIfc(WebIFC, api, bytes, fileName = 'model.ifc') {
     for (const el of elements) {
       const { min, max } = el._box;
       delete el._box;
-      const deck = deckOf((min[1] + max[1]) / 2);
+      const deck = storeyOf.get(el._express) ?? deckOf((min[1] + max[1]) / 2);
+      delete el._express;
       el.deck = deck.id;
       // model x = X, model y = -Z (web-ifc), elevation = Y; z is relative to the deck.
       el.geom = {
