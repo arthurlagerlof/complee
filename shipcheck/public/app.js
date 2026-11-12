@@ -11,6 +11,7 @@ import { compareRevisions } from './src/compare.mjs';
 import { verifySuggestion } from './src/escape-actions.mjs';
 import { parsePartialJson } from './src/partial-json.mjs';
 import { consistencyIssues, widthCheck } from './src/consistency.mjs';
+import { COMMENT_STATUSES, COMMENT_STATUS_LABEL, EVIDENCE_LABEL, parseComments, addComments, withComment, withoutComment, commentEvidence, commentSummary, commentsCSV } from './src/class-comments.mjs';
 import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, registerSummary, withDisposition, registerCSV, projectKey, manualRows, manualSummary, withManualCheck } from './src/dispositions.mjs';
 import { createFallbackViewer } from './viewer-fallback.js';
 import { createLocalViewer } from './viewer-stream.js';
@@ -684,13 +685,13 @@ function renderEscape() {
       </div>`;
     }).join('')}</div>
     <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button id="escAiBtn" class="ai-btn" ${s.single_route + s.no_route ? '' : 'disabled'} title="AI proposes design changes; Complee recomputes every proposal and shows only those that give rooms a second independent route">✦ Suggest improvements</button><button id="escCsv">Export routes (CSV)</button></div>
-    <div id="escAi">${escAiHTML()}</div>
+    <div id="escAi" class="escAiSlot">${escAiHTML()}</div>
     <details class="assume"><summary>How the routes are derived</summary><ul>${a.assumptions.map((t) => `<li>${esc(t)}</li>`).join('')}</ul></details>`;
   box.querySelectorAll('.item.esc').forEach((n) => (n.onclick = () => select(n.dataset.id)));
   box.querySelectorAll('a.via').forEach((n) => (n.onclick = (e) => { e.preventDefault(); select(n.dataset.id); }));
   if ($('#escReset')) $('#escReset').onclick = () => { S.blocked.clear(); toggleBlockRefresh(); };
   $('#escCsv').onclick = exportEscapeCSV;
-  $('#escAiBtn').onclick = suggestEscapeImprovements;
+  $('#escAiBtn').onclick = () => suggestEscapeImprovements();
   wireEscAi();
 }
 
@@ -731,10 +732,17 @@ function renderEscapeDetail(id) {
   for (const d of broken) html += `<div class="note"><b>Not connected:</b> ${esc(d.reason)}.</div>`;
   if (canBlock) html += `<button id="blockBtn" class="tiny" style="margin-top:6px" title="What-if: fire or obstruction. The model is not changed.">${isBlocked ? 'Unblock' : `Block this ${esc(el.type.replace('_', ' '))} (what-if)`}</button>`;
   if (!S.escapeOn) html += ' <button id="showEscape" class="tiny" style="margin-top:6px">Show in the model</button>';
+  if (o?.room && (o.status === 'single_route' || o.status === 'no_route')) {
+    const busy = S.escAi?.loading;
+    html += `<div style="margin-top:8px"><button id="escAiRoomBtn" class="ai-btn" ${busy ? 'disabled' : ''} title="AI proposes design changes for this room; Complee recomputes every proposal and keeps only those that give it a second independent route">✦ ${S.escAi && !busy ? 'Ask the AI again for this room' : 'Find a second route with AI'}</button></div>
+      <div class="escAiSlot" data-room="${esc(id)}">${escAiHTML(id)}</div>`;
+  }
   box.innerHTML = html;
   box.querySelectorAll('a.via').forEach((n) => (n.onclick = (e) => { e.preventDefault(); select(n.dataset.id); }));
   if ($('#blockBtn')) $('#blockBtn').onclick = () => toggleBlock(id);
   if ($('#showEscape')) $('#showEscape').onclick = () => { setEscapeMode(true); select(id); };
+  if ($('#escAiRoomBtn')) $('#escAiRoomBtn').onclick = () => suggestEscapeImprovements(id);
+  wireEscAi();
 }
 
 function exportEscapeCSV() {
@@ -1177,7 +1185,7 @@ function comparisonHTML() {
 
 // ---------- AI assistance (backend model chain; the rule checker keeps every decision) ----------
 
-const AI_TASK = { 'explain-finding': 'Explain a finding', 'escape-suggestions': 'Escape-route proposals' };
+const AI_TASK = { 'explain-finding': 'Explain a finding', 'escape-suggestions': 'Escape-route proposals', 'comment-reply': 'Draft reply to a class comment' };
 const aiState = { status: null, busy: 0, log: [] };
 const cents = (usd) => (usd == null ? '–' : usd < 0.0005 ? '< 0.1 ct' : `${(usd * 100).toFixed(usd < 0.1 ? 1 : 0)} ct`);
 const cap = (w) => (w ? w[0].toUpperCase() + w.slice(1) : w);
@@ -1390,9 +1398,11 @@ function paintExplain(id, r) {
 
 // Escape-route suggestions: the AI proposes actions; every proposal is applied to a copy of the model and the routes
 // are recomputed. Only proposals that give rooms a second independent route (and make none worse) are offered.
-function escAiHTML() {
+function escAiHTML(room = null) {
   const st = S.escAi;
   if (!st) return '';
+  // In a room's panel: only the proposals that give this room a second route (the full list is in the escape plan).
+  if (room && st.room && st.room !== room && !st.loading && !st.items?.some((i) => i.check.ok && i.check.improved.includes(room))) return '';
   if (st.loading) {
     const done = st.items ?? [], writing = st.writing;
     return `<div class="ai-box"><div class="ai-tag">✦ AI proposals · checked by Complee</div>
@@ -1402,7 +1412,10 @@ function escAiHTML() {
     </div>`;
   }
   if (st.error) return `<div class="check-bad">${esc(st.error)}</div>`;
-  const good = st.items.filter((i) => i.check.ok), dropped = st.items.filter((i) => !i.check.ok);
+  const allGood = st.items.filter((i) => i.check.ok);
+  const good = room ? allGood.filter((i) => i.check.improved.includes(room)) : allGood;
+  const dropped = room ? [] : st.items.filter((i) => !i.check.ok);
+  const others = allGood.length - good.length;
   return `<div class="ai-box"><div class="ai-tag">✦ AI proposals · checked by Complee</div>
     ${good.length ? good.map((i, n) => `<div class="esc-sug ${st.shown === i ? 'on' : ''}">
       <b>${esc(i.s.title)}</b>
@@ -1410,22 +1423,30 @@ function escAiHTML() {
       <div class="ok-line">✓ Recomputed: ${i.check.improved.length === 1 ? '1 room gets' : `${i.check.improved.length} rooms get`} a second independent route (${i.check.improved.map((r) => `<a href="#" class="via" data-id="${esc(r)}">${esc(r)}</a>`).join(', ')})</div>
       ${i.ruleIssues.length ? `<div class="disp-warn">⚠ The rule check finds ${i.ruleIssues.length} issue${i.ruleIssues.length === 1 ? '' : 's'} in the proposed elements: ${i.ruleIssues.map((f) => `${esc(f.rule_id)} ${esc(f.measured ?? 'missing')} (required ${esc(f.required)})`).join('; ')}. Adjust before adopting it.</div>` : '<div class="ok-line">✓ The proposed elements pass the rule check.</div>'}
       <div class="esc-sug-actions"><button class="tiny escShow" data-n="${st.items.indexOf(i)}">${st.shown === i ? 'Hide' : 'Show in 3D'}</button><button class="tiny escOpen" data-n="${st.items.indexOf(i)}" title="Open the model with this change as a new revision (compare and register carry over)">Open as revision</button></div>
-    </div>`).join('') : '<p class="muted">None of the proposals gave a room a second independent route.</p>'}
+    </div>`).join('') : `<p class="muted">${room ? `None of the proposals gives ${esc(room)} a second independent route.` : 'None of the proposals gave a room a second independent route.'}</p>`}
+    ${room && others ? `<p class="muted">${others} more proposal${others === 1 ? '' : 's'} for other rooms in the escape plan list.</p>` : ''}
     ${dropped.length ? `<details class="assume"><summary>${dropped.length} proposal${dropped.length === 1 ? '' : 's'} dropped after recomputing</summary><ul>${dropped.map((i) => `<li><b>${esc(i.s.title)}</b>: ${esc(i.check.problems.join('; ') || (i.check.worse.length ? `makes ${i.check.worse.join(', ')} worse` : 'no room gains a second route'))}</li>`).join('')}</ul></details>` : ''}
     ${aiFooter(st.data)}
   </div>`;
 }
 
+function paintEscAi() {
+  document.querySelectorAll('.escAiSlot').forEach((slot) => (slot.innerHTML = escAiHTML(slot.dataset.room || null)));
+  wireEscAi();
+}
+
 function wireEscAi() {
-  const box = $('#escAi');
-  if (!box) return;
+  document.querySelectorAll('.escAiSlot').forEach(wireEscAiSlot);
+}
+
+function wireEscAiSlot(box) {
   box.querySelectorAll('a.via').forEach((n) => (n.onclick = (e) => { e.preventDefault(); select(n.dataset.id); }));
   box.querySelectorAll('.escShow').forEach((b) => (b.onclick = () => {
     const item = S.escAi.items[Number(b.dataset.n)];
     S.escAi.shown = S.escAi.shown === item ? null : item;
     const ghosts = S.escAi.shown ? normalizeModel(structuredClone({ ...S.model, elements: item.check.added })).elements : [];
     views.three.setGhosts(ghosts);
-    renderEscape();
+    paintEscAi();
   }));
   box.querySelectorAll('.escOpen').forEach((b) => (b.onclick = () => {
     const item = S.escAi.items[Number(b.dataset.n)];
@@ -1434,11 +1455,13 @@ function wireEscAi() {
   }));
 }
 
-async function suggestEscapeImprovements() {
+async function suggestEscapeImprovements(focusRoom = null) {
   const a = S.escape;
-  if (!a) return;
+  if (!a || S.escAi?.loading) return;
   const rooms = Object.values(a.origins).filter((o) => o.room && o.status !== 'two_routes' && o.status !== 'direct');
   const analysis = {
+    // First: the prompt shortens long input from the end.
+    ...(focusRoom ? { focus_room: focusRoom, focus_note: `The engineer asked about ${focusRoom}: at least one proposal must give this room a second independent route.` } : {}),
     muster_stations: a.musters,
     rooms_needing_a_second_route: rooms.map((o) => ({ room: o.id, status: o.status, every_route_passes: o.shared_gates ?? [], shortest_route: o.primary?.via ?? [] })),
     not_connected: a.disconnected,
@@ -1459,10 +1482,13 @@ async function suggestEscapeImprovements() {
     const mm = r.value * (UNIT_TO_MM[r.unit] ?? 1);
     for (const t of r.applies_to?.types ?? []) analysis.minimum_clear_width_mm[t] = Math.max(analysis.minimum_clear_width_mm[t] ?? 0, mm);
   }
-  S.escAi = { loading: true, items: [] };
+  S.escAi = { loading: true, items: [], room: focusRoom };
   const state = S.escAi;
   views.three.setGhosts([]);
   renderEscape();
+  if (S.selected) renderEscapeDetail(S.selected);
+  // Bring the answer into view where it was asked for.
+  (focusRoom ? document.querySelector('#dEscape .escAiSlot') : $('#escAi'))?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   const current = S.escape;
   const verify = (s) => {
     const check = verifySuggestion(S.model, s, current);
@@ -1471,7 +1497,7 @@ async function suggestEscapeImprovements() {
     const ruleIssues = check.added.length ? findingsOf(checkModel(structuredClone(check.model), allRules())).filter((f) => added.has(f.element)) : [];
     return { s, check, ruleIssues };
   };
-  const paint = () => { const box = $('#escAi'); if (box && S.escAi === state) box.innerHTML = escAiHTML(); };
+  const paint = () => { if (S.escAi === state) paintEscAi(); };
   try {
     const data = await assistStream('escape-suggestions', { analysis, elements, decks }, `${rooms.length} room${rooms.length === 1 ? '' : 's'} with a single route`, {
       onPartial: (value, _text, model) => {
@@ -1486,11 +1512,12 @@ async function suggestEscapeImprovements() {
     });
     const items = (data.result?.suggestions ?? []).map(verify)
       .sort((a, b) => (b.check.ok - a.check.ok) || (a.ruleIssues.length - b.ruleIssues.length) || (b.check.improved.length - a.check.improved.length));
-    S.escAi = { data, items, shown: null };
+    S.escAi = { data, items, shown: null, room: focusRoom };
   } catch (err) {
-    S.escAi = { error: err.message };
+    S.escAi = { error: err.message, room: focusRoom };
   }
   renderEscape();
+  if (S.selected) renderEscapeDetail(S.selected);
 }
 
 // ---------- findings register: how each finding is handled (never changes a rule result) ----------
@@ -1518,8 +1545,14 @@ function loadRegister(sc, model) {
   if (!meta.revisions.includes(current)) meta.revisions.push(current);
   meta.revisions = meta.revisions.slice(-50);
   S.registerMeta = meta;
+  S.comments = readJSON(commentsKey(S.registerProject), { comments: [] });
+  if (!Array.isArray(S.comments.comments)) S.comments = { comments: [] };
   try { localStorage.setItem(registerKey(`${S.registerProject}.meta`), JSON.stringify(meta)); } catch { /* storage full or blocked */ }
   return store;
+}
+const commentsKey = (project) => `complee.comments.${project}`;
+function saveComments() {
+  try { localStorage.setItem(commentsKey(S.registerProject), JSON.stringify(S.comments)); } catch (e) { console.warn('The class comments could not be saved in this browser:', e.message); }
 }
 function saveRegister() {
   try { localStorage.setItem(registerKey(S.registerProject), JSON.stringify(S.register)); } catch (e) { console.warn('The findings register could not be saved in this browser:', e.message); }
@@ -1599,14 +1632,25 @@ function wireManualChecks(root) {
 function renderRegisterButton() {
   const s = registerSummary(registerRows(S.results, S.register));
   const attention = s.open + s.stale + s.missing_note;
-  $('#registerBtn').textContent = `Findings register${s.total ? ` (${s.open} open)` : ''}`;
+  const c = commentSummary(S.comments?.comments, null);
+  $('#registerBtn').textContent = `Findings register${s.total || c.total ? ` (${s.open + c.open} open)` : ''}`;
   $('#registerBtn').classList.toggle('attention', attention > 0 && s.total > 0);
 }
 
 let registerOpenOnly = false;
+let registerTab = 'findings';
+function registerTabs() {
+  const c = commentSummary(S.comments?.comments, S.results);
+  return `<span class="tabs"><button class="tab ${registerTab === 'findings' ? 'on' : ''}" data-tab="findings">Findings</button><button class="tab ${registerTab === 'comments' ? 'on' : ''}" data-tab="comments" title="Comments from class or flag on a submission, tracked to closure">Class comments${c.total ? ` (${c.open} open)` : ''}</button></span>`;
+}
+function wireRegisterTabs(panel) {
+  panel.querySelectorAll('.tabs .tab').forEach((b) => (b.onclick = () => { registerTab = b.dataset.tab; openRegister(); }));
+}
+
 function openRegister() {
   closeTrace();
   closeAiPanel();
+  if (registerTab === 'comments') return openComments();
   const panel = $('#registerPanel');
   const all = registerRows(S.results, S.register), s = registerSummary(all);
   const current = all.filter((r) => !r.resolved && (!registerOpenOnly || r.disposition === 'open' || r.stale || r.missing_note));
@@ -1618,7 +1662,7 @@ function openRegister() {
       <td class="dispCell">${dispositionControls(r)}${r.stale ? '<div class="disp-warn">Value changed since the disposition: review again.</div>' : ''}${r.missing_note ? '<div class="disp-warn">Justification required.</div>' : ''}</td>
       <td class="muted">${r.updated ? esc(new Date(r.updated).toLocaleDateString('en-GB')) : ''}${r.revision ? `<br>${esc(r.revision)}` : ''}</td></tr>`;
   panel.innerHTML = `<div class="trace-head">
-      <b>Findings register</b>
+      ${registerTabs()}
       <span class="muted">${s.total} finding${s.total === 1 ? '' : 's'} · ${s.open} open · ${s.total - s.open} with a disposition${s.stale ? ` · <b class="check-bad">${s.stale} to review again</b>` : ''}${s.missing_note ? ` · <b class="check-bad">${s.missing_note} without justification</b>` : ''}${S.edits.size ? ' · includes what-if values' : ''}</span>
       <label><input type="checkbox" id="regOpen" ${registerOpenOnly ? 'checked' : ''}> needs attention only</label>
       <span class="grow"></span>
@@ -1637,6 +1681,7 @@ function openRegister() {
   panel.hidden = false;
   $('#registerBtn').classList.add('on');
   $('#regClose').onclick = closeRegister;
+  wireRegisterTabs(panel);
   $('#regOpen').onchange = (e) => { registerOpenOnly = e.target.checked; openRegister(); };
   $('#regCsv').onclick = () => download(`findings-register-${S.sc.id}.csv`, registerCSV(registerRows(S.results, S.register)), 'text/csv');
   $('#cmpBtn').onclick = () => $('#cmpFile').click();
@@ -1652,6 +1697,182 @@ function openRegister() {
   }));
   wireDispositions(panel);
 }
+// ---------- class comments: what class asked, what the design does now, what was answered ----------
+
+let commentsOpenOnly = false, commentImportOpen = false, commentImportMsg = '';
+S.commentAi = new Map();
+
+function evidenceHTML(ev) {
+  const cls = { finding: 'st-non_compliant', missing: 'st-not_enough_info', no_finding: 'st-compliant', unlinked: 'st-none' }[ev.state];
+  const items = ev.items.slice(0, 6).map((i) => i.missing_element ? `${esc(i.element)}: not in this model`
+    : i.status ? `${esc(i.element)} ${esc(i.rule_id)}: ${esc(i.measured ?? 'missing')}, required ${esc(i.required)}` : `${esc(i.element)}: no rule applies`).join(' · ');
+  return `<div class="cmt-ev"><span class="badge ${cls}">${esc(EVIDENCE_LABEL[ev.state])}</span> <span class="muted">${items}${ev.items.length > 6 ? ' …' : ''}</span></div>`;
+}
+
+function commentAiHTML(c) {
+  const st = S.commentAi.get(c.id);
+  if (!st) return '';
+  if (st.loading && !st.partial) return `<div class="ai-wait"><span class="spin"></span>${st.model ? `${esc(modelLabel(st.model))} is writing…` : 'Asking the AI…'}</div>`;
+  if (st.error) return `<div class="check-bad">${esc(st.error)}</div>`;
+  const x = (st.loading ? st.partial : st.data.result) || {};
+  const list = (t, a) => (Array.isArray(a) && a.length ? `<div class="ai-h">${t}</div><ul>${a.slice(0, 3).map((v) => `<li>${esc(v)}</li>`).join('')}</ul>` : '');
+  return `<div class="ai-box"><div class="ai-tag">✦ AI draft reply · edit before sending</div>
+    <p class="cmt-draft">${esc(x.reply || '')}${st.loading ? '<span class="caret"></span>' : ''}</p>
+    ${list('Based on', x.based_on)}${list('Confirm before sending', x.to_confirm)}
+    ${st.loading ? '' : `<button class="tiny cmtUse" data-id="${esc(c.id)}">Use as response</button>${aiFooter(st.data)}`}
+  </div>`;
+}
+
+function commentCard(c) {
+  const ev = commentEvidence(c, S.results);
+  const warn = c.status !== 'open' && ev.state === 'finding';
+  return `<div class="cmt ${warn ? 'warn' : ''}" data-id="${esc(c.id)}">
+    <div class="cmt-head"><b>${esc(c.ref)}</b>${c.document ? ` <span class="muted">· ${esc(c.document)}</span>` : ''}${c.received ? ` <span class="muted">· received ${esc(c.received)}</span>` : ''}${c.revision ? ` <span class="muted">· on ${esc(c.revision)}</span>` : ''}
+      <span class="grow"></span>
+      <select class="cmtStatus" data-id="${esc(c.id)}">${COMMENT_STATUSES.map((x) => `<option value="${x.id}" ${c.status === x.id ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select>
+      <button class="tiny cmtDel" data-id="${esc(c.id)}" title="Remove this comment from the list">remove</button></div>
+    <div class="cmt-text">${esc(c.text)}</div>
+    <div class="cmt-links">Linked: ${[...(c.links?.elements ?? []).map((id) => `<a href="#" class="via" data-id="${esc(id)}">${esc(id)}</a>`), ...(c.links?.rules ?? []).map((id) => `<code>${esc(id)}</code>`)].join(' ') || '<span class="muted">nothing yet</span>'}
+      <input class="cmtLinks" data-id="${esc(c.id)}" value="${esc([...(c.links?.elements ?? []), ...(c.links?.rules ?? [])].join(', '))}" placeholder="Element or rule ids, comma separated" title="Element and rule ids this comment is about"></div>
+    ${evidenceHTML(ev)}
+    ${warn ? '<div class="disp-warn">Answered or closed, but the rule check still finds the deviation: the reply and the design disagree.</div>' : ''}
+    <textarea class="cmtResp" data-id="${esc(c.id)}" rows="2" placeholder="Response to class" maxlength="2000">${esc(c.response)}</textarea>
+    <div class="cmt-foot"><input class="cmtWho" data-id="${esc(c.id)}" value="${esc(c.responsible)}" placeholder="Responsible" maxlength="80">
+      <button class="tiny ai-btn cmtAi" data-id="${esc(c.id)}" ${S.commentAi.get(c.id)?.loading ? 'disabled' : ''} title="AI drafts a reply from the comment and the current rule check; you edit and send it">✦ Draft reply</button>
+      <span class="muted">${c.updated ? `updated ${esc(new Date(c.updated).toLocaleDateString('en-GB'))}` : ''}</span></div>
+    <div class="cmt-err check-bad" hidden></div>
+    <div class="cmt-ai">${commentAiHTML(c)}</div>
+  </div>`;
+}
+
+function openComments() {
+  const panel = $('#registerPanel');
+  const all = S.comments?.comments ?? [];
+  const sum = commentSummary(all, S.results);
+  const shown = commentsOpenOnly ? all.filter((c) => c.status !== 'closed' || commentEvidence(c, S.results).state === 'finding') : all;
+  panel.innerHTML = `<div class="trace-head">
+      ${registerTabs()}
+      <span class="muted">${sum.total} comment${sum.total === 1 ? '' : 's'} · ${sum.open} open · ${sum.answered} answered · ${sum.closed} closed${sum.contradicted ? ` · <b class="check-bad">${sum.contradicted} answered but still a finding</b>` : ''}</span>
+      <label><input type="checkbox" id="cmtOpenOnly" ${commentsOpenOnly ? 'checked' : ''}> hide closed</label>
+      <span class="grow"></span>
+      <button id="cmtImportBtn">${commentImportOpen ? 'Hide import' : 'Import comments…'}</button>
+      <button id="cmtCsv" ${all.length ? '' : 'disabled'}>Comment sheet (CSV)</button><button id="regClose">Close</button>
+    </div>
+    <div class="trace-wrap">
+      ${commentImportOpen || !all.length ? `<div class="cmt-import">
+        <p class="muted" style="margin:0 0 6px">Paste the class letter or comment list (numbered comments: "1.", "2)", "Comment 3:"), or a CSV/Excel export with a comment column. Element and rule ids written in a comment are linked automatically.</p>
+        <textarea id="cmtPaste" rows="6" placeholder="1. Corridor MD-C1: clear width to be at least 900 mm.&#10;2. Door 01-D2: confirm self-closing device."></textarea>
+        <div class="cmt-foot"><input id="cmtDoc" placeholder="Drawing / document no." maxlength="120"><input id="cmtDate" type="date" title="Received">
+          <input id="cmtFile" type="file" accept=".csv,.txt,.tsv,text/csv,text/plain" title="Or load a CSV / text file"><button id="cmtAdd" class="primary">Add comments</button></div>
+      </div>` : ''}
+      ${commentImportMsg ? `<div class="note">${esc(commentImportMsg)}</div>` : ''}
+      <p class="muted" style="margin:8px 0">Each comment shows what the current rule check says about the elements it names. Status and response are recorded by the engineer; nothing is sent to class from here. One list per project, saved in this browser; export the comment sheet to share it.</p>
+      ${shown.length ? shown.map(commentCard).join('') : (all.length ? '<p class="muted">No open comments.</p>' : '')}
+    </div>`;
+  panel.hidden = false;
+  $('#registerBtn').classList.add('on');
+  $('#regClose').onclick = closeRegister;
+  wireRegisterTabs(panel);
+  $('#cmtOpenOnly').onchange = (e) => { commentsOpenOnly = e.target.checked; openComments(); };
+  $('#cmtImportBtn').onclick = () => { commentImportOpen = !commentImportOpen; commentImportMsg = ''; openComments(); };
+  $('#cmtCsv').onclick = () => download(`class-comments-${S.sc.id}.csv`, commentsCSV(S.comments.comments, S.results), 'text/csv');
+  if ($('#cmtFile')) $('#cmtFile').onchange = async (e) => { const f = e.target.files[0]; if (f) $('#cmtPaste').value = await f.text(); };
+  if ($('#cmtAdd')) $('#cmtAdd').onclick = () => {
+    const drafts = parseComments($('#cmtPaste').value);
+    if (!drafts.length) { commentImportMsg = 'No comment found in the text.'; openComments(); return; }
+    const out = addComments(S.comments, drafts, {
+      document: $('#cmtDoc').value.trim(), received: $('#cmtDate').value, revision: revisionLabel(S.sc),
+      elementIds: S.norm.elements.map((e) => e.id), ruleIds: allRules().map((r) => r.id),
+    });
+    S.comments = out.store; saveComments();
+    const linked = out.store.comments.slice(-out.added).filter((c) => c.links.elements.length || c.links.rules.length).length;
+    commentImportMsg = `Added ${out.added} comment${out.added === 1 ? '' : 's'}, ${linked} linked to the model automatically${out.skipped ? `; ${out.skipped} already in the list (same document and number)` : ''}.`;
+    commentImportOpen = false;
+    openComments();
+    renderRegisterButton();
+  };
+  wireComments(panel);
+}
+
+function wireComments(panel) {
+  const save = (n, patch) => {
+    try {
+      S.comments = withComment(S.comments, n.dataset.id, patch);
+    } catch (err) {
+      const box = n.closest('.cmt').querySelector('.cmt-err');
+      box.textContent = err.message; box.hidden = false;
+      if (n.classList.contains('cmtStatus')) n.value = S.comments.comments.find((c) => c.id === n.dataset.id)?.status ?? 'open';
+      return false;
+    }
+    saveComments();
+    renderRegisterButton();
+    return true;
+  };
+  const ids = () => ({ els: new Set(S.norm.elements.map((e) => e.id.toLowerCase())), rules: new Map(allRules().map((r) => [r.id.toLowerCase(), r.id])), byLower: new Map(S.norm.elements.map((e) => [e.id.toLowerCase(), e.id])) });
+  panel.querySelectorAll('.cmtStatus').forEach((n) => (n.onchange = () => { if (save(n, { status: n.value })) openComments(); }));
+  panel.querySelectorAll('.cmtResp').forEach((n) => (n.onchange = () => save(n, { response: n.value.trim() })));
+  panel.querySelectorAll('.cmtWho').forEach((n) => (n.onchange = () => save(n, { responsible: n.value.trim() })));
+  panel.querySelectorAll('.cmtLinks').forEach((n) => (n.onchange = () => {
+    const { rules, byLower } = ids();
+    const elements = [], ruleIds = [], unknown = [];
+    for (const raw of n.value.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean)) {
+      const k = raw.toLowerCase();
+      if (byLower.has(k)) elements.push(byLower.get(k)); else if (rules.has(k)) ruleIds.push(rules.get(k)); else unknown.push(raw);
+    }
+    if (save(n, { links: { elements: [...new Set(elements)], rules: [...new Set(ruleIds)] } })) openComments();
+    if (unknown.length) {
+      const box = panel.querySelector(`.cmt[data-id="${CSS.escape(n.dataset.id)}"] .cmt-err`);
+      if (box) { box.textContent = `Not in this model or rule set: ${unknown.join(', ')}`; box.hidden = false; }
+    }
+  }));
+  panel.querySelectorAll('.cmtDel').forEach((b) => (b.onclick = () => {
+    if (!confirm('Remove this comment from the list?')) return;
+    S.comments = withoutComment(S.comments, b.dataset.id); saveComments(); renderRegisterButton(); openComments();
+  }));
+  panel.querySelectorAll('.cmt-links a.via').forEach((a) => (a.onclick = (e) => { e.preventDefault(); closeRegister(); select(a.dataset.id); }));
+  panel.querySelectorAll('.cmtAi').forEach((b) => (b.onclick = () => draftCommentReply(b.dataset.id)));
+  panel.querySelectorAll('.cmtUse').forEach((b) => (b.onclick = () => {
+    const reply = S.commentAi.get(b.dataset.id)?.data?.result?.reply;
+    if (!reply) return;
+    if (save(b, { response: reply })) openComments();
+  }));
+}
+
+async function draftCommentReply(id) {
+  const c = S.comments.comments.find((x) => x.id === id);
+  if (!c) return;
+  const ev = commentEvidence(c, S.results);
+  const rules = [...new Set([...(c.links?.rules ?? []), ...ev.items.map((i) => i.rule_id).filter(Boolean)])].slice(0, 6)
+    .map((rid) => { const r = ruleById(rid); return r ? { id: r.id, source: r.source, clause: r.clause, text: r.text } : null; }).filter(Boolean);
+  const notes = Object.fromEntries(ev.items.filter((i) => i.rule_id).map((i) => [`${i.element}|${i.rule_id}`, S.register[`${i.element}|${i.rule_id}`]]).filter(([, d]) => d)
+    .map(([k, d]) => [k, { disposition: DISPOSITION_LABEL[d.disposition] ?? d.disposition, note: d.note, responsible: d.responsible }]));
+  const payload = {
+    comment: { ref: c.ref, document: c.document, received: c.received, text: c.text, revision_commented: c.revision },
+    evidence: { state: EVIDENCE_LABEL[ev.state], items: ev.items.slice(0, 20), rules },
+    notes: { dispositions: notes, current_response_draft: c.response || null },
+    revision: revisionLabel(S.sc),
+  };
+  const state = { loading: true };
+  S.commentAi.set(id, state);
+  const paint = () => {
+    const box = document.querySelector(`#registerPanel .cmt[data-id="${CSS.escape(id)}"] .cmt-ai`);
+    if (box) box.innerHTML = commentAiHTML(c);
+    const btn = document.querySelector(`#registerPanel .cmtAi[data-id="${CSS.escape(id)}"]`);
+    if (btn) btn.disabled = !!S.commentAi.get(id)?.loading;
+  };
+  paint();
+  try {
+    const data = await assistStream('comment-reply', payload, `class comment ${c.ref}`, {
+      onPartial: (value, _text, model) => { state.partial = value; state.model = model; paint(); },
+      onSwitch: () => { state.partial = null; paint(); },
+    });
+    S.commentAi.set(id, { data });
+  } catch (err) {
+    S.commentAi.set(id, { error: err.message });
+  }
+  if (!$('#registerPanel').hidden && registerTab === 'comments') { paint(); wireComments($('#registerPanel')); }
+}
+
 function closeRegister() { $('#registerPanel').hidden = true; $('#registerBtn').classList.remove('on'); }
 
 // ---------- Revit -> IFC through the server (Autodesk Platform Services); the browser then reads the IFC ----------
@@ -1784,7 +2005,7 @@ function exportCSV() {
 }
 
 function exportReport() {
-  const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(),
+  const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(), comments: S.comments?.comments,
     score: S.baseline, edits: [...S.edits.values()], register: S.register, escape: S.escape, comparison: S.compare?.diff ? S.compare : null });
   const w = window.open('', '_blank');
   if (w) { w.document.write(html); w.document.close(); } else download(`report-${S.sc.id}.html`, html, 'text/html');
@@ -1873,7 +2094,7 @@ function hidePointer() { if (demoPointer) demoPointer.hidden = true; }
 let preparedReport = null;
 const toHTMLKey = () => `${S.sc?.id}|${[...S.edits.keys()].join(',')}|${S.lastCheckMs}`;
 function prepareReportPreview() {
-  const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(),
+  const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(), comments: S.comments?.comments,
     score: S.baseline, edits: [...S.edits.values()] });
   let d = $('#reportPreview');
   if (!d) { d = document.createElement('div'); d.id = 'reportPreview'; $('#view').appendChild(d); }

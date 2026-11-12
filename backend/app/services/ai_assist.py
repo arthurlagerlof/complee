@@ -182,10 +182,40 @@ def escape_suggestions(payload: dict[str, Any]) -> dict[str, Any]:
     return _run(escape_prompt(payload), ESCAPE_SYSTEM, EscapeSuggestions, 3000)
 
 
+# ---------------------------------------------------------------- reply to a class comment
+
+class CommentReply(BaseModel):
+    reply: str = Field(description="Draft reply to the class comment, at most 70 words, plain and factual. Use [brackets] for anything the engineer must fill in")
+    based_on: list[str] = Field(default_factory=list, description="At most 3 facts from the input the reply relies on, each at most 15 words")
+    to_confirm: list[str] = Field(default_factory=list, description="At most 3 points the engineer must confirm or add before sending, each at most 15 words")
+
+
+REPLY_SYSTEM = (
+    "You draft the yard's reply to a comment from a classification society on a ship design submission. The engineer "
+    "edits and sends it; you never send anything. Use only facts from the input: the comment, the current rule check "
+    "of the linked elements (computed by a deterministic checker, final) and the engineer's notes. If the check shows no "
+    "deviation now, say the design was revised and name the revision and the checked value. If the check still finds the "
+    "deviation, do not claim it is resolved: state the planned action as a placeholder in [brackets] or ask for the "
+    "missing information. Never claim class acceptance, never invent drawing numbers, dates or values. Keep it short and "
+    "formal. Return JSON only."
+)
+
+
+def reply_prompt(payload: dict[str, Any]) -> str:
+    return (
+        "Class comment:\n" + _compact(payload.get("comment", {}), 2500)
+        + "\n\nCurrent rule check of the linked elements:\n" + _compact(payload.get("evidence", {}), 3500)
+        + "\n\nEngineer's notes and dispositions:\n" + _compact(payload.get("notes", {}), 1500)
+        + "\n\nRevision:\n" + _compact(payload.get("revision", ""), 300)
+        + "\n\nJSON schema:\n" + json.dumps(CommentReply.model_json_schema())
+    )
+
+
 # Streaming: system prompt, schema, output limit, prompt builder, log task name
 STREAM_TASKS = {
     "explain-finding": (EXPLAIN_SYSTEM, FindingExplanation, 1800, explain_prompt, "viewer_explain_finding"),
     "escape-suggestions": (ESCAPE_SYSTEM, EscapeSuggestions, 3000, escape_prompt, "viewer_escape_suggestions"),
+    "comment-reply": (REPLY_SYSTEM, CommentReply, 1500, reply_prompt, "viewer_comment_reply"),
 }
 
 

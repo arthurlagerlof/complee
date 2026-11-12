@@ -424,3 +424,20 @@ table.register tr.warn td { background: #fffaf0; }
 @keyframes caret { 50% { opacity: 0; } }
 .ai-foot.writing { color: #4f46e5; display: flex; align-items: center; gap: 6px; }
 .esc-sug.writing { opacity: .85; }
+
+/* class comments (register tab) */
+.tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.tabs .tab { border: 0; border-radius: 0; background: #fff; padding: 4px 10px; font-weight: 600; }
+.tabs .tab.on { background: var(--ink, #1d2430); color: #fff; }
+.cmt { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 8px 0; background: #fff; }
+.cmt.warn { border-color: #f3b4b4; background: #fff8f8; }
+.cmt-head, .cmt-foot { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.cmt-head .grow { flex: 1; }
+.cmt-text { margin: 6px 0; white-space: pre-wrap; }
+.cmt-links { font-size: 12px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.cmt-links input { flex: 1 1 200px; min-width: 0; font-size: 12px; }
+.cmt-ev { margin: 6px 0; font-size: 12px; }
+.cmt textarea, .cmt-import textarea { width: 100%; box-sizing: border-box; font: inherit; margin: 4px 0; }
+.cmt-foot input { flex: 1 1 140px; min-width: 0; }
+.cmt-import { border: 1px dashed #b9c1cc; border-radius: 8px; padding: 8px 10px; margin: 8px 0; background: #fafbfc; }
+.cmt-draft { white-space: pre-wrap; }

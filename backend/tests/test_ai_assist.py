@@ -63,3 +63,15 @@ def test_stream_endpoint_sends_events_in_order(monkeypatch):
     assert [e["type"] for e in events] == ["model", "delta", "delta", "done"]
     assert events[-1]["cost_usd"] == 0.004
     assert TestClient(app).post("/api/v1/ai/assist/unknown/stream", json={}).status_code == 404
+
+
+def test_comment_reply_task_builds_a_prompt_with_the_check_result():
+    system, schema, max_tokens, build, log_name = ai_assist.STREAM_TASKS["comment-reply"]
+    prompt = build({
+        "comment": {"ref": "1", "text": "Corridor MD-C1 clear width to be at least 900 mm."},
+        "evidence": {"state": "Rule check: no deviation now", "items": [{"element": "MD-C1", "measured": "950 mm"}]},
+        "notes": {}, "revision": "rev C",
+    })
+    assert "MD-C1" in prompt and "950 mm" in prompt and "rev C" in prompt
+    assert schema.__name__ == "CommentReply" and log_name == "viewer_comment_reply"
+    assert "Never claim class acceptance" in system

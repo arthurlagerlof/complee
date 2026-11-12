@@ -518,7 +518,7 @@ export async function handleRequest(req, res) {
     }
   }
   if (req.method === 'POST' && p === '/api/convert/rvt') return receiveRvt(req, res, url);
-  const assistMatch = /^\/api\/assist\/(status|explain-finding|escape-suggestions)(\/stream)?$/.exec(p);
+  const assistMatch = /^\/api\/assist\/(status|explain-finding|escape-suggestions|comment-reply)(\/stream)?$/.exec(p);
   if (assistMatch) return assistMatch[2] ? forwardAssistStream(req, res, assistMatch[1]) : forwardAssist(req, res, assistMatch[1]);
   const convertMatch = /^\/api\/convert\/jobs\/([0-9a-f-]{36})(\/ifc)?$/.exec(p);
   if (req.method === 'GET' && convertMatch) {

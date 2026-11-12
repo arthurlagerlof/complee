@@ -1,6 +1,7 @@
 // Findings report (HTML, printable to PDF) and CSV. Pure functions: used by the browser (Report / CSV
 // buttons) and by the CLI (node check.mjs --report <scenario>), so both give the same output.
 import { findingsOf, normalizeModel, coverageOf } from './checker.mjs';
+import { commentEvidence, commentSummary, COMMENT_STATUS_LABEL, EVIDENCE_LABEL } from './class-comments.mjs';
 import { scoreLine } from './score.mjs';
 import { traceMatrix, cellLabel } from './trace.mjs';
 import { DISPOSITION_LABEL, manualRows, manualSummary } from './dispositions.mjs';
@@ -94,6 +95,19 @@ ${rows.map((r) => `<tr><td class="${r.done ? 'ok' : 'ni'}">${r.done ? 'Confirmed
 <td>${esc(r.rule_id)}<br><span class="muted">${esc(r.source)} - ${esc(r.clause)}</span></td><td>${esc(r.evidence ?? '')}</td><td>${r.done ? `${esc(r.responsible)}<br><span class="muted">${esc(r.updated.slice(0, 10))}</span>` : ''}</td><td>${esc(r.note)}</td></tr>`).join('\n')}</table>` : ''}`;
 }
 
+// Class comments: what class asked, what the rule check says now, what was answered.
+export function commentsSection(comments, results) {
+  if (!comments?.length) return '';
+  const s = commentSummary(comments, results);
+  const cls = { finding: 'nc', missing: 'ni', no_finding: 'ok', unlinked: 'muted' };
+  return `<h2>Class comments (${s.total})</h2>
+<p>${s.open} open, ${s.answered} answered, ${s.closed} closed.${s.contradicted ? ` <b class="nc">${s.contradicted} answered or closed while the rule check still finds the deviation.</b>` : ''}</p>
+<table><tr><th>Ref</th><th>Document</th><th>Comment</th><th>Linked</th><th>Rule check now</th><th>Status</th><th>Response</th><th>Responsible</th></tr>
+${comments.map((c) => { const ev = commentEvidence(c, results); return `<tr><td><b>${esc(c.ref)}</b></td><td>${esc(c.document)}${c.received ? `<br><span class="muted">${esc(c.received)}</span>` : ''}</td><td>${esc(c.text)}</td>
+<td>${esc([...(c.links?.elements ?? []), ...(c.links?.rules ?? [])].join(', '))}</td><td class="${cls[ev.state]}">${esc(EVIDENCE_LABEL[ev.state])}</td><td>${esc(COMMENT_STATUS_LABEL[c.status] ?? c.status)}</td><td>${esc(c.response)}</td><td>${esc(c.responsible)}</td></tr>`; }).join('\n')}
+</table>`;
+}
+
 // Rule hierarchy: conflicting limits and rules replaced by a higher-ranking one (with the stated basis).
 export function hierarchySection(results) {
   const els = Object.values(results.elements || {});
@@ -132,7 +146,7 @@ ${rooms.map((o) => `<tr><td><b>${esc(o.id)}</b> ${esc(els.get(o.id)?.name ?? '')
 <p class="muted">Route analysis from the model geometry, not a rule result. ${escape.assumptions.map(esc).join(' ')}</p>`;
 }
 
-export function toHTML({ title, scenario, results, model, rules = [], score = null, edits = [], generated = new Date(), register = null, escape = null, comparison = null }) {
+export function toHTML({ title, scenario, results, model, rules = [], score = null, edits = [], generated = new Date(), register = null, escape = null, comparison = null, comments = null }) {
   const rows = reportRows(results, model, rules, { register });
   const openCount = register ? rows.filter((r) => r.disposition === DISPOSITION_LABEL.open).length : 0;
   const s = results.summary;
@@ -165,6 +179,7 @@ ${rows.map((r) => `<tr><td class="${r.status === 'Non-compliant' ? 'nc' : 'ni'}"
 <td>${esc(r.explanation)}</td><td class="muted">${esc(r.provenance)}</td><td>${esc(r.basis)}</td><td>${r.verified}</td><td>${esc(r.review)}</td>${register ? `<td>${esc(r.disposition)}</td><td>${esc(r.responsible)}</td><td>${esc(r.note)}</td>` : ''}</tr>`).join('\n')}
 </table>
 ${coverageSection(results, rules, register)}
+${commentsSection(comments, results)}
 ${hierarchySection(results)}
 ${comparisonSection(comparison)}
 ${escapeSection(escape, model)}
