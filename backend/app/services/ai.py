@@ -46,6 +46,7 @@ from app.db.models import (
 from app.services.common import ConflictError, EntityNotFound, InvalidReference, commit_changes
 from app.services.design.service import ensure_revision_editable
 from app.services import knowledge
+from app.services import ai_chain
 
 # v2: the prompt carries engineering reference context from the knowledge layer (app/services/knowledge).
 EXTRACTION_PROMPT_VERSION = "text-component-extraction.v2"
@@ -139,6 +140,8 @@ def extraction_target(session: Session) -> tuple[uuid.UUID, uuid.UUID]:
     )
     if task is not None:
         return task.provider_id, task.model_id
+    if ai_chain.chain_enabled():
+        return ai_chain.chain_head(session)
     return _builtin_gemini_model(session)
 
 
@@ -395,9 +398,34 @@ def generate(
     prompt_template_version: str | None = None,
     output_schema_version: str | None = None,
 ) -> dict[str, Any]:
-    provider, model, task_settings = _resolve(
-        session, payload.provider_id, payload.model_id, payload.task_name
-    )
+    use_chain, task_settings = False, {}
+    if payload.provider_id is None and payload.model_id is None and payload.task_name:
+        configured = session.scalar(
+            select(AITaskConfiguration).where(AITaskConfiguration.task_name == payload.task_name)
+        )
+        use_chain = configured is None and ai_chain.chain_enabled()
+    if not use_chain:
+        provider, model, task_settings = _resolve(
+            session, payload.provider_id, payload.model_id, payload.task_name
+        )
+        use_chain = ai_chain.is_chain_head(model) and ai_chain.chain_enabled()
+    if use_chain:
+        schema_version = output_schema_version or (f"{schema.__name__}.v1" if schema else None)
+
+        def record(step_provider, step_model, status, duration_ms, token_usage, outcome):
+            return _record_execution(
+                session, step_provider, step_model, payload.task_name or "ad_hoc", prompt_template_version,
+                schema_version, status, duration_ms, token_usage, outcome,
+            )
+
+        return ai_chain.run_chain(
+            session,
+            payload.prompt,
+            payload.system_prompt,
+            payload.max_tokens or task_settings.get("max_tokens") or settings.ai_chain_max_tokens,
+            schema,
+            record,
+        )
     max_tokens = payload.max_tokens if payload.max_tokens is not None else task_settings.get("max_tokens", 2048)
     started = time.perf_counter()
     adapter = None
@@ -622,7 +650,7 @@ def create_extraction(
             )
         )
         if task is None:
-            provider_id, model_id = _builtin_gemini_model(session)
+            provider_id, model_id = ai_chain.chain_head(session) if ai_chain.chain_enabled() else _builtin_gemini_model(session)
     request = GenerationRequest(
         provider_id=provider_id,
         model_id=model_id,

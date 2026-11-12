@@ -365,3 +365,10 @@ table.register tr.warn td { background: #fffaf0; }
 .cmp-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
 .cmp-group { margin-top: 8px; } .cmp-group > b { font-size: 12px; }
 .item.cmp.gone { cursor: default; }
+
+/* ---------- Revit conversion progress ---------- */
+.convert h1 { font-size: 14px; word-break: break-all; }
+.convert-bar { height: 6px; border-radius: 3px; background: var(--soft); overflow: hidden; margin: 10px 0 6px; }
+.convert-bar i { display: block; height: 100%; background: var(--accent); transition: width .4s; }
+.convert-bar.indeterminate i { width: 30%; animation: convert-slide 1.4s ease-in-out infinite; }
+@keyframes convert-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }

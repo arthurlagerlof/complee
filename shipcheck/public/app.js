@@ -1199,12 +1199,65 @@ function openRegister() {
 }
 function closeRegister() { $('#registerPanel').hidden = true; $('#registerBtn').classList.remove('on'); }
 
+// ---------- Revit -> IFC through the server (Autodesk Platform Services); the browser then reads the IFC ----------
+
+function conversionStatus(title, detail, percent = null) {
+  $('#detail').innerHTML = `<div class="convert">
+    <h1>${esc(title)}</h1>
+    ${percent == null ? '<div class="convert-bar indeterminate"><i></i></div>' : `<div class="convert-bar"><i style="width:${Math.max(2, Math.min(100, percent))}%"></i></div>`}
+    <p class="muted">${esc(detail)}</p>
+    <p class="muted">The Revit file is sent to Autodesk Platform Services for the conversion and kept there for at most 24 hours. The same file is converted only once.</p>
+  </div>`;
+}
+
+async function convertRevit(file) {
+  const status = await fetchJSON('api/convert/status');
+  if (!status.allowed) throw new Error('Revit conversion is only available on the computer that runs Complee.');
+  if (!status.rvt) throw new Error('Revit conversion needs Autodesk Platform Services keys (APS_CLIENT_ID and APS_CLIENT_SECRET in shipcheck/.env). Without them, export the model from Revit as IFC (File > Export > IFC) and open the .ifc file.');
+  if (file.size > status.max_bytes) throw new Error('The file is larger than 1 GB.');
+  // Upload with progress (fetch cannot report upload progress).
+  const job = await new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `api/convert/rvt?name=${encodeURIComponent(file.name)}`);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) conversionStatus(`Uploading ${file.name}`, `${(e.loaded / 1e6).toFixed(1)} of ${(e.total / 1e6).toFixed(1)} MB to the Complee server`, (e.loaded / e.total) * 100); };
+    xhr.onload = () => {
+      let body = null;
+      try { body = JSON.parse(xhr.responseText); } catch { /* reported below */ }
+      if (xhr.status >= 200 && xhr.status < 300 && body?.id) resolve(body);
+      else reject(new Error(body?.error || `The upload failed (${xhr.status}).`));
+    };
+    xhr.onerror = () => reject(new Error('The upload failed: the Complee server could not be reached.'));
+    conversionStatus(`Uploading ${file.name}`, 'Starting…', 0);
+    xhr.send(file);
+  });
+  const STAGE = { queued: 'Waiting', uploading: 'Sending the model to Autodesk', converting: 'Autodesk converts the model to IFC (a few minutes for a large model)', downloading: 'Downloading the IFC file' };
+  const t0 = Date.now();
+  let state = job;
+  while (state.state !== 'done') {
+    if (state.state === 'failed') throw new Error(state.error || 'The conversion failed.');
+    const min = Math.floor((Date.now() - t0) / 60000), sec = Math.floor(((Date.now() - t0) % 60000) / 1000);
+    conversionStatus(`Converting ${file.name}`, `${STAGE[state.state] ?? state.message}${state.progress ? ` · ${state.progress} %` : ''} · ${min}:${String(sec).padStart(2, '0')}`, state.state === 'converting' && !state.progress ? null : state.progress);
+    await sleep(2000);
+    state = await fetchJSON(`api/convert/jobs/${job.id}`);
+  }
+  conversionStatus(`Reading ${file.name}`, state.cached ? 'Converted earlier: using the cached IFC file' : 'Converted. Reading the IFC file…', null);
+  const res = await fetch(`api/convert/jobs/${job.id}/ifc`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`The converted file could not be loaded (${res.status}).`);
+  return new File([await res.blob()], file.name.replace(/\.rvt$/i, '.ifc'));
+}
+
 // ---------- open a model from a file (ship/1 JSON, the format "Export edited model" writes) ----------
 
 let fileCounter = 0;
 async function openModelFile(file) {
+  const original = file;
   try {
     let json, geometry = null;
+    if (/\.rvt$/i.test(file.name)) file = await convertRevit(file);
+    else if (/\.(rfa|rte|nwd|nwc|dwg|dxf|step|stp|iges|igs|3dm|skp|obj|stl|fbx)$/i.test(file.name)) {
+      throw new Error('This format cannot be read directly. Export the model as IFC (.ifc) from the program it was made in, or upload the Revit file (.rvt).');
+    }
     if (/\.ifc$/i.test(file.name)) {
       if (file.size > 400_000_000) throw new Error('The file is larger than 400 MB.');
       $('#detail').innerHTML = `<p class="muted">Reading ${esc(file.name)} (${(file.size / 1e6).toFixed(1)} MB)…</p>`;
@@ -1226,6 +1279,7 @@ async function openModelFile(file) {
       ids.add(e.id);
     }
     const id = `file-${++fileCounter}-${file.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40)}`;
+    if (geometry) json.provenance_note = json.provenance_note.replace(/^Imported from /, `Imported from ${original.name !== file.name ? `${original.name} (converted to IFC by Autodesk) → ` : ''}`);
     S.scenarios.push({ id, name: `File: ${file.name}`, viewer: 'three', modelData: json, geometry });
     $('#scenario').insertAdjacentHTML('beforeend', `<option value="${esc(id)}">${esc(`File: ${file.name}`)}</option>`);
     await loadScenario(id);
