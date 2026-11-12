@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.fast_providers import ClaudeAdapter, OpenAIResponsesAdapter
 from app.ai.providers import AIProviderError, GeminiAdapter, ProviderAdapter
+from app.ai import streaming
 from app.core.config import settings
 from app.db.models import AIModelConfig, AIProvider
 
@@ -229,3 +230,55 @@ def run_chain(
             "cost_usd": round(spent, 6) if spent else None,
         }
     raise AIProviderError(f"Every model in the chain failed. Last error: {last_error}")
+
+
+def run_chain_stream(prompt: str, system_prompt: str | None, max_tokens: int, schema: type[BaseModel] | None):
+    """Like run_chain, but yields events while the model writes:
+    {"type": "model"} when a model starts, {"type": "delta", "text"} for each piece, {"type": "switch"} when a model
+    fails and the next one takes over (the text so far is void), then {"type": "done", ...} or {"type": "error"}."""
+    steps = active_steps()
+    if not steps:
+        yield {"type": "error", "message": "No AI model is configured (ANTHROPIC_API_KEY, OPENAI_API_KEY or GEMINI_API_KEY)."}
+        return
+    attempts: list[dict[str, Any]] = []
+    spent, last_error = 0.0, "no attempt"
+    for index, step in enumerate(steps):
+        timeout = settings.ai_request_timeout_seconds if index == len(steps) - 1 else settings.ai_chain_step_timeout_seconds
+        adapter = adapter_for_step(step, timeout)
+        started = time.perf_counter()
+        parts: list[str] = []
+        usage: dict[str, Any] = {}
+        yield {"type": "model", "model": step.label}
+        try:
+            for kind, value in streaming.stream_text(adapter, step.model_name, prompt, system_prompt, max_tokens, schema):
+                if kind == "delta":
+                    parts.append(value)
+                    yield {"type": "delta", "text": value}
+                else:
+                    usage = value or {}
+        except AIProviderError as exc:
+            last_error = str(exc)
+            attempts.append({"model": step.label, "status": "failed",
+                             "duration_ms": round((time.perf_counter() - started) * 1000), "reason": last_error[:300]})
+            yield {"type": "switch", "from": step.label, "reason": last_error[:300]}
+            continue
+        finally:
+            adapter.close()
+        duration_ms = round((time.perf_counter() - started) * 1000)
+        cost = estimate_cost(step, usage)
+        spent += cost or 0.0
+        text = "".join(parts)
+        parsed, errors = streaming.parse_structured(text, schema) if schema is not None else (None, [])
+        if errors:
+            last_error = "the answer did not match the required structure"
+            attempts.append({"model": step.label, "status": "invalid", "duration_ms": duration_ms, "reason": last_error, "token_usage": usage})
+            yield {"type": "switch", "from": step.label, "reason": last_error}
+            continue
+        attempts.append({"model": step.label, "status": "completed", "duration_ms": duration_ms, "cost_usd": cost, "token_usage": usage})
+        yield {
+            "type": "done", "result": parsed, "text": None if schema is not None else text, "model": step.label,
+            "duration_ms": sum(a["duration_ms"] for a in attempts), "attempts": attempts, "token_usage": usage,
+            "cost_usd": round(spent, 6) if spent else None,
+        }
+        return
+    yield {"type": "error", "message": f"Every model in the chain failed. Last error: {last_error}", "attempts": attempts}

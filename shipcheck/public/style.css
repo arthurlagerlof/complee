@@ -408,3 +408,9 @@ table.register tr.warn td { background: #fffaf0; }
 .ai-box { border-left: 3px solid #6366f1; }
 .ai-btn::first-letter { color: #6366f1; }
 @media (max-width: 900px) { .ai-map { grid-template-columns: 1fr; } }
+
+/* ---------- streamed AI answers ---------- */
+.caret { display: inline-block; width: 7px; height: 13px; margin-left: 2px; vertical-align: -2px; background: #6366f1; animation: caret 1s steps(1) infinite; }
+@keyframes caret { 50% { opacity: 0; } }
+.ai-foot.writing { color: #4f46e5; display: flex; align-items: center; gap: 6px; }
+.esc-sug.writing { opacity: .85; }

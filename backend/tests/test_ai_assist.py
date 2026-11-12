@@ -44,3 +44,22 @@ def test_status_lists_the_chain(monkeypatch):
     monkeypatch.setattr(settings, "anthropic_api_key", "k")
     body = TestClient(app).get("/api/v1/ai/assist/status").json()
     assert body["available"] is True and body["chain"][0] == "claude-opus-5-5 (fast)"
+
+
+def test_stream_endpoint_sends_events_in_order(monkeypatch):
+    def fake_stream(prompt, system, max_tokens, schema):
+        yield {"type": "model", "model": "gpt-6.1-sol"}
+        yield {"type": "delta", "text": '{"summary": "850'}
+        yield {"type": "delta", "text": ' mm"}'}
+        yield {"type": "done", "result": {"summary": "850 mm"}, "model": "gpt-6.1-sol", "duration_ms": 900,
+               "attempts": [{"model": "gpt-6.1-sol", "status": "completed", "duration_ms": 900}], "cost_usd": 0.004}
+
+    monkeypatch.setattr(ai_chain, "run_chain_stream", fake_stream)
+    monkeypatch.setattr(ai_assist, "_log_sessionmaker", lambda: None)
+    import json as _json
+    with TestClient(app).stream("POST", "/api/v1/ai/assist/explain-finding/stream", json={"rule": {}, "finding": {}}) as r:
+        assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
+        events = [_json.loads(line[5:]) for line in r.iter_lines() if line.startswith("data:")]
+    assert [e["type"] for e in events] == ["model", "delta", "delta", "done"]
+    assert events[-1]["cost_usd"] == 0.004
+    assert TestClient(app).post("/api/v1/ai/assist/unknown/stream", json={}).status_code == 404

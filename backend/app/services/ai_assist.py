@@ -143,14 +143,17 @@ EXPLAIN_SYSTEM = (
 )
 
 
-def explain_finding(payload: dict[str, Any]) -> dict[str, Any]:
-    prompt = (
+def explain_prompt(payload: dict[str, Any]) -> str:
+    return (
         "Rule:\n" + _compact(payload.get("rule", {}), 3000)
         + "\n\nChecker result for this element:\n" + _compact(payload.get("finding", {}), 3000)
         + "\n\nShip particulars:\n" + _compact(payload.get("ship", {}), 1500)
         + "\n\nJSON schema:\n" + json.dumps(FindingExplanation.model_json_schema())
     )
-    return _run(prompt, EXPLAIN_SYSTEM, FindingExplanation, 2500)
+
+
+def explain_finding(payload: dict[str, Any]) -> dict[str, Any]:
+    return _run(explain_prompt(payload), EXPLAIN_SYSTEM, FindingExplanation, 2500)
 
 
 ESCAPE_SYSTEM = (
@@ -165,14 +168,33 @@ ESCAPE_SYSTEM = (
 )
 
 
-def escape_suggestions(payload: dict[str, Any]) -> dict[str, Any]:
-    prompt = (
+def escape_prompt(payload: dict[str, Any]) -> str:
+    return (
         "Route analysis:\n" + _compact(payload.get("analysis", {}), 6000)
         + "\n\nElements (id, type, name, deck, footprint x/y/lx/ly in mm):\n" + _compact(payload.get("elements", []), 14000)
         + "\n\nDecks:\n" + _compact(payload.get("decks", []), 1500)
         + "\n\nJSON schema:\n" + json.dumps(EscapeSuggestions.model_json_schema())
     )
-    return _run(prompt, ESCAPE_SYSTEM, EscapeSuggestions, 3000)
+
+
+def escape_suggestions(payload: dict[str, Any]) -> dict[str, Any]:
+    return _run(escape_prompt(payload), ESCAPE_SYSTEM, EscapeSuggestions, 3000)
+
+
+# Streaming: system prompt, schema, output limit, prompt builder, log task name
+STREAM_TASKS = {
+    "explain-finding": (EXPLAIN_SYSTEM, FindingExplanation, 2500, explain_prompt, "viewer_explain_finding"),
+    "escape-suggestions": (ESCAPE_SYSTEM, EscapeSuggestions, 3000, escape_prompt, "viewer_escape_suggestions"),
+}
+
+
+def stream(task: str, payload: dict[str, Any], holder: dict[str, Any]):
+    """Events of ai_chain.run_chain_stream for a viewer task; holder receives the attempts for logging."""
+    system, schema, max_tokens, build, _ = STREAM_TASKS[task]
+    for event in ai_chain.run_chain_stream(build(payload), system, max_tokens, schema):
+        if event["type"] in {"done", "error"}:
+            holder["attempts"] = event.get("attempts", [])
+        yield event
 
 
 def status() -> dict[str, Any]:

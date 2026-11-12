@@ -9,6 +9,7 @@ import { createViewer, STATUS_HEX } from './viewer3d.js';
 import { analyzeEscape, ESCAPE_LABEL } from './src/escape.mjs';
 import { compareRevisions } from './src/compare.mjs';
 import { verifySuggestion } from './src/escape-actions.mjs';
+import { parsePartialJson } from './src/partial-json.mjs';
 import { consistencyIssues, widthCheck } from './src/consistency.mjs';
 import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, registerSummary, withDisposition, registerCSV, projectKey } from './src/dispositions.mjs';
 import { createFallbackViewer } from './viewer-fallback.js';
@@ -1191,6 +1192,61 @@ async function assist(name, payload, subject = '') {
   }
 }
 
+// Streamed AI answer: onPartial(value, text) runs whenever more of the answer has arrived (value is the JSON as far as
+// it goes), onSwitch(from, reason) when a model fails and the next one starts again. Resolves with the final answer.
+async function assistStream(name, payload, subject, { onPartial, onSwitch } = {}) {
+  const entry = { at: new Date(), task: AI_TASK[name] ?? name, subject, busy: true };
+  aiState.log.unshift(entry);
+  aiState.busy++;
+  renderAiPill();
+  try {
+    const res = await fetch(`api/assist/${name}/stream`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!res.ok || !res.body) {
+      let message = `The AI service answered ${res.status}.`;
+      try { message = (await res.json()).error || message; } catch { /* keep the status text */ }
+      throw new Error(message);
+    }
+    const reader = res.body.getReader(), decoder = new TextDecoder();
+    let buffer = '', text = '', model = '', final = null, lastPaint = 0;
+    const paint = (force) => {
+      const now = performance.now();
+      if (!force && now - lastPaint < 80) return; // at most ~12 repaints per second
+      lastPaint = now;
+      onPartial?.(parsePartialJson(text), text, model);
+    };
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut;
+      while ((cut = buffer.indexOf('\n\n')) >= 0) {
+        const block = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        const line = block.split('\n').find((l) => l.startsWith('data:'));
+        if (!line) continue;
+        let ev;
+        try { ev = JSON.parse(line.slice(5)); } catch { continue; }
+        if (ev.type === 'model') { model = ev.model; entry.model = model; text = ''; paint(true); }
+        else if (ev.type === 'delta') { text += ev.text; paint(false); }
+        else if (ev.type === 'switch') { onSwitch?.(ev.from, ev.reason); text = ''; }
+        else if (ev.type === 'done') final = ev;
+        else if (ev.type === 'error') throw new Error(ev.message || 'The AI service failed.');
+      }
+    }
+    if (!final) throw new Error('The AI answer stopped before it was complete.');
+    Object.assign(entry, { model: final.model, seconds: final.duration_ms / 1000, cost: final.cost_usd, attempts: final.attempts });
+    return final;
+  } catch (e) {
+    entry.error = e.message;
+    throw e;
+  } finally {
+    entry.busy = false;
+    aiState.busy--;
+    renderAiPill();
+    if (!$('#aiPanel').hidden) openAiPanel();
+  }
+}
+
 async function loadAiStatus() {
   try {
     const res = await fetch('api/assist/status', { cache: 'no-store' });
@@ -1259,9 +1315,9 @@ function explainKey(id, r) { return `${id}|${r.rule_id}|${r.measured ?? ''}|${r.
 function explainHTML(id, r) {
   const st = S.explain?.get(explainKey(id, r));
   if (!st) return '';
-  if (st.loading) return '<div class="ai-wait"><span class="spin"></span>Asking the AI… (usually 3–6 s)</div>';
+  if (st.loading && !st.partial) return `<div class="ai-wait"><span class="spin"></span>${st.model ? `${esc(modelLabel(st.model))} is thinking…` : 'Asking the AI…'}${st.switched ? ` <span class="muted">(${esc(st.switched)})</span>` : ''}</div>`;
   if (st.error) return `<div class="check-bad">${esc(st.error)}</div>`;
-  const x = st.data.result || {};
+  const x = (st.loading ? st.partial : st.data.result) || {};
   const list = (title, items) => (items?.length ? `<div class="ai-h">${title}</div><ul>${items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul>` : '');
   return `<div class="ai-box"><div class="ai-tag">✦ AI explanation</div>
     <p>${esc(x.summary || '')}</p>
@@ -1269,7 +1325,7 @@ function explainHTML(id, r) {
     ${list('Exceptions and alternatives to check', x.exceptions_to_check)}
     ${x.options?.length ? `<div class="ai-h">Ways to resolve it</div><ol>${x.options.map((o) => `<li><b>${esc(o.change)}</b><br><span class="muted">${esc(o.effect)}</span></li>`).join('')}</ol>` : ''}
     ${list('Questions for the reviewer', x.questions)}
-    ${aiFooter(st.data)}
+    ${st.loading ? `<div class="ai-foot writing"><span class="caret"></span> ${esc(modelLabel(st.model))} is writing…</div>` : aiFooter(st.data)}
   </div>`;
 }
 
@@ -1284,11 +1340,15 @@ async function explainFinding(id, ruleId) {
   S.explain.set(key, { loading: true });
   renderResults(id);
   try {
-    const data = await assist('explain-finding', {
+    const state = S.explain.get(key);
+    const data = await assistStream('explain-finding', {
       rule: { id: rule.id, source: rule.source, clause: rule.clause, text: rule.text, text_status: rule.text_status, verified: rule.verified, check: rule.check, parameter: rule.parameter, value: rule.value, unit: rule.unit, applies_to: rule.applies_to },
       finding: { element: id, name: el.name, type: el.type, deck: deckName(el.deck), status: r.status, measured: r.measured, required: r.required, explanation: r.explanation, inputs: r.inputs },
       ship,
-    }, `${id} · ${ruleId}`);
+    }, `${id} · ${ruleId}`, {
+      onPartial: (value, _text, model) => { Object.assign(state, { partial: value, model }); paintExplain(id, r); },
+      onSwitch: (from, reason) => { Object.assign(state, { partial: null, switched: `${modelLabel(from)} failed, next model` }); paintExplain(id, r); },
+    });
     S.explain.set(key, { data });
   } catch (err) {
     S.explain.set(key, { error: err.message });
@@ -1296,12 +1356,26 @@ async function explainFinding(id, ruleId) {
   if (S.selected === id) renderResults(id);
 }
 
+// Repaint only the explanation box of one card while the answer streams in (the rest of the panel stays still).
+function paintExplain(id, r) {
+  if (S.selected !== id) return;
+  const slot = document.querySelector(`#dResults .ai-out[data-explain="${CSS.escape(r.rule_id)}"]`);
+  if (slot) slot.innerHTML = explainHTML(id, r);
+}
+
 // Escape-route suggestions: the AI proposes actions; every proposal is applied to a copy of the model and the routes
 // are recomputed. Only proposals that give rooms a second independent route (and make none worse) are offered.
 function escAiHTML() {
   const st = S.escAi;
   if (!st) return '';
-  if (st.loading) return '<div class="ai-wait"><span class="spin"></span>The AI proposes changes; Complee recomputes each one…</div>';
+  if (st.loading) {
+    const done = st.items ?? [], writing = st.writing;
+    return `<div class="ai-box"><div class="ai-tag">✦ AI proposals · checked by Complee</div>
+      ${done.map((i) => `<div class="esc-sug"><b>${esc(i.s.title)}</b><div class="${i.check.ok ? 'ok-line' : 'muted'}">${i.check.ok ? `✓ Recomputed: ${i.check.improved.length === 1 ? '1 room gets' : `${i.check.improved.length} rooms get`} a second route` : '✗ Recomputed: no improvement, will be dropped'}</div></div>`).join('')}
+      ${writing ? `<div class="esc-sug writing"><b>${esc(writing.title || '…')}</b><div class="muted">${esc(writing.rationale || '')}<span class="caret"></span></div></div>` : ''}
+      <div class="ai-wait"><span class="spin"></span>${st.model ? `${esc(modelLabel(st.model))} ${writing || done.length ? 'is writing' : 'is thinking'}…` : 'Asking the AI…'} Complee recomputes each proposal as soon as it is complete.${st.switched ? ` <span class="muted">(${esc(st.switched)})</span>` : ''}</div>
+    </div>`;
+  }
   if (st.error) return `<div class="check-bad">${esc(st.error)}</div>`;
   const good = st.items.filter((i) => i.check.ok), dropped = st.items.filter((i) => !i.check.ok);
   return `<div class="ai-box"><div class="ai-tag">✦ AI proposals · checked by Complee</div>
@@ -1360,19 +1434,33 @@ async function suggestEscapeImprovements() {
     const mm = r.value * (UNIT_TO_MM[r.unit] ?? 1);
     for (const t of r.applies_to?.types ?? []) analysis.minimum_clear_width_mm[t] = Math.max(analysis.minimum_clear_width_mm[t] ?? 0, mm);
   }
-  S.escAi = { loading: true };
+  S.escAi = { loading: true, items: [] };
+  const state = S.escAi;
   views.three.setGhosts([]);
   renderEscape();
+  const current = S.escape;
+  const verify = (s) => {
+    const check = verifySuggestion(S.model, s, current);
+    // The rule check of the proposal itself: a new passage or door has to meet the same rules as the rest.
+    const added = new Set(check.added.map((e) => e.id));
+    const ruleIssues = check.added.length ? findingsOf(checkModel(structuredClone(check.model), allRules())).filter((f) => added.has(f.element)) : [];
+    return { s, check, ruleIssues };
+  };
+  const paint = () => { const box = $('#escAi'); if (box && S.escAi === state) box.innerHTML = escAiHTML(); };
   try {
-    const data = await assist('escape-suggestions', { analysis, elements, decks }, `${rooms.length} room${rooms.length === 1 ? '' : 's'} with a single route`);
-    const current = S.escape;
-    const items = (data.result?.suggestions ?? []).map((s) => {
-      const check = verifySuggestion(S.model, s, current);
-      // The rule check of the proposal itself: a new passage or door has to meet the same rules as the rest.
-      const added = new Set(check.added.map((e) => e.id));
-      const ruleIssues = check.added.length ? findingsOf(checkModel(structuredClone(check.model), allRules())).filter((f) => added.has(f.element)) : [];
-      return { s, check, ruleIssues };
-    }).sort((a, b) => (b.check.ok - a.check.ok) || (a.ruleIssues.length - b.ruleIssues.length) || (b.check.improved.length - a.check.improved.length));
+    const data = await assistStream('escape-suggestions', { analysis, elements, decks }, `${rooms.length} room${rooms.length === 1 ? '' : 's'} with a single route`, {
+      onPartial: (value, _text, model) => {
+        state.model = model;
+        const list = Array.isArray(value?.suggestions) ? value.suggestions : [];
+        // Every proposal before the last one is complete: recompute it now, while the AI still writes the next.
+        while (state.items.length < list.length - 1) state.items.push(verify(list[state.items.length]));
+        state.writing = list[list.length - 1] ?? null;
+        paint();
+      },
+      onSwitch: (from) => { Object.assign(state, { items: [], writing: null, switched: `${modelLabel(from)} failed, next model` }); paint(); },
+    });
+    const items = (data.result?.suggestions ?? []).map(verify)
+      .sort((a, b) => (b.check.ok - a.check.ok) || (a.ruleIssues.length - b.ruleIssues.length) || (b.check.improved.length - a.check.improved.length));
     S.escAi = { data, items, shown: null };
   } catch (err) {
     S.escAi = { error: err.message };

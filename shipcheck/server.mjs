@@ -238,6 +238,35 @@ async function forwardAssist(req, res, name) {
   }
 }
 
+// Streaming variant: the backend's server-sent events reach the browser piece by piece while the model writes.
+async function forwardAssistStream(req, res, name) {
+  if (process.env.AI_ALLOW_REMOTE !== 'true' && !isLoopback(req)) return sendJSON(res, 403, { error: 'AI assistance is only available on the computer that runs Complee.' });
+  if (name === 'status' || req.method !== 'POST') return sendJSON(res, 405, { error: 'Method not allowed' });
+  let body;
+  try { body = JSON.stringify(await readBody(req, 400_000)); } catch (e) { return sendJSON(res, 400, { error: e.message }); }
+  const abort = new AbortController();
+  res.on('close', () => abort.abort()); // the viewer went away: stop paying for the answer
+  let upstream;
+  try {
+    upstream = await fetch(`${AI_API_URL}/api/v1/ai/assist/${name}/stream`, {
+      method: 'POST', body, headers: { 'Content-Type': 'application/json' }, signal: abort.signal,
+    });
+  } catch {
+    return sendJSON(res, 503, { error: 'The AI service is not running. Start the backend (cd backend; .venv\\Scripts\\python -m uvicorn app.main:app --port 8000).' });
+  }
+  if (!upstream.ok || !upstream.body) {
+    const text = await upstream.text().catch(() => '');
+    let message = `The AI service answered ${upstream.status}.`;
+    try { message = JSON.parse(text)?.error?.message || message; } catch { /* keep the status text */ }
+    return sendJSON(res, upstream.status >= 500 ? 502 : upstream.status, { error: message });
+  }
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+  try {
+    for await (const chunk of upstream.body) res.write(chunk);
+  } catch { /* the viewer closed the page */ }
+  res.end();
+}
+
 const isLoopback = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req?.socket?.remoteAddress);
 const localOnly = (req) => { if (!isLoopback(req)) throw Object.assign(new Error('Only available on this computer'), { status: 403 }); };
 
@@ -489,8 +518,8 @@ export async function handleRequest(req, res) {
     }
   }
   if (req.method === 'POST' && p === '/api/convert/rvt') return receiveRvt(req, res, url);
-  const assistMatch = /^\/api\/assist\/(status|explain-finding|escape-suggestions)$/.exec(p);
-  if (assistMatch) return forwardAssist(req, res, assistMatch[1]);
+  const assistMatch = /^\/api\/assist\/(status|explain-finding|escape-suggestions)(\/stream)?$/.exec(p);
+  if (assistMatch) return assistMatch[2] ? forwardAssistStream(req, res, assistMatch[1]) : forwardAssist(req, res, assistMatch[1]);
   const convertMatch = /^\/api\/convert\/jobs\/([0-9a-f-]{36})(\/ifc)?$/.exec(p);
   if (req.method === 'GET' && convertMatch) {
     const job = rvtConverter.job(convertMatch[1]);
