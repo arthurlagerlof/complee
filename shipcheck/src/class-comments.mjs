@@ -173,7 +173,26 @@ export const EVIDENCE_LABEL = {
   unlinked: 'Not linked to the model',
 };
 
-export function commentSummary(comments, results) {
+// Dispositions that answer a deviation without changing the design; with a written justification they make an
+// answered comment legitimate even though the rule check still finds the deviation.
+const JUSTIFIED = new Set(['deviation', 'accepted', 'not_applicable']);
+
+/**
+ * A comment marked answered or closed while the design still has the deviation it is about, and the register holds
+ * no justified deviation, acceptance or "not applicable" for it: the reply and the design disagree.
+ */
+export function isContradicted(comment, results, register = {}) {
+  if (!results || comment.status === 'open') return false;
+  const ev = commentEvidence(comment, results);
+  if (ev.state !== 'finding') return false;
+  return ev.items.some((i) => {
+    if (i.status !== 'non_compliant') return false;
+    const d = register?.[`${i.element}|${i.rule_id}`];
+    return !(d && JUSTIFIED.has(d.disposition) && String(d.note ?? '').trim());
+  });
+}
+
+export function commentSummary(comments, results, register = {}) {
   const list = comments ?? [];
   return {
     total: list.length,
@@ -181,7 +200,7 @@ export function commentSummary(comments, results) {
     answered: list.filter((c) => c.status === 'answered').length,
     closed: list.filter((c) => c.status === 'closed').length,
     // Answered as resolved while the check still finds the deviation: the reply and the design disagree.
-    contradicted: results ? list.filter((c) => c.status !== 'open' && commentEvidence(c, results).state === 'finding').length : 0,
+    contradicted: results ? list.filter((c) => isContradicted(c, results, register)).length : 0,
   };
 }
 

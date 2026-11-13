@@ -117,9 +117,9 @@ ${r.items.length ? `<table><tr><th>Level</th><th>Count</th><th>Open work</th></t
 }
 
 // Class comments: what class asked, what the rule check says now, what was answered.
-export function commentsSection(comments, results) {
+export function commentsSection(comments, results, register = {}) {
   if (!comments?.length) return '';
-  const s = commentSummary(comments, results);
+  const s = commentSummary(comments, results, register);
   const cls = { finding: 'nc', missing: 'ni', no_finding: 'ok', unlinked: 'muted' };
   return `<h2>Class comments (${s.total})</h2>
 <p>${s.open} open, ${s.answered} answered, ${s.closed} closed.${s.contradicted ? ` <b class="nc">${s.contradicted} answered or closed while the rule check still finds the deviation.</b>` : ''}</p>
@@ -201,7 +201,7 @@ ${rows.map((r) => `<tr><td class="${r.status === 'Non-compliant' ? 'nc' : 'ni'}"
 <td>${esc(r.explanation)}</td><td class="muted">${esc(r.provenance)}</td><td>${esc(r.basis)}</td><td>${r.verified}</td><td>${esc(r.review)}</td>${register ? `<td>${esc(r.disposition)}</td><td>${esc(r.responsible)}</td><td>${esc(r.note)}</td>` : ''}</tr>`).join('\n')}
 </table>
 ${coverageSection(results, rules, register)}
-${commentsSection(comments, results)}
+${commentsSection(comments, results, register)}
 ${hierarchySection(results)}
 ${comparisonSection(comparison)}
 ${escapeSection(escape, model)}

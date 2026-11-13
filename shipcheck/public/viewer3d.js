@@ -556,13 +556,22 @@ export function createViewer(container, { onPick } = {}) {
     return new THREE.Box3(new THREE.Vector3(b.min[0], b.min[1] + y, b.min[2]), new THREE.Vector3(b.max[0], b.max[1] + y, b.max[2]));
   }
 
+  // A small element (a door is 0.1 x 0.9 m) framed on its own puts the camera a few metres away, where the
+  // walls around it fill the view: frame at least CONTEXT_M of its surroundings, centred on the element.
+  const CONTEXT_M = 7;
+  function withContext(box) {
+    const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
+    const half = new THREE.Vector3(Math.max(s.x, CONTEXT_M) / 2, Math.max(s.y, CONTEXT_M / 3) / 2, Math.max(s.z, CONTEXT_M) / 2);
+    return new THREE.Box3(c.clone().sub(half), c.clone().add(half));
+  }
+
   function flyToElement(id, ms = 1100) {
     const o = meshes[id];
-    if (!o && batchBox[id]) { const b = batchWorldBox(id); return b ? frameBox(b.expandByScalar(0.08), ms, 2.6, new THREE.Vector3(-0.35, 1, 0.55)) : Promise.resolve(); }
+    if (!o && batchBox[id]) { const b = batchWorldBox(id); return b ? frameBox(withContext(b.expandByScalar(0.08)), ms, 2.6, new THREE.Vector3(-0.35, 1, 0.55)) : Promise.resolve(); }
     if (!o) return Promise.resolve();
     // One element on a deck: look down at it from above at an angle, so other elements on the same deck
     // (corridors, walls) cannot stand between the camera and the element.
-    return frameBox(boxOf(o).expandByScalar(0.08), ms, 2.6, new THREE.Vector3(-0.35, 1, 0.55));
+    return frameBox(withContext(boxOf(o).expandByScalar(0.08)), ms, 2.6, new THREE.Vector3(-0.35, 1, 0.55));
   }
 
   function select(id, { fly = true } = {}) {

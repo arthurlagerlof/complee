@@ -36,8 +36,11 @@ test('open work is counted as blockers and warnings; cleared work disappears', (
   register = withManualCheck(register, manualRows(results, register)[0], { done: true, responsible: 'A. Engineer' });
   comments = withComment(comments, comments.comments[0].id, { status: 'answered', response: 'See equivalence letter.' });
   r = readiness({ results, register, comments: comments.comments, rules: RULES });
-  // The comment is answered while the deviation remains: still a blocker, by design.
-  assert.deepEqual(ids(r), { contradicted: 1, missing_info: 1, unverified: 1 });
+  // Answered while the deviation remains, but with a justified deviation in the register: legitimate, no blocker.
+  assert.deepEqual(ids(r), { missing_info: 1, unverified: 1 });
+  // Without that justification the reply and the design disagree: a blocker.
+  const unjustified = withDisposition(register, w, { disposition: 'fix', note: '' });
+  assert.equal(ids(readiness({ results, register: unjustified, comments: comments.comments, rules: RULES })).contradicted, 1);
 
   const fixed = checkModel(model(950), RULES);
   r = readiness({ results: fixed, register, comments: comments.comments, rules: RULES });

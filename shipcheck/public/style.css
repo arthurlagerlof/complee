@@ -452,3 +452,6 @@ table.register tr.warn td { background: #fffaf0; }
 .ready li.blocker a { color: #9b2c2c; }
 .ready li.warning a { color: #8a5300; }
 .ready-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.ship-more { margin-top: 4px; }
+.ship-more > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.ship-more[open] > summary { margin-bottom: 2px; }

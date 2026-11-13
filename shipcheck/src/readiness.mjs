@@ -27,9 +27,9 @@ export function readiness({ results, register = {}, comments = [], rules = [], e
   add('conflicts', 'blocker', Object.values(results.elements).reduce((n, e) => n + (e.conflicts?.length ?? 0), 0), 'rule conflicts: no design can meet both limits, clarify with class or flag', 'list');
   const man = manualRows(results, register);
   add('manual', 'blocker', man.filter((m) => !m.done && m.applicability !== 'unknown').length, 'manual checks not confirmed', 'manual');
-  const cs = commentSummary(comments, results);
+  const cs = commentSummary(comments, results, register);
   add('comments_open', 'blocker', cs.open, 'class comments without a response', 'comments');
-  add('contradicted', 'blocker', cs.contradicted, 'class comments answered while the rule check still finds the deviation', 'comments');
+  add('contradicted', 'blocker', cs.contradicted, 'class comments answered while the rule check still finds the deviation and the register has no justified deviation for it', 'comments');
 
   add('fix_planned', 'warning', nc.filter((r) => r.disposition === 'fix').length, 'findings with a design change planned but not yet in the model', 'register');
   add('missing_info', 'warning', findingsOf(results).filter((f) => f.status === 'not_enough_info').length, 'rule checks without the data they need ("not enough info")', 'list');

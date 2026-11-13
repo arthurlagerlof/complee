@@ -46,7 +46,16 @@ async function loadProvider() {
   try {
     const response = await fetch('api/evidence/provider'); const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || response.status);
-    $('#evidenceSourceStatus').textContent = `${payload.id} · ${payload.metadata?.record_count ?? 0} passages · ${payload.metadata?.retrieval || 'source retrieval'}`;
+    const count = payload.metadata?.record_count ?? 0;
+    if (!count) {
+      // The extracted SOLAS text is not distributed with the code (licensed text): say so instead of "no matches".
+      $('#evidenceSourceStatus').textContent = 'The SOLAS II-2 passages are not installed on this computer.';
+      $('#evidenceQuery').disabled = true;
+      $('#evidenceSearch').disabled = true;
+      $('#evidenceSourceResults').innerHTML = '<div class="evidence-empty">Search is available once the extracted SOLAS II-2 file (integrations/sinceai/data/solas_ii2_revised_mca.jsonl) is in place.</div>';
+      return;
+    }
+    $('#evidenceSourceStatus').textContent = `${payload.id} · ${count} passages · ${payload.metadata?.retrieval || 'source retrieval'}`;
   } catch (error) { $('#evidenceSourceStatus').textContent = `Local source unavailable: ${error.message}`; }
 }
 $('#evidenceSearch').addEventListener('click', searchSources);

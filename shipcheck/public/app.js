@@ -14,7 +14,7 @@ import { consistencyIssues, widthCheck } from './src/consistency.mjs';
 import { readiness } from './src/readiness.mjs';
 import { statusForRules, verificationCounts, LEVEL_LABEL } from './src/verify-status.mjs';
 import { projectFile, readProjectFile } from './src/project-file.mjs';
-import { COMMENT_STATUSES, COMMENT_STATUS_LABEL, EVIDENCE_LABEL, parseComments, addComments, withComment, withoutComment, commentEvidence, commentSummary, commentsCSV } from './src/class-comments.mjs';
+import { COMMENT_STATUSES, COMMENT_STATUS_LABEL, EVIDENCE_LABEL, parseComments, addComments, withComment, withoutComment, commentEvidence, commentSummary, commentsCSV, isContradicted } from './src/class-comments.mjs';
 import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, registerSummary, withDisposition, registerCSV, projectKey, manualRows, manualSummary, withManualCheck } from './src/dispositions.mjs';
 import { createFallbackViewer } from './viewer-fallback.js';
 import { createLocalViewer } from './viewer-stream.js';
@@ -414,6 +414,14 @@ function renderAll() {
   renderRegisterButton();
 }
 
+// Ship particulars folded into one line, so the findings are on the first screen; open for every value and its source.
+let shipOpen = false;
+function shipLine(sh, len) {
+  const v = (k) => readValue(sh[k], S.norm.units, sh.source);
+  const parts = [v('type')?.value, v('length_overall') && `${len(v('length_overall'))} LOA`, v('class_society') && `class ${v('class_society').value}`].filter(Boolean);
+  return `Ship particulars${parts.length ? `: ${parts.join(' · ')}` : ''}`;
+}
+
 function renderShip() {
   const sh = S.model.ship || {};
   const row = (label, key, fmt = (v) => v) => {
@@ -428,6 +436,7 @@ function renderShip() {
     <div class="muted">${S.model.kind === 'parts'
       ? `${S.norm.elements.length.toLocaleString('en')} parts checked${S.model.counts ? ` (of ${S.model.counts.kept.toLocaleString('en')} prepared from ${S.model.counts.objects.toLocaleString('en')} model objects)` : ''} · ${S.norm.decks.length} SWBS / system groups · source unit inch, shown in mm`
       : `${S.norm.decks.length} deck${S.norm.decks.length > 1 ? 's' : ''} · ${S.norm.elements.length} elements · model units ${esc(S.norm.units)} · schema ${esc(S.norm.schema)}`}</div>
+    <details class="ship-more" id="shipMore" ${shipOpen || S.keelNote ? 'open' : ''}><summary>${esc(shipLine(sh, len))}</summary>
     <table class="kv" style="margin-top:6px">
       ${row('Ship type', 'type', (v) => v.value)}
       ${row('Operating area', 'operating_area', list)}
@@ -440,9 +449,11 @@ function renderShip() {
       ${keelRow()}
       ${sh.propulsion ? row('Propulsion', 'propulsion', (v) => v.value) : ''}
     </table>
+    ${S.model.kind === 'parts' ? '' : '<button class="tiny" id="dlModel" style="margin-top:6px" title="The model as a ship/1 JSON file: the format Open… reads">Download model (JSON)</button>'}
+    </details>
     ${S.model.provenance_note ? `<div class="note">${esc(S.model.provenance_note)}</div>` : ''}
-    ${S.model.scope_note ? `<div class="note scope">${esc(S.model.scope_note)}</div>` : ''}
-    ${S.model.kind === 'parts' ? '' : '<button class="tiny" id="dlModel" style="margin-top:6px" title="The model as a ship/1 JSON file: the format Open… reads">Download model (JSON)</button>'}`;
+    ${S.model.scope_note ? `<div class="note scope">${esc(S.model.scope_note)}</div>` : ''}`;
+  $('#shipMore').ontoggle = (e) => { shipOpen = e.target.open; };
   if ($('#dlModel')) $('#dlModel').onclick = () => download(`${S.sc.id}.json`, JSON.stringify(S.model, null, 1), 'application/json');
   if ($('#keelWhatIf')) $('#keelWhatIf').onchange = (e) => setKeelDate(e.target.value);
 }
@@ -707,10 +718,10 @@ function renderDetail(id) {
     <div id="dStatus" style="margin-top:6px"></div>
     ${S.sc.viewer === 'local' ? '<button id="backOverview" class="tiny" style="margin-top:6px">← Back to the whole ship</button>' : ''}
     ${el.note ? `<div class="note"><b>Model note:</b> ${esc(el.note)}</div>` : ''}
-    <div id="dComponent"></div>
-    <div id="dGeom"></div>
-    <div id="dEscape"></div>
-    <div id="dResults"></div>
+    ${e?.results?.length
+      // An element with rule results: why it passes or fails comes first. A room without rules: its escape routes.
+      ? '<div id="dResults"></div><div id="dEscape"></div><div id="dComponent"></div><div id="dGeom"></div>'
+      : '<div id="dEscape"></div><div id="dComponent"></div><div id="dGeom"></div><div id="dResults"></div>'}
     <h2>Design data (what-if editing)</h2>
     <div id="dEditor"></div>`;
   renderComponent(id);
@@ -1786,14 +1797,15 @@ function renderRegisterButton() {
   const s = registerSummary(registerRows(S.results, S.register));
   const attention = s.open + s.stale + s.missing_note;
   const c = commentSummary(S.comments?.comments, null);
-  $('#registerBtn').textContent = `Findings register${s.total || c.total ? ` (${s.open + c.open} open)` : ''}`;
+  const parts = [s.total ? `${s.open} open` : '', c.open ? `${c.open} comment${c.open === 1 ? '' : 's'} open` : ''].filter(Boolean);
+  $('#registerBtn').textContent = `Findings register${parts.length ? ` (${parts.join(' · ')})` : ''}`;
   $('#registerBtn').classList.toggle('attention', attention > 0 && s.total > 0);
 }
 
 let registerOpenOnly = false;
 let registerTab = 'findings';
 function registerTabs() {
-  const c = commentSummary(S.comments?.comments, S.results);
+  const c = commentSummary(S.comments?.comments, S.results, S.register);
   return `<span class="tabs"><button class="tab ${registerTab === 'findings' ? 'on' : ''}" data-tab="findings">Findings</button><button class="tab ${registerTab === 'comments' ? 'on' : ''}" data-tab="comments" title="Comments from class or flag on a submission, tracked to closure">Class comments${c.total ? ` (${c.open} open)` : ''}</button></span>`;
 }
 function wireRegisterTabs(panel) {
@@ -1878,7 +1890,7 @@ function commentAiHTML(c) {
 
 function commentCard(c) {
   const ev = commentEvidence(c, S.results);
-  const warn = c.status !== 'open' && ev.state === 'finding';
+  const warn = isContradicted(c, S.results, S.register);
   return `<div class="cmt ${warn ? 'warn' : ''}" data-id="${esc(c.id)}">
     <div class="cmt-head"><b>${esc(c.ref)}</b>${c.document ? ` <span class="muted">· ${esc(c.document)}</span>` : ''}${c.received ? ` <span class="muted">· received ${esc(c.received)}</span>` : ''}${c.revision ? ` <span class="muted">· on ${esc(c.revision)}</span>` : ''}
       <span class="grow"></span>
@@ -1888,7 +1900,7 @@ function commentCard(c) {
     <div class="cmt-links">Linked: ${[...(c.links?.elements ?? []).map((id) => `<a href="#" class="via" data-id="${esc(id)}">${esc(id)}</a>`), ...(c.links?.rules ?? []).map((id) => `<code>${esc(id)}</code>`)].join(' ') || '<span class="muted">nothing yet</span>'}
       <input class="cmtLinks" data-id="${esc(c.id)}" value="${esc([...(c.links?.elements ?? []), ...(c.links?.rules ?? [])].join(', '))}" placeholder="Element or rule ids, comma separated" title="Element and rule ids this comment is about"></div>
     ${evidenceHTML(ev)}
-    ${warn ? '<div class="disp-warn">Answered or closed, but the rule check still finds the deviation: the reply and the design disagree.</div>' : ''}
+    ${warn ? '<div class="disp-warn">Answered or closed, but the rule check still finds the deviation and the register has no justified deviation for it: the reply and the design disagree.</div>' : ''}
     <textarea class="cmtResp" data-id="${esc(c.id)}" rows="2" placeholder="Response to class" maxlength="2000">${esc(c.response)}</textarea>
     <div class="cmt-foot"><input class="cmtWho" data-id="${esc(c.id)}" value="${esc(c.responsible)}" placeholder="Responsible" maxlength="80">
       <button class="tiny ai-btn cmtAi" data-id="${esc(c.id)}" ${S.commentAi.get(c.id)?.loading ? 'disabled' : ''} title="AI drafts a reply from the comment and the current rule check; you edit and send it">✦ Draft reply</button>
@@ -1901,7 +1913,7 @@ function commentCard(c) {
 function openComments() {
   const panel = $('#registerPanel');
   const all = S.comments?.comments ?? [];
-  const sum = commentSummary(all, S.results);
+  const sum = commentSummary(all, S.results, S.register);
   const shown = commentsOpenOnly ? all.filter((c) => c.status !== 'closed' || commentEvidence(c, S.results).state === 'finding') : all;
   panel.innerHTML = `<div class="trace-head">
       ${registerTabs()}
@@ -2083,6 +2095,10 @@ async function openModelFile(file) {
   const original = file;
   try {
     let json, geometry = null, cad = null;
+    if (!file.size) throw new Error('The file is empty.');
+    if (!/\.(rvt|ifc|dxf|dwg|json|rfa|rte|nwd|nwc|step|stp|iges|igs|3dm|skp|obj|stl|fbx)$/i.test(file.name)) {
+      throw new Error('Unsupported file type. Open a Revit model (.rvt), an IFC file (.ifc), an AutoCAD drawing (.dxf) or a ship/1 JSON model (.json).');
+    }
     if (/\.rvt$/i.test(file.name)) file = await convertRevit(file);
     else if (/\.dwg$/i.test(file.name)) {
       throw new Error('DWG is AutoCAD\'s binary format and cannot be read here. In AutoCAD use SAVEAS and choose "AutoCAD DXF", then open that file.');
@@ -2114,16 +2130,42 @@ async function openModelFile(file) {
       if (ids.has(e.id)) throw new Error(`Element id "${e.id}" is used twice.`);
       ids.add(e.id);
     }
+    if (!norm.elements.length) throw new Error('The model contains no elements, so there is nothing to check.');
     const id = `file-${++fileCounter}-${file.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40)}`;
     if (geometry) json.provenance_note = json.provenance_note.replace(/^Imported from /, `Imported from ${original.name !== file.name ? `${original.name} (converted to IFC by Autodesk) → ` : ''}`);
     S.scenarios.push({ id, name: `File: ${file.name}`, viewer: 'three', modelData: json, geometry });
     $('#scenario').insertAdjacentHTML('beforeend', `<option value="${esc(id)}">${esc(`File: ${file.name}`)}</option>`);
-    if (await loadScenario(id) && cad) $('#detail').innerHTML = cadReportHTML(cad);
+    if (await loadScenario(id)) {
+      if (cad) $('#detail').innerHTML = cadReportHTML(cad);
+      else if (geometry) $('#detail').innerHTML = ifcReportHTML(original.name, file.name);
+    }
   } catch (e) {
     $('#detail').innerHTML = `<p class="check-bad"><b>Could not open ${esc(file.name)}.</b> ${esc(e.message)}</p>` + (!/\.(dxf|dwg)$/i.test(original.name) ? '' : `
       <p class="muted">AutoCAD drawings are read as DXF with the layer convention &lt;DECK&gt;-&lt;TYPE&gt;:
       <a href="autocad.html" target="_blank" rel="noopener">AutoCAD guide</a> · <a href="demo/autocad-sample.dxf" download>sample drawing</a>.</p>`);
   }
+}
+
+// What an IFC import gave: elements by type, which of them the rules cover, and what data the checks still need.
+function ifcReportHTML(originalName, ifcName) {
+  const els = S.norm.elements;
+  const byType = Object.entries(els.reduce((m, e) => ((m[e.type] = (m[e.type] || 0) + 1), m), {})).sort((a, b) => b[1] - a[1]);
+  const ruleTypes = new Set(allRules().filter((r) => !r.draft).flatMap((r) => r.applies_to?.types ?? []));
+  const covered = byType.filter(([t]) => ruleTypes.has(t));
+  const f = S.results.element_summary;
+  const missing = Object.entries(findingsOf(S.results).filter((x) => x.status === 'not_enough_info')
+    .reduce((m, x) => ((m[x.parameter || x.rule_id] = (m[x.parameter || x.rule_id] || 0) + 1), m), {})).sort((a, b) => b[1] - a[1]);
+  const fire = els.filter((e) => e.props?.fire_rating).length;
+  return `<h1>IFC model imported</h1>
+    <div class="muted">${esc(originalName)}${originalName !== ifcName ? ' (converted to IFC by Autodesk)' : ''} · ${els.length.toLocaleString('en')} elements on ${S.norm.decks.length} storey${S.norm.decks.length === 1 ? '' : 's'}</div>
+    <p><span class="badge st-non_compliant">${f.non_compliant} non-compliant</span> <span class="badge st-not_enough_info">${f.not_enough_info} not enough info</span> <span class="badge st-compliant">${f.compliant} no deviation</span> <span class="muted">${f.no_rule.toLocaleString('en')} elements without a rule</span></p>
+    ${covered.length ? `<p>The rules cover ${covered.map(([t, n]) => `${n} ${esc(t.replace(/_/g, ' '))}`).join(', ')} in this model.</p>`
+      : `<div class="note">No rule in the catalog applies to the element types in this model (${byType.slice(0, 5).map(([t]) => esc(t.replace(/_/g, ' '))).join(', ')}…). The rules cover: ${[...ruleTypes].sort().map((t) => esc(t.replace(/_/g, ' '))).join(', ')}.</div>`}
+    ${missing.length ? `<h2>Data the checks still need</h2><div class="na">A plain IFC export has geometry and names, not the values the rules read. Missing: ${missing.slice(0, 6).map(([p, n]) => `<code>${esc(p)}</code> (${n})`).join(', ')}. Add them in the authoring tool's properties or as what-if values here.</div>` : ''}
+    ${fire ? `<div class="na">Fire ratings read from the IFC property sets: ${fire} element${fire === 1 ? '' : 's'}.</div>` : ''}
+    <h2>Element types</h2>
+    <table class="kv">${byType.slice(0, 12).map(([t, n]) => `<tr><td>${esc(t.replace(/_/g, ' '))}</td><td>${n.toLocaleString('en')}${ruleTypes.has(t) ? ' · checked by rules' : ''}</td></tr>`).join('')}</table>
+    <p class="muted">Click an element in the model or in the list to see every rule that applies, why it passes or fails, and where each value comes from.</p>`;
 }
 
 // What was read from an AutoCAD drawing, and what was not: shown after the import.
@@ -2134,7 +2176,7 @@ function cadReportHTML(r) {
     <p><b>${r.elements}</b> elements on <b>${r.decks}</b> deck${r.decks === 1 ? '' : 's'} checked:
       <span class="badge st-non_compliant">${f.non_compliant} non-compliant</span>
       <span class="badge st-not_enough_info">${f.not_enough_info} not enough info</span>
-      <span class="badge st-compliant">${f.compliant} compliant</span></p>
+      <span class="badge st-compliant">${f.compliant} no deviation</span></p>
     ${r.warnings.length ? `<h2>To check in the drawing (${r.warnings.length})</h2>${r.warnings.map((w) => `<div class="note">${esc(w)}</div>`).join('')}` : ''}
     <h2>Layers read</h2>
     <table class="kv">${r.layers.map((l) => `<tr><td>${esc(l.layer)}</td><td>${esc(l.type.replace(/_/g, ' '))} · deck ${esc(l.deck)}${l.type === 'outline' ? '' : ` · ${l.elements} element${l.elements === 1 ? '' : 's'}`}</td></tr>`).join('')}</table>
@@ -2461,6 +2503,10 @@ $('#scenario').onchange = (e) => loadScenario(e.target.value).catch((error) => {
 $('#deck').onchange = (e) => {
   viewer.setMode(e.target.value);
   if (S.selected) viewer.select(S.selected, { fly: false });
+  // The findings list follows the deck shown in 3D (the list's own deck filter can still change it).
+  S.filter.deck = S.norm.decks.some((d) => d.id === e.target.value) ? e.target.value : '';
+  renderFilters();
+  renderList();
 };
 $('#demoBtn').onclick = runDemo;
 $('#reportBtn').onclick = exportReport;
@@ -2512,7 +2558,10 @@ $('#viewTools').onclick = (e) => {
   if (!b || viewer !== views.three) return;
   if (b.dataset.view) { $('#planBtn').classList.remove('on'); viewer.setView(b.dataset.view); }
   else if (b.dataset.act === 'fit') { if (S.selected) viewer.flyToElement(S.selected, 600); else viewer.overview(600); }
-  else if (b.dataset.act === 'all') { S.selected = null; viewer.select(null); syncEscapeView(); renderList(); viewer.overview(600); }
+  else if (b.dataset.act === 'all') {
+    S.selected = null; viewer.select(null); syncEscapeView(); renderList(); viewer.overview(600);
+    $('#detail').innerHTML = '<p class="muted">Click an element in the model or in the list to see every rule that applies, why it passes or fails, and where each value comes from.</p>';
+  }
   else if (b.dataset.act === 'labels') { viewer.setLabels(!viewer.labels); b.classList.toggle('on', viewer.labels); }
   else if (b.dataset.act === 'shell') { viewer.setShell(!viewer.shell); b.classList.toggle('on', viewer.shell); }
   else if (b.dataset.act === 'measure') setMeasureMode(!viewer.measuring);
