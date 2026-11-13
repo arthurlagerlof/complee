@@ -16,6 +16,7 @@ from app.db.models.design import (
     Vessel,
 )
 from app.db.models.legacy import LegacyBase
+from app.db.models.rule_verification import RegAudit, RegEvidence, RegRule, RegRuleVersion, RegSource, RegVerification
 from app.db.models.shipcheck import ShipCheckActiveDataset, ShipCheckDatasetRecord, ShipCheckDatasetVersion
 
 __all__ = [
@@ -33,6 +34,12 @@ __all__ = [
     "FindingComponent",
     "LegacyBase",
     "Project",
+    "RegAudit",
+    "RegEvidence",
+    "RegRule",
+    "RegRuleVersion",
+    "RegSource",
+    "RegVerification",
     "SourceDocument",
     "ShipCheckActiveDataset",
     "ShipCheckDatasetRecord",

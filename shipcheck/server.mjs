@@ -267,6 +267,37 @@ async function forwardAssistStream(req, res, name) {
   res.end();
 }
 
+// Rule verification (sources, rule versions, quoted evidence, verifications) lives in the backend database. It holds
+// licensed regulation texts and records who verified what, so it is open to this computer only unless
+// VERIFY_ALLOW_REMOTE=true (put it behind authentication before that).
+async function forwardVerification(req, res, rest) {
+  if (process.env.VERIFY_ALLOW_REMOTE !== 'true' && !isLoopback(req)) return sendJSON(res, 403, { error: 'Rule verification is only available on the computer that runs Complee.' });
+  if (!['GET', 'POST'].includes(req.method)) return sendJSON(res, 405, { error: 'Method not allowed' });
+  let body;
+  try {
+    // Source documents arrive base64-encoded: up to 40 MB of file, about 55 MB of JSON.
+    body = req.method === 'POST' ? JSON.stringify(await readBody(req, 56_000_000)) : undefined;
+  } catch (e) {
+    return sendJSON(res, 400, { error: e.message });
+  }
+  try {
+    const upstream = await fetch(`${AI_API_URL}/api/v1/rule-verification/${rest}`, {
+      method: req.method, body, headers: body ? { 'Content-Type': 'application/json' } : {}, signal: AbortSignal.timeout(180_000),
+    });
+    const text = await upstream.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch { /* reported below */ }
+    if (!upstream.ok) {
+      const message = data?.detail || data?.error?.message || `The backend answered ${upstream.status}.`;
+      return sendJSON(res, upstream.status, { error: typeof message === 'string' ? message : JSON.stringify(message) });
+    }
+    return sendJSON(res, 200, data);
+  } catch (e) {
+    return sendJSON(res, 503, { error: e.name === 'TimeoutError' ? 'The backend did not answer within 3 minutes.'
+      : 'The backend is not running. Start it (cd backend; .venv\\Scripts\\python -m uvicorn app.main:app --port 8000).' });
+  }
+}
+
 const isLoopback = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req?.socket?.remoteAddress);
 const localOnly = (req) => { if (!isLoopback(req)) throw Object.assign(new Error('Only available on this computer'), { status: 403 }); };
 
@@ -518,6 +549,8 @@ export async function handleRequest(req, res) {
     }
   }
   if (req.method === 'POST' && p === '/api/convert/rvt') return receiveRvt(req, res, url);
+  const verifyMatch = /^\/api\/rule-verification\/([\w\-./@%]+)$/.exec(p);
+  if (verifyMatch && !verifyMatch[1].includes('..')) return forwardVerification(req, res, verifyMatch[1]);
   const assistMatch = /^\/api\/assist\/(status|explain-finding|escape-suggestions|comment-reply)(\/stream)?$/.exec(p);
   if (assistMatch) return assistMatch[2] ? forwardAssistStream(req, res, assistMatch[1]) : forwardAssist(req, res, assistMatch[1]);
   const convertMatch = /^\/api\/convert\/jobs\/([0-9a-f-]{36})(\/ifc)?$/.exec(p);

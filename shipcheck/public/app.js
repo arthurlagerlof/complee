@@ -12,6 +12,7 @@ import { verifySuggestion } from './src/escape-actions.mjs';
 import { parsePartialJson } from './src/partial-json.mjs';
 import { consistencyIssues, widthCheck } from './src/consistency.mjs';
 import { readiness } from './src/readiness.mjs';
+import { statusForRules, verificationCounts, LEVEL_LABEL } from './src/verify-status.mjs';
 import { projectFile, readProjectFile } from './src/project-file.mjs';
 import { COMMENT_STATUSES, COMMENT_STATUS_LABEL, EVIDENCE_LABEL, parseComments, addComments, withComment, withoutComment, commentEvidence, commentSummary, commentsCSV } from './src/class-comments.mjs';
 import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, registerSummary, withDisposition, registerCSV, projectKey, manualRows, manualSummary, withManualCheck } from './src/dispositions.mjs';
@@ -221,6 +222,28 @@ async function init() {
   $('#scenario').innerHTML = S.scenarios.map((s) => `<option value="${s.id}">${esc(s.name)}</option>`).join('');
   const want = new URLSearchParams(location.search).get('scenario');
   await loadScenario(S.scenarios.find((s) => s.id === want)?.id ?? S.scenarios[0].id);
+  loadVerification(); // not awaited: the viewer works without the verification database
+}
+
+// Verification level of every rule from the rule-verification database (verify.html). Only when the loaded rule is
+// exactly the verified version; without the backend the viewer keeps the catalog's own "verified" flag.
+async function loadVerification() {
+  try {
+    const res = await fetch('api/rule-verification/status');
+    if (!res.ok) return;
+    S.verification = await statusForRules(allRules(), await res.json());
+  } catch { return; }
+  renderSummary();
+  if (S.selected && !S.ruleView) renderResults(S.selected);
+}
+
+function verificationTag(ruleId, verifiedFlag) {
+  const v = S.verification?.[ruleId];
+  if (!v) return verifiedFlag ? '<span class="tag blue">Value verified</span>' : '<span class="tag">Rule value not yet verified against official text</span>';
+  if (!v.matches) return `<span class="tag" title="The verification database holds version ${v.version} of this rule, which differs from the rule loaded here">Other version in the verification database</span>`;
+  const who = v.level === 2 ? ` by ${v.reviewed_by}, ${(v.reviewed_at || '').slice(0, 10)}` : v.level === 1 ? ` by ${v.text_checked_by}, ${(v.text_checked_at || '').slice(0, 10)}` : '';
+  const cls = v.level === 2 ? 'tag blue' : v.level === 1 ? 'tag review' : 'tag';
+  return `<span class="${cls}" title="${esc((v.sources || []).join('; '))}">${esc(LEVEL_LABEL[v.label] ?? v.label)}${esc(who)}</span>`;
 }
 
 // Real production models come as a parts file (kind "parts") and are turned into a checker model here,
@@ -491,12 +514,19 @@ function renderScore() {
 
 // What the automatic check covers and what is left to a person: shown next to the result, so "no deviation" is
 // never read as full compliance.
+function verifiedLine(c) {
+  if (!S.verification) return `${c.automatic_verified} with verified values`;
+  const applied = [...new Set(Object.values(S.results.elements).flatMap((e) => e.results.map((r) => r.rule_id)))];
+  const v = verificationCounts(applied, S.verification);
+  return `${v.reviewed} engineering-reviewed, ${v.text_checked} text-checked${v.other_version ? `, ${v.other_version} with another version in the database` : ''}; <a href="verify.html" target="_blank" rel="noopener">rule verification ↗</a>`;
+}
+
 function coverageHTML() {
   const c = coverageOf(S.results, allRules());
   const m = manualSummary(manualRows(S.results, S.register));
   const tip = c.by_source.map((x) => `${x.source}: ${x.automatic} automatic, ${x.manual} manual`).join('\n');
   return `<div class="coverage" title="${esc(tip)}">
-    <b>Coverage:</b> ${c.automatic} rules checked automatically (${c.automatic_verified} with verified values) · ${m.total ? `<b>${m.open} of ${m.total}</b> manual checks open` : 'no manual checks for this model'}.
+    <b>Coverage:</b> ${c.automatic} rules checked automatically (${verifiedLine(c)}) · ${m.total ? `<b>${m.open} of ${m.total}</b> manual checks open` : 'no manual checks for this model'}.
     <span class="muted">Requirements that are not in the rule catalog are not checked at all. Approval stays with class and flag.</span></div>`;
 }
 
@@ -1034,7 +1064,7 @@ function renderRuleView(ruleId) {
     <h1>${esc(rule.id)}</h1>
     <div class="muted">${esc(rule.source)} - ${esc(rule.clause)}</div>
     <blockquote>“${esc(rule.text)}”</blockquote>
-    <div class="tags">${rule.verified ? '<span class="tag blue">Value verified</span>' : '<span class="tag">Rule value not yet verified against official text</span>'}
+    <div class="tags">${verificationTag(rule.id, rule.verified)}
       ${rule.review_status ? `<span class="tag review">${esc(rule.review_status)}</span>` : ''}
       ${rule.basis && rule.basis !== 'explicit' ? `<span class="tag grey" title="${esc(rule.basis_note || '')}">basis: ${esc(rule.basis)}</span>` : ''}</div>
     <div id="ruleOfficial"></div>
@@ -1068,7 +1098,7 @@ function renderResults(id) {
       ${r.inputs.length ? `<div class="inputs">Inputs: ${r.inputs.map((i) => `${esc(i.name)} = ${esc(i.value)}${prov(i.source)}`).join('; ')}</div>` : ''}
       <blockquote>“${esc(r.rule_text)}”</blockquote>
       <div class="tags">
-        ${r.verified ? '<span class="tag blue">Value verified</span>' : '<span class="tag">Rule value not yet verified against official text</span>'}
+        ${verificationTag(r.rule_id, r.verified)}
         ${r.review_status ? `<span class="tag review" title="How the value is shown was reviewed; this is not a verification against the official text">${esc(r.review_status)}</span>` : ''}
         <span class="tag grey">${r.text_status === 'verbatim' ? 'verbatim text' : 'paraphrased text'}</span>
         ${r.basis !== 'explicit' ? `<span class="tag grey" title="${esc(ruleById(r.rule_id)?.basis_note || '')}">basis: ${esc(r.basis)}</span>` : ''}
@@ -2128,7 +2158,7 @@ function exportCSV() {
 }
 
 function exportReport() {
-  const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(), comments: S.comments?.comments,
+  const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(), comments: S.comments?.comments, verification: S.verification,
     score: S.baseline, edits: [...S.edits.values()], register: S.register, escape: S.escape, comparison: S.compare?.diff ? S.compare : null });
   const w = window.open('', '_blank');
   if (w) { w.document.write(html); w.document.close(); } else download(`report-${S.sc.id}.html`, html, 'text/html');
@@ -2217,7 +2247,7 @@ function hidePointer() { if (demoPointer) demoPointer.hidden = true; }
 let preparedReport = null;
 const toHTMLKey = () => `${S.sc?.id}|${[...S.edits.keys()].join(',')}|${S.lastCheckMs}`;
 function prepareReportPreview() {
-  const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(), comments: S.comments?.comments,
+  const html = toHTML({ title: S.model.name, scenario: S.sc.id, results: S.results, model: S.model, rules: allRules(), comments: S.comments?.comments, verification: S.verification,
     score: S.baseline, edits: [...S.edits.values()] });
   let d = $('#reportPreview');
   if (!d) { d = document.createElement('div'); d.id = 'reportPreview'; $('#view').appendChild(d); }

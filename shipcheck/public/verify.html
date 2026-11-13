@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Complee - rule verification</title>
+<link rel="icon" href="data:," />
+<link rel="stylesheet" href="style.css" />
+<style>
+  body { display: block; }
+  .vwrap { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; height: calc(100vh - 50px); }
+  .vlist { border-right: 1px solid var(--line); overflow: auto; padding: 8px; }
+  .vmain { overflow: auto; padding: 12px 16px 40px; }
+  .vrule { padding: 6px 8px; border-radius: 6px; cursor: pointer; display: flex; gap: 6px; align-items: baseline; justify-content: space-between; }
+  .vrule:hover { background: var(--soft); } .vrule.sel { background: #e6f0ff; }
+  .vrule b { font-size: 12px; word-break: break-all; }
+  .lvl { font-size: 11px; padding: 1px 7px; border-radius: 10px; white-space: nowrap; font-weight: 600; }
+  .lvl.draft { background: #f1f3f6; color: #5b6573; } .lvl.text_checked { background: #e6f0ff; color: #1f4f9a; }
+  .lvl.reviewed { background: #e3f4ea; color: #1d6b3d; } .lvl.internal { background: #fff4e0; color: #8a5300; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 10px 0; background: #fff; }
+  .card h3 { margin: 0 0 6px; font-size: 13px; }
+  .ev { border-left: 3px solid #b9c1cc; padding: 2px 8px; margin: 6px 0; font-size: 12px; }
+  .ev.ok { border-color: var(--ok); } .ev.bad { border-color: var(--bad); }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 4px 0; }
+  .row > input, .row > select { flex: 1 1 160px; min-width: 0; }
+  textarea.logic { width: 100%; min-height: 220px; font: 12px/1.4 ui-monospace, Consolas, monospace; }
+  textarea.quote { width: 100%; min-height: 48px; }
+  .errs { color: var(--bad); font-size: 12px; } .okline { color: var(--ok); font-size: 12px; }
+  .warn { color: #8a5300; font-size: 12px; }
+  .prop { border: 1px dashed #b9c1cc; border-radius: 6px; padding: 6px 8px; margin: 6px 0; font-size: 12px; }
+  .hist td { padding: 2px 6px; vertical-align: top; font-size: 12px; }
+  @media (max-width: 760px) { .vwrap { grid-template-columns: 1fr; height: auto; } .vlist { max-height: 40vh; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <b>Complee</b><span class="muted">Rule verification</span>
+  <a href="index.html" class="muted">← back to the viewer</a>
+  <span class="grow"></span>
+  <label>Your name <input id="me" placeholder="Name" maxlength="120"></label>
+  <span id="counts" class="muted"></span>
+  <button id="importBtn" title="Take the rules of the bundled catalog in as draft version 1 (nothing existing is overwritten)">Import catalog rules</button>
+  <button id="sourcesBtn">Sources</button>
+  <button id="catalogBtn" title="Latest version of every rule as rules.json">Download catalog</button>
+</header>
+<div class="vwrap">
+  <aside class="vlist"><input id="search" placeholder="Search rules" style="width:100%;margin-bottom:6px"><div id="list"></div></aside>
+  <main class="vmain" id="main"><p class="muted">Loading…</p></main>
+</div>
+<script type="module" src="verify.js"></script>
+</body>
+</html>

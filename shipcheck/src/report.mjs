@@ -96,6 +96,17 @@ ${rows.map((r) => `<tr><td class="${r.done ? 'ok' : 'ni'}">${r.done ? 'Confirmed
 <td>${esc(r.rule_id)}<br><span class="muted">${esc(r.source)} - ${esc(r.clause)}</span></td><td>${esc(r.evidence ?? '')}</td><td>${r.done ? `${esc(r.responsible)}<br><span class="muted">${esc(r.updated.slice(0, 10))}</span>` : ''}</td><td>${esc(r.note)}</td></tr>`).join('\n')}</table>` : ''}`;
 }
 
+// Verification of a rule for the report: the level from the verification database when the loaded rule is the
+// verified version, else the catalog's own flag.
+const VERIFY_TEXT = { draft: 'draft (paraphrase)', text_checked: 'text checked', reviewed: 'engineering reviewed', internal: 'internal check' };
+function verificationText(rule, verification) {
+  const v = verification?.[rule.id];
+  if (!v) return rule.verified ? 'yes' : 'no';
+  if (!v.matches) return `other version (v${v.version}) in the verification database`;
+  const who = v.level === 2 ? ` by ${v.reviewed_by}, ${(v.reviewed_at || '').slice(0, 10)}` : v.level === 1 ? ` by ${v.text_checked_by}, ${(v.text_checked_at || '').slice(0, 10)}` : '';
+  return `${VERIFY_TEXT[v.label] ?? v.label}${who}${v.sources?.length ? ` (${v.sources.join('; ')})` : ''}`;
+}
+
 // Submission readiness: open work before this revision can go to class or flag.
 export function readinessSection({ results, register, comments, rules, edits }) {
   const r = readiness({ results, register: register || {}, comments: comments || [], rules, edits });
@@ -156,7 +167,7 @@ ${rooms.map((o) => `<tr><td><b>${esc(o.id)}</b> ${esc(els.get(o.id)?.name ?? '')
 <p class="muted">Route analysis from the model geometry, not a rule result. ${escape.assumptions.map(esc).join(' ')}</p>`;
 }
 
-export function toHTML({ title, scenario, results, model, rules = [], score = null, edits = [], generated = new Date(), register = null, escape = null, comparison = null, comments = null }) {
+export function toHTML({ title, scenario, results, model, rules = [], score = null, edits = [], generated = new Date(), register = null, escape = null, comparison = null, comments = null, verification = null }) {
   const rows = reportRows(results, model, rules, { register });
   const openCount = register ? rows.filter((r) => r.disposition === DISPOSITION_LABEL.open).length : 0;
   const s = results.summary;
@@ -197,7 +208,7 @@ ${escapeSection(escape, model)}
 ${traceSection(results, rules)}
 <h2>Rules applied</h2>
 <table><tr><th>Rule</th><th>Source</th><th>Clause</th><th>Text (${'verbatim or paraphrase'})</th><th>Basis</th><th>Verified</th><th>Review</th></tr>
-${usedRules.map((r) => `<tr><td>${esc(r.id)}</td><td>${esc(r.source)}</td><td>${esc(r.clause)}</td><td>“${esc(r.text)}” <span class="muted">(${esc(r.text_status || 'paraphrase')})</span></td><td>${esc(r.basis || 'explicit')}${r.basis_note ? `<br><span class="muted">${esc(r.basis_note)}</span>` : ''}</td><td>${r.verified ? 'yes' : 'no'}</td><td>${esc(r.review_status || '')}</td></tr>`).join('\n')}
+${usedRules.map((r) => `<tr><td>${esc(r.id)}</td><td>${esc(r.source)}</td><td>${esc(r.clause)}</td><td>“${esc(r.text)}” <span class="muted">(${esc(r.text_status || 'paraphrase')})</span></td><td>${esc(r.basis || 'explicit')}${r.basis_note ? `<br><span class="muted">${esc(r.basis_note)}</span>` : ''}</td><td>${esc(verificationText(r, verification))}</td><td>${esc(r.review_status || '')}</td></tr>`).join('\n')}
 </table>
 <p class="muted">Values with source "estimated", "planted test case" or "derived by Complee" are not design data. Inch values are shown as written in the model with their mm conversion (1 in = 25.4 mm).</p>
 </body></html>`;

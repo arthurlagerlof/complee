@@ -30,6 +30,12 @@ def test_application_and_legacy_models_use_separate_metadata():
         "sc_shipcheck_dataset_versions",
         "sc_shipcheck_dataset_records",
         "sc_shipcheck_active_datasets",
+        "sc_reg_sources",
+        "sc_reg_rules",
+        "sc_reg_rule_versions",
+        "sc_reg_evidence",
+        "sc_reg_verifications",
+        "sc_reg_audit",
     }
     assert legacy_tables == {
         "public.instruments",
