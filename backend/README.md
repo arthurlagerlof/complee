@@ -236,7 +236,7 @@ Geometry calculations require explicit coordinates/dimensions and compatible uni
 
 ## Migrations and tests
 
-The migration chain creates app-owned `sc_*` tables, including the versioned ShipCheck catalog tables. It adds database-level same-revision constraints for relationships, component-associated facts, and finding-component links. `sc_findings` stores provision/retrieval identifiers without legacy foreign keys and snapshots the exact text, edition and source metadata. The AI migrations add provider/model/task configuration, execution history and reviewable extraction results. Extensions, embeddings and legacy tables are not created, altered or dropped.
+The migration chain creates app-owned `sc_*` tables, including the versioned ShipCheck catalog tables. It adds database-level same-revision constraints for relationships, component-associated facts, and finding-component links. `sc_findings` stores provision/retrieval identifiers without legacy foreign keys and snapshots the exact text, edition and source metadata. The AI migrations add provider/model/task configuration, execution history and reviewable extraction results. Migration `20261113_0006` adds the rule-verification tables, which reject updates and deletes. Extensions, embeddings and legacy tables are not created, altered or dropped.
 
 Run unit and API tests without production access:
 
@@ -267,14 +267,56 @@ Rollback is not automatic. The applied ShipCheck catalog migration explicitly bl
 
 ## Current scope and limitations
 
-- Design CRUD, provenance, source-aware context and same-revision relationships are implemented. Parsing covers TXT, DOCX, text-based PDF, DXF and glTF/GLB; DWG, IFC, STEP and scanned PDFs are not parsed and are reported as unsupported. See `docs/END_TO_END_WORKFLOW.md` for what is implemented, partial and future.
+- Design CRUD, provenance, source-aware context and same-revision relationships are implemented. Parsing covers TXT, DOCX, text-based PDF, DXF and glTF/GLB; DWG, IFC, STEP and scanned PDFs are not parsed and are reported as unsupported. See `docs/archive/END_TO_END_WORKFLOW.md` (state at the hackathon, 8 Nov 2026) for what was implemented, partial and future then.
 - Retrieval uses the canonical legacy tables and does not copy provisions or regenerate embeddings. Query embedding is local BGE-M3. Full-text is English; it is not equivalent to multilingual semantic search.
 - Assessment runs persist immutable requirement snapshots and design/component traceability. Automated input-presence checks and basic deterministic geometry/document tools are available. Text-to-component extraction and advisory AI interpretation of provisions are available through the replaceable AI layer; fluid mechanics and structural calculations are placeholders, and applicability is never determined automatically (it is scored and left to the engineer).
 - Engineering review is required. This API is not a classification-society approval or certification service.
 
+## AI model chain and viewer assistance
+
+AI requests go through a chain of models (`app/services/ai_chain.py`): the first model answers; on an error, a timeout
+(`AI_CHAIN_STEP_TIMEOUT_SECONDS`, default 45) or an answer that fails its JSON schema the next one takes over. Every
+answer records the model, the duration, the tokens and the estimated cost.
+
+| Setting (`backend/.env`) | Purpose |
+| --- | --- |
+| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` | Keys of the providers in the chain; a step without a key is skipped. |
+| `AI_COST_PROFILE` | `fast` (Claude Opus 5.5 fast → GPT-6.1 Sol ultrafast → GPT-6 Astra fast; quickest, a few cents per answer) or `budget` (GPT-6.1 Sol → Gemini 3.8 Flash → Claude Sonnet 5.5; about 1 cent). |
+| `AI_MODEL_CHAIN` | An explicit chain, which overrides the profile, e.g. `anthropic:claude-opus-5-5:speed=fast,openai:gpt-6.1-sol:service_tier=ultrafast`. |
+| `AI_CHAIN_MAX_TOKENS` | Output limit per answer. |
+
+The 3D viewer uses three tasks under `/api/v1/ai/assist` (no database needed; executions are logged when it is
+available): `explain-finding` (a short explanation and ways to resolve a checker result, which it never changes),
+`escape-suggestions` (design changes that ShipCheck recomputes before showing them) and `comment-reply` (a draft reply
+to a class comment from the comment and the current rule check). `POST /api/v1/ai/assist/{task}/stream` sends
+server-sent events (`model`, `delta`, `switch`, `done`, `error`) so the answer appears while the model writes;
+`GET /api/v1/ai/assist/status` lists the chain and prices. The ShipCheck server forwards these routes for the
+computer it runs on only.
+
+## Rule verification
+
+`app/services/rule_verification.py`, routes under `/api/v1/rule-verification`, UI in ShipCheck's `verify.html`.
+
+- **Sources** (`sc_reg_sources`): an official text (PDF, DOCX, TXT) of one edition, stored once by SHA-256 with a page
+  index and its licence (`public`, `licensed_internal`, `paraphrase_only`).
+- **Rules and versions** (`sc_reg_rules`, `sc_reg_rule_versions`): a rule changes only through a new version; the logic
+  is stored with its canonical SHA-256 (the viewer compares it with the loaded rule).
+- **Evidence** (`sc_reg_evidence`): a verbatim quote per field (requirement, value, scope, …). A quote that does not
+  appear in the source (ignoring case, spacing and the kind of dash) blocks saving; the stored quote is the source's own
+  text with its position and page. `POST /rules/{id}/propose` lets the AI propose quotes from the matching passage.
+- **Verifications** (`sc_reg_verifications`): level 1, text check (every required field has a quote); level 2,
+  engineering review after an approved level 1, by someone other than the author and the text checker. A new version
+  starts again as a draft.
+- **Audit** (`sc_reg_audit`): every write. All six tables reject `UPDATE` and `DELETE` through PostgreSQL triggers
+  (migration `20261113_0006`).
+
+`GET /status` gives each rule's level for the viewer and report; `GET /catalog` the latest version of every rule;
+`POST /import` takes the bundled catalog in as drafts and never overwrites a rule already in the database. Reviewer
+names are typed in, not tied to accounts yet.
+
 ## Replaceable AI providers and text extraction
 
-The AI gateway is provider-neutral at the service boundary. Ollama uses its HTTP API; OpenAI and generic OpenAI-compatible endpoints use the chat-completions API; Anthropic uses its Messages API; Gemini uses Google's Generative Language API. Provider-specific HTTP mapping stays in `app/ai/providers.py`. No browser-side provider calls or automatic cloud fallback are used.
+The AI gateway is provider-neutral at the service boundary. Ollama uses its HTTP API; OpenAI and generic OpenAI-compatible endpoints use the chat-completions API; Anthropic uses its Messages API; Gemini uses Google's Generative Language API. Provider-specific HTTP mapping stays in `app/ai/providers.py`; Anthropic and OpenAI Responses calls for the model chain use `app/ai/fast_providers.py`, streaming `app/ai/streaming.py`. No provider is called from the browser. Fail-over between cloud models happens only in the model chain described above.
 
 The **Settings → AI Providers** page shows exactly two environment-managed built-ins: Ollama and Gemini. It reads their configured endpoint/model IDs and provides a connection test. It does not create, edit or delete providers, models, API keys or secrets. Configure them in `backend/.env` (or the deployment's secret/environment manager) and restart the backend to load changes. `GET /api/v1/ai/built-in-providers` masks credentials; `POST /api/v1/ai/built-in-providers/{ollama|gemini}/test` checks reachability/model availability. Test status is held in backend process memory.
 

@@ -1,53 +1,109 @@
 # Complee
 
-An illustrative landing page for an AI-assisted ship-design compliance concept. Complee is intended to help engineers surface potentially relevant requirements, missing design information and review actions early in design.
+Compliance checking for ship design. Complee checks a ship model (IFC, Revit, AutoCAD DXF or its own JSON format)
+against class and statutory rules, shows every finding in a 3D viewer with the rule text and the values it used, and
+takes the engineer through to a submission to class: findings register, class comments, manual checks and a
+readiness check.
 
-This is a hackathon concept, not a working compliance tool. Interface findings are illustrative, require engineer review, and are not verified class-rule interpretations. Local-first deployment is an architectural goal.
+**Pass or fail is always decided by a deterministic rule checker, never by AI.** The AI explains findings, proposes
+design changes (which the checker recomputes) and drafts replies to class comments. The rule texts in the bundled
+catalog are paraphrases and are marked unverified until checked against the official text (see
+[Rule verification](#rule-verification)). Complee is a pre-check for engineers, not an approval: approval stays with
+class and flag.
 
-## Run locally
+## What it does
 
-```sh
+| Area | What the engineer gets |
+| --- | --- |
+| **Models** | Open IFC (IFC2x3 / IFC4), Revit `.rvt` (converted to IFC through Autodesk Platform Services), AutoCAD DXF (layer convention `<DECK>-<TYPE>`) or ship/1 JSON. Results go back to AutoCAD as a DXF markup. |
+| **Rule check** | Every applicable rule per element, with measured and required value and where each input comes from. Missing data gives "not enough info", never a guess. Rule hierarchy (replaces / exempts, with a stated basis), rule conflicts, applicability by ship type, size, area, class and keel laying date. |
+| **3D viewer** | Findings coloured in the model, deck and plan views, measuring, what-if editing of values, revision comparison. |
+| **Escape routes** | Routes from every room to the muster stations, independent second routes, what-if blocking of a door or corridor, AI proposals for a second route (recomputed before they are shown). |
+| **Towards submission** | Findings register per project and revision, class comment tracker (import a class letter or comment sheet; the rule check shows whether each comment is resolved), manual checks for requirements no algorithm can decide, a readiness check (blockers and warnings), report, CSV and a project file to hand the work over. |
+| **AI** | Short explanations of findings, escape-route proposals, draft replies to class comments. A model chain with fail-over (Claude, GPT, Gemini), a budget profile of about 1 cent per answer, answers stream in while the model writes. |
+| **Rule verification** | Official sources, verbatim quotes checked against the source, level 1 (text check) and level 2 (engineering review, four eyes), immutable history in the database (`verify.html`). |
+
+## Repository layout
+
+| Folder | What it is | Details |
+| --- | --- | --- |
+| [`shipcheck/`](./shipcheck) | **The application**: Node server, rule checker, 3D viewer, imports, register, comments, reports. Runs on its own with the bundled rule catalog. | [shipcheck/README.md](./shipcheck/README.md) |
+| [`backend/`](./backend) | FastAPI service with PostgreSQL (Tiger Cloud): AI model chain, rule verification, regulation database, document extraction. Needed for AI and rule verification; the viewer works without it. | [backend/README.md](./backend/README.md) |
+| `src/`, `public/`, `index.html` | Complee landing page (React, Vite). | below |
+| `docs/` | Workflow notes; `docs/archive/` holds the hackathon documents. | |
+| `scripts/` | `start-dev.ps1`: start the landing page dev server on Windows without a terminal. | |
+
+## Quick start
+
+**The application (viewer, checker, imports)**, Node 20 or newer:
+
+```bash
+cd shipcheck
+npm install
+npm start
+```
+
+Open http://localhost:8080 (evidence intake) or http://localhost:8080/index.html (the design review). No database or
+network is needed: the rules, scenarios and example ships come from `shipcheck/catalog/`.
+
+**AI and rule verification** need the backend, Python 3.11 or newer, with a PostgreSQL database URL and at least one
+AI key in `backend/.env` (template: `backend/.env.example`):
+
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python -m alembic upgrade head
+.venv\Scripts\python -m uvicorn app.main:app --port 8000
+```
+
+The viewer finds the backend at http://127.0.0.1:8000 and shows the AI as available in its top bar.
+
+**Landing page with the application at `/inspection/`**:
+
+```bash
 npm install
 npm ci --prefix shipcheck
 npm run dev
 ```
 
-The navigation opens the single evidence intake in the same app. Continuing opens the illustrative R/V Taani model inspection in ShipCheck. ShipCheck has its own locked dependencies, so install them before starting Vite. Its optional regulatory passage review remains a local Vite demo and supports DOCX. The **Extract review candidates** workflow uses the FastAPI backend and the existing design revision and AI configuration: implemented parser support is DOCX/TXT, DXF, and glTF 2.0 (`.glb`/`.gltf`, including uploaded `.bin` sidecars). Other listed formats are not parsed. Source files and deterministic parser output are retained in the application database; AI candidates remain separate until an engineer approves and imports them. See [backend/README.md](./backend/README.md) for setup, limits, and API routes. The extracted regulatory source corpus is ignored by Git and can be placed at `shipcheck/integrations/sinceai/data/solas_ii2_revised_mca.jsonl` (the Vite dev server uses the ShipCheck evidence modules); set `EVIDENCE_PROVIDER=none` to disable that separate source-retrieval demo. The ShipCheck catalog data is served from the database; the catalog JSON files are no longer in the repository.
+Open http://localhost:5173. On Windows `.\scripts\start-dev.ps1` starts it in the background (`-Restart`, `-Stop`).
 
-The local dev site opens on evidence intake. The separate demo passage reviewer retrieves candidate passages through the optional SinceAI SOLAS II-2 adapter. Engineering extraction sends supported files to FastAPI and requires an existing design revision and configured extraction task or backend Gemini settings. The extracted source corpus is ignored by Git and can be placed at `shipcheck/integrations/sinceai/data/solas_ii2_revised_mca.jsonl` (the Vite dev server uses the ShipCheck evidence modules); set `EVIDENCE_PROVIDER=none` to disable only the regulatory source adapter.
+## Tests
 
-### Pages on the dev server (http://localhost:5173)
-
-| Page | What it is |
-| --- | --- |
-| `/landing` | This Complee landing page (`/` redirects here). |
-| `/inspection/` | ShipCheck from `shipcheck/`: evidence intake, then the checker with the real RCRV 3D model at `/inspection/index.html`. |
-| `/#ai-settings` | Backend-backed AI provider configuration, model routing, provider testing and text extraction review. Requires the FastAPI setup described in `backend/README.md`. |
-
-The RCRV design review reads rules, scenarios, model/check data, and expected results from the FastAPI database API; the catalog JSON files have been removed from the repository. The database is the active source of truth. Binary model tiles still use the same-origin `/model/...` gateway. Configure Vultr storage with `MODEL_SOURCE=vultr` and the `VULTR_S3_*` settings, or serve model files from `shipcheck/model/`. If the gateway is unavailable, the findings remain visible alongside saved screenshots.
-
-`/inspection/` only exists on the dev server (ShipCheck runs as Node middleware); `npm run build` builds the landing page only.
-ShipCheck can still run on its own: `cd shipcheck && npm start` (port 8080).
-
-On Windows, start or recover both pages without keeping a terminal open:
-
-```powershell
-.\scripts\start-dev.ps1
-# Restart this project server: .\scripts\start-dev.ps1 -Restart
-# Stop it: .\scripts\start-dev.ps1 -Stop
+```bash
+cd shipcheck && npm test
 ```
 
-The helper uses port 5173, checks the inspection health endpoint, and preserves startup logs in the gitignored `.run/` directory. It reuses a running project server and refuses to stop unrelated applications. Model files are served by the same app in local development unless `MODEL_BASE_URL` explicitly selects a separate model host. `npm run dev` remains available for a foreground terminal session; stopping that session stops the app.
+```powershell
+cd backend; .venv\Scripts\python -m pytest -q
+```
 
-For a Netlify landing-page deployment, set `VITE_API_BASE_URL` to the public Render API URL and `VITE_SHIPCHECK_REVIEW_URL` to the public Vultr ShipCheck URL, for example `https://shipcheck.example.com/index.html?scenario=rcrv-3d`. The viewer is served by the Vultr Node service so its relative `/api` and `/model` requests stay same-origin; Netlify need not proxy model bytes. Configure the Render API's existing frontend-origin setting for the Netlify site. The Vultr viewer remains public and requires no login; set its `ALLOWED_ORIGINS` to the exact Netlify origin for any cross-origin browser calls.
+## Rule verification
 
-Create a production build with `npm run build`.
+The bundled rules are paraphrases. To verify a rule, start the backend and open http://localhost:8080/verify.html:
+import the catalog rules (they become drafts), add the official source document, back each value with a verbatim
+quote (the page checks it against the source), then record level 1 (text check) and level 2 (engineering review by a
+second person). The viewer and the report show each rule's level. Unverified values and open questions are listed in
+[shipcheck/VERIFY.md](./shipcheck/VERIFY.md).
 
-## Stack
+## Data that is not in the repository
 
-React, TypeScript, Vite, GSAP/ScrollTrigger, and Lucide icons.
+- `backend/.env` and `shipcheck/.env`: database URL, AI keys, Autodesk (APS) keys. Never commit them.
+- The full production model of the RCRV (`shipcheck/catalog/ships/rcrv/parts.json` and its 3D tiles): too large for
+  Git. Without it the viewer offers the bundled example ships only.
+- The extracted SOLAS II-2 passages for the evidence search
+  (`shipcheck/integrations/sinceai/data/solas_ii2_revised_mca.jsonl`): licensed text.
 
-## Development
-Push changes to the dev branch, main branch will be deployed automatically when you put your changes there.
+## Working with Git
 
-- Created by team KEEP
+Push changes to the `dev` branch; `main` is deployed automatically when changes are put there (the landing page is
+built by Netlify, `netlify.toml`). Commit messages describe what changed and why.
+
+## Deployment
+
+Landing page on Netlify: set `VITE_API_BASE_URL` to the public backend URL and `VITE_SHIPCHECK_REVIEW_URL` to the
+public ShipCheck URL. ShipCheck on a server (Vultr): see [shipcheck/README.md](./shipcheck/README.md#deploy-to-vultr).
+Backend: see [backend/README.md](./backend/README.md).
+
+Created by team KEEP.

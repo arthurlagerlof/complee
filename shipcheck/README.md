@@ -18,9 +18,25 @@ for every part, which rules apply, whether it passes, **why**, and where every v
   ([VERIFY.md](VERIFY.md)); interpretations are labelled.
 - **Ground truth.** `npm test` checks every planted and hand-checked finding; the top bar shows the score, e.g. *✓ 7/7 expected findings, 0 false alarms*.
 
-> ShipCheck lives in the `shipcheck/` folder of the `dev` branch, next to the Complee site at the repository root (which links here).
-> Included: the checker, database-backed RCRV and cruise catalogs, the evidence intake, the demo run-through ([DEMO_SCRIPT.md](DEMO_SCRIPT.md)) and the HTML/CSV report.
-> The optional AI rule drafting and the viewer role switch remain on the branch `shipcheck-full`.
+> Parts without a deviation are shown green and labelled *No deviation found*: no deviation in the rules checked
+> automatically with the data in the model, not a statement of full compliance (see *Coverage* and *Manual checks* below).
+
+## Features added after the hackathon
+
+| Feature | Where | Code |
+| --- | --- | --- |
+| Open IFC (IFC2x3/IFC4, with `FireRating` from the `Pset_*Common` property sets), Revit `.rvt` (converted to IFC by Autodesk Platform Services, needs `APS_CLIENT_ID`/`APS_CLIENT_SECRET`) and DXF; an import report says what was read and which values the rules still need | **Open…** | `src/ifc-convert.mjs`, `src/rvt-convert.mjs`, `src/autocad.mjs` |
+| Escape routes from every room to the muster stations, independent second routes, what-if blocking | **Escape plan**, room panel | `src/escape.mjs` |
+| AI: explain a finding, propose a second escape route (recomputed by the checker), draft a reply to a class comment; answers stream in; model, time and cost shown | ✦ buttons, **✦ AI** pill | `public/app.js`, backend `app/services/ai_assist.py` |
+| Findings register per project, shared by all revisions; dispositions flagged when the value changed | **Findings register** | `src/dispositions.mjs` |
+| Class comments: paste a class letter or load a comment sheet; comments are linked to elements and rules; the rule check shows whether each is resolved | **Findings register → Class comments** | `src/class-comments.mjs` |
+| Manual checks for requirements no algorithm can decide (`check: "manual"`), confirmed by name | element panel | `src/checker.mjs`, `src/dispositions.mjs` |
+| Coverage per instrument and a submission readiness check (blockers and warnings, each linked to where it is fixed) | sidebar, report | `src/readiness.mjs` |
+| Project file: register, manual confirmations and class comments as one file | readiness box | `src/project-file.mjs` |
+| Rule hierarchy (`relations`: replaces / exempts, with a basis), rule conflicts, same requirement from two instruments | element panel, report | `src/checker.mjs` |
+| Applicability by keel laying date (`applies_to.ship.constructed`) with a what-if date | ship particulars | `src/checker.mjs` |
+| Rule verification: sources, quoted evidence, level 1 and level 2; the viewer shows each rule's level | `verify.html` | `public/verify.js`, `src/verify-status.mjs`, backend `app/services/rule_verification.py` |
+| Revision comparison, measuring, what-if editing, plan view | top bar, 3D toolbar | `src/compare.mjs`, `public/viewer3d.js` |
 
 ## AutoCAD drawings
 
@@ -50,14 +66,32 @@ From the repository root, `npm run dev` serves ShipCheck at http://localhost:517
 npm test
 ```
 
-The browser UI reads rules, scenarios, models, expected results, and precomputed results from the FastAPI database API. The catalog JSON has been removed from this repository; the database is the active source of truth. Start FastAPI at `http://127.0.0.1:8000` before opening ShipCheck. The Node server proxies only fixed catalog keys to FastAPI and never falls back to local catalog files. Production deployments must set `SHIPCHECK_DATA_API_URL` in `deploy/deploy.env` to the FastAPI base URL reachable from the ShipCheck container. Offline tests using the real catalog also require this API.
+**Catalog source.** Without `SHIPCHECK_DATA_API_URL` the server uses the bundled catalog in `catalog/` (rules,
+scenarios, example ships, expected results): no database, no network. Only the scenarios whose model file is present
+are offered; the full RCRV production model (`catalog/ships/rcrv/parts.json`) is not in Git. Set
+`SHIPCHECK_DATA_API_URL` to the FastAPI base URL to read the catalog from the database instead (production: in
+`deploy/deploy.env`); the server then proxies only fixed catalog keys and does not fall back to the files.
+
+**Backend features.** AI (explanations, escape-route proposals, comment replies) and rule verification
+(`verify.html`) need the FastAPI backend, by default at http://127.0.0.1:8000 (`AI_API_URL`). Without it the viewer
+works and shows the AI as unavailable.
+
+| Setting (`shipcheck/.env` or environment) | Purpose |
+| --- | --- |
+| `PORT` | Server port (default 8080). |
+| `SHIPCHECK_DATA_API_URL` | Read the catalog from the database API instead of `catalog/`. |
+| `AI_API_URL` | Backend for AI and rule verification (default `http://127.0.0.1:8000`). |
+| `AI_ALLOW_REMOTE`, `VERIFY_ALLOW_REMOTE`, `CONVERT_ALLOW_REMOTE` | `true` opens AI, rule verification and Revit conversion to other computers; by default only the computer running ShipCheck may use them (they cost money or hold licensed texts). |
+| `APS_CLIENT_ID`, `APS_CLIENT_SECRET` | Autodesk Platform Services app for the Revit conversion. |
+| `EVIDENCE_PROVIDER` | `none` turns off the SOLAS passage search on the evidence page. |
+| `ALLOWED_ORIGINS` | Origins allowed for cross-origin calls (default: localhost). |
 
 Use **Add evidence** in the top bar to attach files to the selected scenario. The intake accepts documents, drawings, and model files for session-level review organization; DOCX is the document format with text extraction enabled in this demo. The review retrieves candidate SOLAS II-2 passages through a replaceable provider adapter. It does not decide applicability or compliance. The SinceAI JSONL corpus is local and ignored by Git; provide it at `integrations/sinceai/data/solas_ii2_revised_mca.jsonl`, or set `EVIDENCE_PROVIDER=none` to disable source retrieval. The `src/evidence-provider.mjs` interface can be replaced without changing the checker.
 
 | Command | What it does |
 | --- | --- |
 | `npm start` | Local server on port 8080 (static files from a whitelist, check API and model gateway). |
-| `npm test` | Tests checker, imported model ground truth, unit parsing, and server routes. Requires the backend catalog API. |
+| `npm test` | Tests checker, imports, escape routes, register, comments, readiness, report and server routes against the bundled catalog. |
 | `npm run check` | Checks every active database scenario in the terminal. `node scripts/check.mjs rcrv-3d` also writes `results.json`. |
 | `npm run prepare-model` | Streams the APS property dump into a temporary catalog staging file; import it with `SHIPCHECK_CATALOG_SOURCE_ROOT=<staging directory> python -m app.scripts.import_shipcheck_catalog model-rcrv-parts` from `backend`. |
 | `npm run report` | Writes `reports/<scenario>.html` and `.csv` from the active database catalog. |
@@ -192,8 +226,23 @@ src/                       checker and data code (pure modules run in the browse
   json-stream.mjs          streams a huge JSON array (Node only)
   score.mjs                compares results with the database ground-truth catalogs
   load.mjs                 Node: loads database catalogs and runs checks
+  catalog-local.mjs        bundled catalog in catalog/ (used when SHIPCHECK_DATA_API_URL is not set)
+  escape.mjs               escape-route graph: routes, independent second routes, what-if blocking
+  escape-actions.mjs       applies and recomputes AI escape-route proposals
+  ifc-convert.mjs          IFC -> ship/1 model with geometry (web-ifc), fire ratings from property sets
+  rvt-convert.mjs          Revit -> IFC through Autodesk Platform Services (server side)
+  autocad.mjs, dxf.mjs     DXF drawing -> model, results -> DXF markup
+  dispositions.mjs         findings register, manual-check confirmations, project key
+  class-comments.mjs       class comments: import, links, evidence from the rule check
+  readiness.mjs            submission readiness (blockers, warnings)
+  project-file.mjs         project file (register + comments) save and open
+  compare.mjs              revision comparison
+  report.mjs               HTML / CSV report
+  verify-status.mjs        verification level of a rule (same SHA-256 as the backend)
+catalog/                   bundled catalog: rules.json, scenarios.json, example ships, expected results
 public/                    the web UI
-  app.js                   sidebar, findings list, detail panel, live editing
+  app.js                   sidebar, findings list, detail panel, register, comments, AI, live editing
+  verify.html, verify.js   rule verification page (needs the backend)
   viewer3d.js              Three.js deck view (cruise scenario)
   viewer-aps.js            legacy Autodesk APS viewer (not used by the review UI)
   viewer-fallback.js       saved-image fallback when model gateway tiles are unavailable
