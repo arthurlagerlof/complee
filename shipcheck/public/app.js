@@ -906,7 +906,8 @@ function exportEscapeCSV() {
       o.primary ? (o.primary.length_mm / 1000).toFixed(1) : '', o.primary?.via.join(' > '), o.primary?.narrowest?.width_mm, o.primary?.narrowest?.id,
       o.secondary ? (o.secondary.length_mm / 1000).toFixed(1) : '', o.secondary?.via.join(' > ')]);
   }
-  download(`${S.sc.id}-escape-routes.csv`, rows.map((r) => r.map(q).join(',')).join('\n'), 'text/csv');
+  // BOM and CRLF like the other CSV exports, so Excel reads names with special characters correctly.
+  download(`${S.sc.id}-escape-routes.csv`, '﻿' + rows.map((r) => r.map(q).join(',')).join('\r\n'), 'text/csv');
 }
 
 // ---------- rest part (full model, not checked by any rule) ----------

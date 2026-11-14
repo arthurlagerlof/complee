@@ -51,7 +51,7 @@ test('traceability matrix: parts x rules, same data in the report and the CSV', 
   assert.equal(c2.cells['SOLAS-II-2-13-DEADEND-PAX'], 'compliant');
   assert.equal(m.rows[0].worst, 'non_compliant', 'worst first');
   assert.ok(traceMatrix(out, RULES, { findingsOnly: true }).rows.every((r) => r.worst !== 'compliant'));
-  assert.match(traceCSV(m), /"C2","Cross corridor to stair","D5","fail"/);
+  assert.match(traceCSV(m), /"C2","Cross corridor to stair","D5","non-compliant"/);
   const html = toHTML({ title: 't', scenario: 'cruise', results: out, model: CRUISE, rules: RULES });
   assert.match(html, /Traceability: parts × rules/);
 });

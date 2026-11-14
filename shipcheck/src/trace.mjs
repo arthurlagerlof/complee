@@ -28,7 +28,8 @@ export function traceMatrix(results, rules = [], { findingsOnly = false } = {}) 
   };
 }
 
-const LABEL = { compliant: 'pass', non_compliant: 'fail', not_enough_info: 'not enough info' };
+// Same wording as the rest of the viewer: "no deviation" in the rules checked, not a statement of compliance.
+const LABEL = { compliant: 'no deviation', non_compliant: 'non-compliant', not_enough_info: 'not enough info' };
 export const cellLabel = (st) => (st ? LABEL[st] : '');
 
 export function traceCSV(matrix) {
