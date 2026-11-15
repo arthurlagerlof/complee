@@ -15,6 +15,19 @@ const SHIP_LENGTH_KEYS = new Set(['length_overall', 'beam', 'draft', 'depth']);
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const round = (v, d = 0) => Math.round(v * 10 ** d) / 10 ** d;
+const finite = (v) => typeof v === 'number' && Number.isFinite(v);
+// Ship dimensions outside this range are taken as a unit error (a beam of 30 mm, a length of 60 km), not as data.
+const PLAUSIBLE_SHIP_MM = [1000, 600000];
+// Ids that cannot be used as keys of the result object.
+const RESERVED_IDS = new Set(['__proto__', 'constructor', 'prototype']);
+// Vocabulary values (element type, ship type, zone, fuel) compared without case, spaces or hyphens:
+// "Corridor", "corridor"; "Special purpose", "special_purpose"; "LNG", "lng".
+export const normWord = (v) => String(v ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+const looseEqual = (a, b) => (typeof a === 'string' && typeof b === 'string' ? normWord(a) === normWord(b) : a === b);
+// Rectangle geometry the checks can compute with: finite numbers, positive plan size, height not negative.
+export function usableGeometry(g) {
+  return !!g && [g.x, g.y, g.z, g.lx, g.ly, g.h].every(finite) && g.lx > 0 && g.ly > 0 && g.h >= 0;
+}
 
 // ---------- values and units ----------
 
@@ -94,7 +107,32 @@ export function normalizeModel(raw) {
     };
   });
 
-  const elements = (raw.elements || []).map((el) => normalizeElement(el, k, decks[0]?.id));
+  // Element ids are the keys of every result, register entry and comment link. An element that is not an object, or
+  // whose id is missing, reserved or used twice, would silently disappear from the results (only the last element of
+  // an id was kept). Such elements are checked under a new id and listed in `issues`, so nothing is hidden.
+  const issues = [];
+  const used = new Set();
+  const elements = [];
+  (raw.elements || []).forEach((el, i) => {
+    if (!isObj(el)) {
+      issues.push({ kind: 'invalid_element', index: i, text: `Element ${i + 1} of the model is not an element (${JSON.stringify(el)}) and was not checked.` });
+      return;
+    }
+    let id = el.id;
+    if (id == null || id === '' || RESERVED_IDS.has(String(id))) {
+      const next = `element-${i + 1}`;
+      issues.push({ kind: 'missing_id', index: i, id: next, text: `Element ${i + 1} (${el.name || el.type || 'no name'}) has ${id == null || id === '' ? 'no id' : `the reserved id "${id}"`}; checked as "${next}".` });
+      id = next;
+    } else if (used.has(String(id))) {
+      let n = 2;
+      while (used.has(`${id}~${n}`)) n++;
+      const next = `${id}~${n}`;
+      issues.push({ kind: 'duplicate_id', index: i, id: next, original: id, text: `Id "${id}" is used by more than one element; element ${i + 1} (${el.name || el.type || 'no name'}) is checked as "${next}". Give every element its own id.` });
+      id = next;
+    }
+    used.add(String(id));
+    elements.push(normalizeElement(id === el.id ? el : { ...el, id }, k, decks[0]?.id));
+  });
 
   return {
     __normalized: true,
@@ -105,6 +143,7 @@ export function normalizeModel(raw) {
     ship: raw.ship || {},
     decks,
     elements,
+    issues,
     hull: raw.hull,
     demo: raw.demo,
   };
@@ -120,26 +159,36 @@ function shipValue(model, key) {
 
 // ---------- applicability ----------
 
+// ok: true (applies) | false (does not apply, with the reason) | 'unknown' (a value the condition needs is missing:
+// the rule may apply, so it is never dropped silently; see checkElement).
 function elementCondition(rule, el, model) {
   const a = rule.applies_to || {};
-  if (a.types && !a.types.includes(el.type)) return { ok: false, silent: true };
+  if (a.types && !a.types.some((t) => looseEqual(t, el.type))) return { ok: false, silent: true };
+  let unknown = null;
   for (const [key, want] of Object.entries(a.where || {})) {
     const p = prop(el, key, model);
+    // A missing value decides a condition only when the condition is about presence ({ exists }) or when every
+    // value outside a list qualifies ({ not_in }); otherwise whether the rule applies is open.
+    if (!p && !(isObj(want) && 'exists' in want) && !whereMatches(undefined, want)) {
+      unknown ??= { missing: key, want: describeWhere(want) };
+      continue;
+    }
     if (!whereMatches(p?.value, want)) {
-      return { ok: false, reason: `${key} is ${p ? JSON.stringify(p.value) : 'not set'}; rule applies when ${key} ${describeWhere(want)}`, ...(p ? {} : { missing: key, want: describeWhere(want) }) };
+      return { ok: false, reason: `${key} is ${p ? JSON.stringify(p.value) : 'not set'}; rule applies when ${key} ${describeWhere(want)}` };
     }
   }
-  return { ok: true };
+  return unknown ? { ok: 'unknown', ...unknown } : { ok: true };
 }
 
 // `where` values: a plain value (equality) or one operator object:
 //   { "prefix": "1" }  { "in": [..] }  { "not_in": [..] }  { "exists": true|false }
+// Text is compared without case, spaces or hyphens ("LNG" = "lng", "oil fuel" = "Oil-fuel").
 export function whereMatches(have, want) {
-  if (!isObj(want)) return have === want;
+  if (!isObj(want)) return looseEqual(have, want);
   if ('exists' in want) return (have != null) === want.exists;
   if ('prefix' in want) return have != null && [].concat(want.prefix).some((p) => String(have).toUpperCase().startsWith(String(p).toUpperCase()));
-  if ('in' in want) return want.in.includes(have);
-  if ('not_in' in want) return !want.not_in.includes(have);
+  if ('in' in want) return want.in.some((w) => looseEqual(have, w));
+  if ('not_in' in want) return !want.not_in.some((w) => looseEqual(have, w));
   return false;
 }
 function describeWhere(want) {
@@ -170,9 +219,34 @@ export function dateRange(v) {
 }
 const isDay = (v) => typeof v === 'string' && dateRange(v)?.[0] === v && v.length === 10;
 
+// Ship types the rule set distinguishes (normalised), so an unknown spelling ("cruise", "ro-pax") is reported as
+// undecided instead of switching every type-specific rule off. SOLAS divides every ship into passenger or cargo, so
+// those two are always known, whatever rules are loaded.
+export function shipTypesOf(rules) {
+  const out = new Set(['passenger', 'cargo']);
+  for (const r of rules || []) for (const t of r?.applies_to?.ship?.type_in || []) out.add(normWord(t));
+  return out;
+}
+
+// A ship dimension in mm, or why it cannot be used: { mm, v } | { missing: true } | { bad: text, v }.
+function shipDimension(model, key) {
+  const v = shipValue(model, key);
+  if (!v) return { missing: true };
+  if (!finite(v.value) || !(v.unit in UNIT_TO_MM)) {
+    return { bad: `ship.${key} "${v.value}"${v.unit ? ` ${v.unit}` : ''} is not a length the checker can use`, v };
+  }
+  const mm = toMM(v.value, v.unit);
+  if (mm < PLAUSIBLE_SHIP_MM[0] || mm > PLAUSIBLE_SHIP_MM[1]) {
+    return { bad: `ship.${key} = ${fmtMM(mm)} is not a plausible ship dimension (check the unit)`, v, mm };
+  }
+  return { v, mm };
+}
+
 // Ship-level conditions: ship type, operating area, minimum size, class society.
-// Returns ok:true | ok:false (not applicable) | ok:'unknown' (ship data missing -> not_enough_info).
-function shipCondition(rule, model) {
+// Returns ok:true | ok:false (not applicable) | ok:'unknown' (ship data missing or unusable -> not_enough_info).
+// Data that cannot be read (a length "abc", an unknown ship type, an unsupported unit) never makes a rule
+// "not applicable": only data that clearly falls outside the rule's scope does.
+function shipCondition(rule, model, ctx = {}) {
   const c = rule.applies_to?.ship;
   if (!c) return { ok: true, inputs: [] };
   const inputs = [];
@@ -180,42 +254,60 @@ function shipCondition(rule, model) {
     const v = shipValue(model, key);
     if (v) {
       const shown = Array.isArray(v.value) ? v.value.join(', ')
-        : SHIP_LENGTH_KEYS.has(key) && v.unit in UNIT_TO_MM ? fmtLengthInput(v, toMM(v.value, v.unit)) : String(v.value);
+        : SHIP_LENGTH_KEYS.has(key) && v.unit in UNIT_TO_MM && finite(v.value) ? fmtLengthInput(v, toMM(v.value, v.unit)) : String(v.value);
       inputs.push({ name: `ship.${key}`, value: shown, source: v.source });
     }
     return v;
   };
-  const unknown = (key) => ({ ok: 'unknown', missing: `ship.${key}`, inputs });
+  const unknown = (key, why) => ({ ok: 'unknown', missing: why ? `usable ship.${key} (${why})` : `ship.${key}`, inputs });
 
   if (c.type_in) {
     const t = need('type');
     if (!t) return unknown('type');
-    if (!c.type_in.includes(t.value)) return { ok: false, reason: `ship type is "${t.value}"; rule applies to ${c.type_in.join(' / ')}` };
+    const have = [].concat(t.value).map(normWord).filter(Boolean);
+    const want = c.type_in.map(normWord);
+    if (!have.some((h) => want.includes(h))) {
+      const known = ctx.shipTypes?.size ? ctx.shipTypes : new Set(want);
+      if (!have.length || have.some((h) => !known.has(h))) {
+        return unknown('type', `"${[].concat(t.value).join(', ')}" is not a ship type of the rule set: ${[...known].join(', ')}`);
+      }
+      return { ok: false, reason: `ship type is "${t.value}"; rule applies to ${c.type_in.join(' / ')}` };
+    }
   }
   if (c.operating_area_any) {
     const a = need('operating_area');
     if (!a) return unknown('operating_area');
-    const areas = [].concat(a.value);
-    if (!areas.some((x) => c.operating_area_any.includes(x))) {
+    const areas = [].concat(a.value).filter((x) => x != null && x !== '');
+    if (!areas.length) return unknown('operating_area');
+    if (!areas.some((x) => c.operating_area_any.some((w) => looseEqual(String(x), String(w))))) {
       return { ok: false, reason: `operating area is ${areas.join(', ')}; rule applies in ${c.operating_area_any.join(' / ')}` };
     }
   }
   for (const [key, want] of Object.entries(c.equals || {})) {
     const v = need(key);
-    if (!v) return unknown(key);
-    if (v.value !== want) return { ok: false, reason: `ship.${key} is "${v.value}"; rule applies when it is "${want}"` };
+    if (!v || v.value === '') return unknown(key);
+    if (!looseEqual(v.value, want)) return { ok: false, reason: `ship.${key} is "${v.value}"; rule applies when it is "${want}"` };
   }
   for (const [key, lim] of Object.entries(c.min || {})) {
-    const v = need(key);
-    if (!v) return unknown(key);
     const limit = readValue(lim, null);
-    let have = v.value, want = limit.value, shown = `${want}`;
+    let have, want = limit.value, shown = `${want}`, stated;
     if (limit.unit) {
-      have = toMM(v.value, v.unit);
+      const d = shipDimension(model, key);
+      need(key);
+      if (d.missing) return unknown(key);
+      if (d.bad) return unknown(key, d.bad);
+      have = d.mm;
       want = toMM(limit.value, limit.unit);
       shown = `${limit.value} ${limit.unit}`;
+      stated = fmtMM(have);
+    } else {
+      const v = need(key);
+      if (!v) return unknown(key);
+      if (!finite(v.value) || v.value < 0) return unknown(key, `"${v.value}" is not a number`);
+      have = v.value;
+      stated = String(v.value);
     }
-    if (!(have >= want)) return { ok: false, reason: `ship.${key} is ${v.value}${v.unit && limit.unit ? ' ' + v.unit : ''}; rule applies from ${shown}` };
+    if (!(have >= want)) return { ok: false, reason: `ship.${key} is ${stated}; rule applies from ${shown}` };
   }
   // Date of construction: SOLAS applies most new requirements to ships "constructed" (keel laid or at a similar stage
   // of construction) on or after a date. The model gives ship.keel_laid; a date that does not decide (a year that
@@ -242,10 +334,23 @@ function rectOf(el) {
   return g && { x0: g.x, y0: g.y, x1: g.x + g.lx, y1: g.y + g.ly };
 }
 
+// Vertical extent. An element without a height (h = 0) stands for a space on its deck: it takes the deck height,
+// so two spaces side by side on one deck share a wall (with h = 0 they could never touch).
 function zRange(el, deckById) {
-  const g = el.geom_mm;
-  const base = (deckById[el.deck]?.elevation_mm ?? 0) + g.z;
-  return [base, base + g.h];
+  const g = el.geom_mm, deck = deckById[el.deck];
+  const base = (deck?.elevation_mm ?? 0) + g.z;
+  return [base, base + (g.h > 0 ? g.h : deck?.height_mm ?? DEFAULT_DECK_HEIGHT_MM)];
+}
+
+// Point in polygon (ray casting); points on the boundary count as inside.
+function insidePolygon([px, py], poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if (pointSegDist([px, py], poly[j], poly[i]) < 1e-6) return true;
+    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
 }
 
 function pointSegDist([px, py], [ax, ay], [bx, by]) {
@@ -278,12 +383,12 @@ export function rectToPolylineDistance(r, line) {
 
 // Elements that share a boundary (face contact within tolerance) in 3D.
 export function geometricNeighbours(el, model, deckById) {
-  if (!el.geom_mm) return [];
+  if (!usableGeometry(el.geom_mm)) return [];
   const a = rectOf(el), [az0, az1] = zRange(el, deckById);
   const tol = ADJACENCY_TOLERANCE_MM;
   const out = [];
   for (const o of model.elements) {
-    if (o === el || !o.geom_mm || o.virtual) continue;
+    if (o === el || !usableGeometry(o.geom_mm) || o.virtual) continue;
     const b = rectOf(o), [bz0, bz1] = zRange(o, deckById);
     const ov = [
       Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0),
@@ -347,39 +452,72 @@ function checkMinMax(rule, el, ctx) {
     v = toMM(p.value, p.unit);
     shown = fmtLengthInput(p, v);
   } else shown = fmt(v);
+  // A length or slope below zero is a data error, not a design that meets an upper limit.
+  if ((isLength || rule.unit === 'ratio') && v < 0) {
+    return result(rule, 'not_enough_info', { required, limit, inputs: [{ name: rule.parameter, value: shown, source: p.source }],
+      explanation: `"${rule.parameter}" of ${el.name} is ${shown}, which is below zero: check the design data.` });
+  }
+  // A value equal to the limit meets it, also when the limit is stored rounded or converted (1:12 as a ratio,
+  // 36 in in mm): differences in the last digits of a floating-point number are not a finding.
+  const eps = 1e-9 * Math.max(1, Math.abs(limitVal));
+  const ok = rule.check === 'min' ? v >= limitVal - eps : v <= limitVal + eps;
+  // Never say "900 mm, but must be ≥ 900 mm. Short by 0 mm": show the digits that decide.
+  if (!ok && isLength && fmtMM(v) === fmtMM(limitVal)) shown = `${shown} (${+v.toFixed(3)} mm unrounded)`;
   const inputs = [{ name: rule.parameter, value: shown, source: p.source }];
-  const ok = rule.check === 'min' ? v >= limitVal : v <= limitVal;
+  const diff = (d) => (isLength ? (fmtMM(d) === '0 mm' ? 'less than 0.01 mm' : fmtMM(d)) : round(d, 4) === 0 ? 'less than 0.0001' : round(d, 4));
   let explanation;
   if (ok) explanation = `${rule.parameter} is ${shown}; requirement ${required} is met.`;
-  else if (rule.check === 'min') explanation = `${rule.parameter} is ${shown}, but must be ${required}. Short by ${isLength ? fmtMM(limitVal - v) : round(limitVal - v, 4)}.`;
-  else explanation = `${rule.parameter} is ${shown}, but must be ${required}. Exceeds the limit by ${isLength ? fmtMM(v - limitVal) : rule.unit === 'ratio' ? `${round((v - limitVal) * 100, 1)} percentage points` : round(v - limitVal, 4)}.`;
+  else if (rule.check === 'min') explanation = `${rule.parameter} is ${shown}, but must be ${required}. Short by ${diff(limitVal - v)}.`;
+  else explanation = `${rule.parameter} is ${shown}, but must be ${required}. Exceeds the limit by ${rule.unit === 'ratio' ? `${round((v - limitVal) * 100, 2)} percentage points` : diff(v - limitVal)}.`;
   return result(rule, ok ? 'compliant' : 'non_compliant', { measured: shown, required, explanation, inputs, limit: { ...limit, measured: v } });
 }
 
+// Neighbours come from the declared list (props.adjacent) and from the geometry, both when both exist: a declared
+// list cannot hide a space the geometry shows touching. The result is "no deviation" only when every neighbour is
+// known and has a zone, and no space of a forbidden zone is left without usable geometry (it could be next door).
 function checkNotAdjacentZone(rule, el, ctx) {
   const { model, byId, deckById } = ctx;
   const required = `not next to: ${rule.zones.join(', ')} spaces`;
+  const forbidden = rule.zones.map(normWord);
   const declared = prop(el, 'adjacent', model);
-  let neighbours, source;
-  if (declared) {
-    neighbours = [].concat(declared.value).map((id) => byId[id]).filter(Boolean);
-    source = declared.source;
-  } else if (el.geom_mm) {
-    neighbours = geometricNeighbours(el, model, deckById);
-    source = `derived from 3D geometry (shared boundary within ${ADJACENCY_TOLERANCE_MM} mm)`;
-  } else {
-    return missing(rule, el, 'Adjacency (props.adjacent or geometry)', required);
+  const placed = usableGeometry(el.geom_mm);
+  if (!declared && !placed) {
+    return missing(rule, el, el.geom_mm ? 'Usable geometry (x, y, lx, ly as numbers, size above zero)' : 'Adjacency (props.adjacent or geometry)', required);
   }
-  const zoneOf = (s) => prop(s, 'zone', model)?.value ?? 'unknown';
-  const listed = neighbours.map((s) => `${s.name} [${zoneOf(s)}]`).join(', ') || 'none';
-  const inputs = [{ name: 'adjacent spaces', value: listed, source }];
-  const bad = neighbours.filter((s) => rule.zones.includes(zoneOf(s)));
-  return result(rule, bad.length ? 'non_compliant' : 'compliant', {
-    measured: `adjacent: ${listed}`, required, inputs,
-    explanation: bad.length
-      ? `${el.name} borders ${bad.map((s) => `${s.name} (${s.id})`).join(', ')}, which ${bad.length > 1 ? 'are' : 'is'} in the ${rule.zones.join('/')} zone. Move the tank or add a separating space (e.g. cofferdam or void).`
-      : `${el.name} does not border any ${rule.zones.join('/')} space.`,
-  });
+  const neighbours = new Map(), sources = [], open = [];
+  if (declared) {
+    const ids = [].concat(declared.value);
+    const dangling = ids.filter((id) => !byId[id]);
+    for (const id of ids) if (byId[id] && byId[id] !== el) neighbours.set(byId[id].id, byId[id]);
+    sources.push(declared.source);
+    if (dangling.length) open.push(`${dangling.join(', ')} ${dangling.length > 1 ? 'are' : 'is'} listed as adjacent but not in the model`);
+  }
+  if (placed) {
+    for (const o of geometricNeighbours(el, model, deckById)) neighbours.set(o.id, o);
+    sources.push(`derived from 3D geometry (shared boundary within ${ADJACENCY_TOLERANCE_MM} mm)`);
+  }
+  const zoneOf = (s) => { const z = prop(s, 'zone', model)?.value; return z == null || z === '' ? null : String(z); };
+  const list = [...neighbours.values()];
+  const listed = list.map((s) => `${s.name} [${zoneOf(s) ?? 'zone not set'}]`).join(', ') || 'none';
+  const inputs = [{ name: 'adjacent spaces', value: listed, source: sources.join('; ') }];
+  const bad = list.filter((s) => zoneOf(s) !== null && forbidden.includes(normWord(zoneOf(s))));
+  if (bad.length) {
+    return result(rule, 'non_compliant', { measured: `adjacent: ${listed}`, required, inputs,
+      explanation: `${el.name} borders ${bad.map((s) => `${s.name} (${s.id})`).join(', ')}, which ${bad.length > 1 ? 'are' : 'is'} in the ${rule.zones.join('/')} zone. Move the tank or add a separating space (e.g. cofferdam or void).` });
+  }
+  const noZone = list.filter((s) => zoneOf(s) === null);
+  if (noZone.length) open.push(`the zone of ${noZone.map((s) => `${s.name} (${s.id})`).join(', ')} is not set`);
+  if (placed) {
+    const unplaced = model.elements.filter((o) => o !== el && !o.virtual && !neighbours.has(o.id) && !usableGeometry(o.geom_mm)
+      && zoneOf(o) !== null && forbidden.includes(normWord(zoneOf(o))));
+    if (unplaced.length) open.push(`${unplaced.map((s) => `${s.name} (${s.id})`).slice(0, 5).join(', ')}${unplaced.length > 5 ? ` and ${unplaced.length - 5} more` : ''} in the ${rule.zones.join('/')} zone ${unplaced.length > 1 ? 'have' : 'has'} no usable geometry`);
+  }
+  if (open.length) {
+    return result(rule, 'not_enough_info', { measured: `adjacent: ${listed}`, required, inputs,
+      explanation: `Cannot rule out a ${rule.zones.join('/')} space next to ${el.name}: ${open.join('; ')}.` });
+  }
+  return result(rule, 'compliant', { measured: `adjacent: ${listed}`, required, inputs,
+    explanation: `${el.name} does not border any ${rule.zones.join('/')} space.` });
 }
 
 function checkDistanceMinHull(rule, el, ctx) {
@@ -388,18 +526,29 @@ function checkDistanceMinHull(rule, el, ctx) {
   let required = `≥ ${fmtMM(limitVal)} from the ship side`;
   const inputs = [];
   if (rule.beam_divisor) {
-    const b = shipValue(model, 'beam');
-    if (!b) return missing(rule, el, 'Ship beam (ship.beam)', `≥ min(B/${rule.beam_divisor}, ${fmtMM(limitVal)}) from the ship side`);
-    const bmm = toMM(b.value, b.unit);
-    inputs.push({ name: 'ship.beam', value: fmtLengthInput(b, bmm), source: b.source });
-    limitVal = Math.min(bmm / rule.beam_divisor, limitVal);
+    const b = shipDimension(model, 'beam');
+    const formula = `≥ min(B/${rule.beam_divisor}, ${fmtMM(limitVal)}) from the ship side`;
+    if (b.missing) return missing(rule, el, 'Ship beam (ship.beam)', formula);
+    if (b.bad) return result(rule, 'not_enough_info', { required: formula, explanation: `The ship beam cannot be used: ${b.bad}.` });
+    inputs.push({ name: 'ship.beam', value: fmtLengthInput(b.v, b.mm), source: b.v.source });
+    limitVal = Math.min(b.mm / rule.beam_divisor, limitVal);
     required = `≥ min(B/${rule.beam_divisor}, ${fmtMM(toMM(rule.value, rule.unit))}) = ${fmtMM(limitVal)} from the ship side`;
   }
   const limit = { kind: 'min', parameter: 'distance_to_side', value: limitVal };
   const deck = deckById[el.deck];
   if (!el.geom_mm) return { ...missing(rule, el, 'Geometry (geom)', required, inputs), limit };
+  if (!usableGeometry(el.geom_mm)) {
+    return { ...result(rule, 'not_enough_info', { required, inputs, explanation: `The geometry of ${el.name} is incomplete or not a number (x, y, lx, ly); its distance to the ship side cannot be measured.` }), limit };
+  }
   if (!deck?.side_lines_mm?.length) return { ...missing(rule, el, `Ship side line of deck "${el.deck}"`, required, inputs), limit };
-  const d = Math.min(...deck.side_lines_mm.map((line) => rectToPolylineDistance(rectOf(el), line)));
+  // The distance to the side line has no sign: a tank outside the hull would be "inboard" by its distance. When the
+  // deck outline is known, the tank must lie inside it.
+  const r = rectOf(el);
+  if (deck.outline_mm?.length >= 3 && ![[r.x0, r.y0], [r.x1, r.y0], [r.x1, r.y1], [r.x0, r.y1]].some((c) => insidePolygon(c, deck.outline_mm))) {
+    return { ...result(rule, 'not_enough_info', { required, inputs,
+      explanation: `${el.name} lies outside the outline of deck ${deck.name}: its position or the deck outline is wrong, so its distance to the ship side cannot be judged.` }), limit };
+  }
+  const d = Math.min(...deck.side_lines_mm.map((line) => rectToPolylineDistance(r, line)));
   inputs.push({ name: 'distance to ship side', value: fmtMM(d), source: `computed from geometry of ${el.id} and the side line of deck ${deck.name}` });
   const ok = d >= limitVal;
   return result(rule, ok ? 'compliant' : 'non_compliant', {
@@ -426,6 +575,13 @@ function checkCountMin(rule, el, ctx) {
     wrongType.length ? `${wrongType.join(', ')} not counted (type not in ${rule.count_types.join('/')})` : '',
   ].filter(Boolean).join('; ');
   const ok = n >= rule.value;
+  // Too few counted, but some listed items are not in the model: they may exist in the design, so this is open
+  // rather than a deviation.
+  if (!ok && dangling.length) {
+    return result(rule, 'not_enough_info', { measured: `${n}: ${listed}`, required,
+      inputs: [{ name: rule.parameter, value: ids.join(', '), source: p.source }],
+      explanation: `${el.name} has ${n} ${rule.count_label || 'items'} in the model (${listed}); ${dangling.join(', ')} ${dangling.length > 1 ? 'are' : 'is'} listed but not in the model. Add ${dangling.length > 1 ? 'them' : 'it'} to decide.` });
+  }
   return result(rule, ok ? 'compliant' : 'non_compliant', {
     measured: `${n}: ${listed}`, required,
     inputs: [{ name: rule.parameter, value: ids.join(', ') || 'none', source: p.source }],
@@ -442,7 +598,7 @@ function checkRequires(rule, el, ctx) {
   const req = rule.requires;
   const required = `ship has a ${req.label || req.type}`;
   const matches = model.elements.filter((e) =>
-    e.type === req.type && Object.entries(req.where || {}).every(([k, v]) => prop(e, k, model)?.value === v));
+    looseEqual(e.type, req.type) && Object.entries(req.where || {}).every(([k, v]) => looseEqual(prop(e, k, model)?.value, v)));
   const ok = matches.length > 0;
   return result(rule, ok ? 'compliant' : 'non_compliant', {
     measured: ok ? `found: ${matches.map((e) => `${e.id} (${e.name})`).join(', ')}` : 'none found in the model',
@@ -502,8 +658,11 @@ function checkTableLookup(rule, el, ctx) {
   const required = `${rule.key} per ${rule.table_name || 'table'}`;
   if (!t) return missing(rule, el, `"${rule.parameter}"`, required);
   if (!g) return missing(rule, el, `"${rule.key}"`, required);
-  if (typeof t.value !== 'number' || !(t.unit in UNIT_TO_MM)) {
+  if (!finite(t.value) || !(t.unit in UNIT_TO_MM)) {
     return result(rule, 'not_enough_info', { required, explanation: `"${rule.parameter}" of ${el.name} is not a length the checker can convert.` });
+  }
+  if (t.value <= 0) {
+    return result(rule, 'not_enough_info', { required, explanation: `"${rule.parameter}" of ${el.name} is ${t.value} ${t.unit}; a thickness must be above zero. Check the design data.` });
   }
   const mm = toMM(t.value, t.unit);
   const shownT = fmtLengthInput(t, mm);
@@ -592,8 +751,10 @@ export function validateRule(rule) {
   if (rule.check && !CHECK_TYPES.includes(rule.check)) errors.push(`unknown check "${rule.check}"`);
   if (['min', 'max', 'count_min'].includes(rule.check)) {
     if (!rule.parameter) errors.push('missing "parameter"');
-    if (typeof rule.value !== 'number' && !(rule.draft && rule.value == null)) errors.push('"value" must be a number (null only in a draft rule)');
+    if (!finite(rule.value) && !(rule.draft && rule.value == null)) errors.push('"value" must be a number (null only in a draft rule)');
   }
+  if (rule.check === 'distance_min_hull' && !finite(rule.value)) errors.push('"value" must be a number');
+  if (rule.beam_divisor !== undefined && !(finite(rule.beam_divisor) && rule.beam_divisor > 0)) errors.push('"beam_divisor" must be a number above zero');
   if (rule.check === 'in_set' && (!rule.parameter || !Array.isArray(rule.values))) errors.push('in_set needs "parameter" and "values"');
   if (rule.check === 'table_lookup' && (!rule.parameter || !rule.key || !Array.isArray(rule.rows) || !rule.rows.length)) errors.push('table_lookup needs "parameter", "key" and "rows"');
   if (rule.draft && !rule.draft_reason) errors.push('a draft rule needs "draft_reason"');
@@ -658,7 +819,7 @@ function relationsByRule(rules) {
     // relations are ignored, so every rule in the circle stays in force.
     hit = new Map();
     for (const [id, rels] of edges) {
-      const ok = rels.filter((x) => RELATION_TYPES.includes(x.type) && x.basis && !reaches(x.rule, id));
+      const ok = rels.filter((x) => RELATION_TYPES.includes(x.type) && String(x.basis ?? '').trim() && !reaches(x.rule, id));
       if (ok.length) hit.set(id, ok);
     }
     relationCache.set(rules, hit);
@@ -734,63 +895,74 @@ function checkElement(el, rules, ctx) {
   const unknownApplicability = new Set();
   for (const rule of rules) {
     const ec = elementCondition(rule, el, model);
-    if (!ec.ok && ec.missing && rule.check === 'manual') {
-      const sc0 = shipCondition(rule, model);
-      if (sc0.ok !== false) {
-        manual.push({ rule_id: rule.id, source: rule.source, clause: rule.clause, rule_text: rule.text, text_status: rule.text_status || 'paraphrase',
-          verified: rule.verified === true, reference_url: rule.reference_url || null, evidence: rule.evidence || null,
-          applicability: 'unknown', reason: `Applies only if ${rule.applies_note ?? `${ec.missing} ${ec.want}`}: ${ec.missing} is not set in the model.` });
-      }
-      continue;
-    }
-    if (!ec.ok) {
+    if (ec.ok === false) {
       if (!ec.silent) not_applicable.push({ rule_id: rule.id, source: rule.source, reason: ec.reason });
       continue;
     }
-    const sc = shipCondition(rule, model);
+    const sc = shipCondition(rule, model, ctx);
     if (sc.ok === false) { not_applicable.push({ rule_id: rule.id, source: rule.source, reason: sc.reason }); continue; }
     if (rule.check === 'manual') {
       // A requirement no algorithm can decide (qualitative, "to the satisfaction of the Administration", ...):
       // listed for a person to confirm, never counted as a pass.
-      manual.push({ rule_id: rule.id, source: rule.source, clause: rule.clause, rule_text: rule.text, text_status: rule.text_status || 'paraphrase',
-        verified: rule.verified === true, reference_url: rule.reference_url || null, evidence: rule.evidence || null,
-        ...(sc.ok === 'unknown' ? { applicability: 'unknown', reason: `Applies only if confirmed: ${sc.missing} is missing in the ship particulars.` } : { applicability: 'applies' }) });
-      continue;
-    }
-    if (sc.ok === 'unknown') {
-      unknownApplicability.add(rule.id);
-      all.push(Object.assign(result(rule, 'not_enough_info', {
-        inputs: sc.inputs,
-        explanation: `Cannot decide whether this rule applies: ${sc.missing} is missing in the ship particulars.`,
-      }), { applicability: 'unknown' }));
+      const base = { rule_id: rule.id, source: rule.source, clause: rule.clause, rule_text: rule.text, text_status: rule.text_status || 'paraphrase',
+        verified: rule.verified === true, reference_url: rule.reference_url || null, evidence: rule.evidence || null };
+      if (ec.ok === 'unknown') manual.push({ ...base, applicability: 'unknown', reason: `Applies only if ${rule.applies_note ?? `${ec.missing} ${ec.want}`}: ${ec.missing} is not set in the model.` });
+      else if (sc.ok === 'unknown') manual.push({ ...base, applicability: 'unknown', reason: `Applies only if confirmed: ${sc.missing} is missing in the ship particulars.` });
+      else manual.push({ ...base, applicability: 'applies' });
       continue;
     }
     const fn = CHECKS[rule.check];
-    const r = fn
+    let r = fn
       ? fn(rule, el, ctx)
       : result(rule, 'not_enough_info', { explanation: `Unknown check type "${rule.check}".` });
     if (sc.inputs.length) r.inputs = [...r.inputs, ...sc.inputs];
+    // Whether the rule applies is open (a value its scope depends on is missing or unusable). It is never dropped:
+    // when the design meets it anyway the result says so; otherwise it is "not enough info", with what the check
+    // would find if the rule applies.
+    if (ec.ok === 'unknown' || sc.ok === 'unknown') {
+      unknownApplicability.add(rule.id);
+      const why = ec.ok === 'unknown'
+        ? `${ec.missing} is not set for ${el.name} (the rule applies when ${ec.missing} ${ec.want})`
+        : `${sc.missing} is missing in the ship particulars`;
+      r = r.status === 'compliant'
+        ? { ...r, applicability: 'unknown', explanation: `${r.explanation} Whether the rule applies is open (${why}); it is met either way.` }
+        : { ...r, status: 'not_enough_info', applicability: 'unknown', explanation: `Cannot decide whether this rule applies: ${why}. If it applies: ${r.explanation}` };
+    }
     all.push(r);
   }
 
   const { results, superseded } = applyHierarchy(all, rules, unknownApplicability);
-  const { governing, conflicts } = limitAnalysis(results);
+  // A rule that may not apply does not govern a limit and cannot cause a rule conflict.
+  const { governing, conflicts } = limitAnalysis(results.filter((r) => r.applicability !== 'unknown'));
   const worst = results.reduce((w, r) => (STATUS_RANK[r.status] > (STATUS_RANK[w] || 0) ? r.status : w), null);
   return { id: el.id, name: el.name, type: el.type, deck: el.deck, worst, results, not_applicable, superseded, governing, conflicts, manual };
 }
 
+// Draft rules (value not known yet) are listed, never run: no value is guessed. Rules that fail validation (a missing
+// or non-numeric limit, an unknown check) are not run either: a rule set brought by a user must not pass designs
+// through a broken rule. Both are reported with the results.
+function ruleSet(allRules) {
+  const drafts = [], rules = [], invalid = [];
+  for (const r of allRules) {
+    if (!isObj(r)) { invalid.push({ id: '(not a rule)', errors: ['not an object'] }); continue; }
+    if (r.draft) { drafts.push(r); continue; }
+    const errors = validateRule(r);
+    if (errors.length) invalid.push({ id: r.id || '(no id)', source: r.source ?? null, errors });
+    else rules.push(r);
+  }
+  return { drafts, rules, invalid, shipTypes: shipTypesOf(allRules) };
+}
+
 function checkContext(rawModel, allRules) {
   const model = normalizeModel(rawModel);
-  // Draft rules (value not known yet) are listed, never run: no value is guessed.
-  const drafts = allRules.filter((r) => r.draft);
-  const rules = allRules.filter((r) => !r.draft);
+  const { drafts, rules, invalid, shipTypes } = ruleSet(allRules);
   const byId = Object.fromEntries(model.elements.map((e) => [e.id, e]));
   const deckById = Object.fromEntries(model.decks.map((d) => [d.id, d]));
-  return { model, drafts, rules, ctx: { model, byId, deckById } };
+  return { model, drafts, rules, invalid, ctx: { model, byId, deckById, shipTypes } };
 }
 
 export function checkModel(rawModel, allRules) {
-  const { model, drafts, rules, ctx } = checkContext(rawModel, allRules);
+  const { model, drafts, rules, invalid, ctx } = checkContext(rawModel, allRules);
   const elements = {};
   const summary = { compliant: 0, non_compliant: 0, not_enough_info: 0 };
   const elementSummary = { compliant: 0, non_compliant: 0, not_enough_info: 0, no_rule: 0 };
@@ -808,6 +980,8 @@ export function checkModel(rawModel, allRules) {
     rule_count: rules.length,
     rules_verified: rules.filter((r) => r.verified === true).length,
     draft_rules: drafts.map((r) => ({ id: r.id, source: r.source, clause: r.clause, reason: r.draft_reason })),
+    invalid_rules: invalid,
+    model_issues: model.issues || [],
     summary,
     element_summary: elementSummary,
     elements,
@@ -831,10 +1005,11 @@ function rawElementsById(elements) {
 // inPlace: update previous.elements itself instead of copying it (copying 100,000 entries costs more than the
 // re-check); the returned object is still a new one, so callers can tell that the results changed.
 export function recheckElements(previous, rawModel, allRules, ids, { inPlace = false } = {}) {
-  const rules = allRules.filter((r) => !r.draft);
+  const { rules, drafts, invalid, shipTypes } = ruleSet(allRules);
   const local = rules.every((r) => LOCAL_CHECKS.has(r.check));
   const elementsRaw = rawModel?.__normalized ? null : rawModel?.elements;
-  if (!previous?.elements || !local || !Array.isArray(elementsRaw)) return checkModel(rawModel, allRules);
+  // Elements renamed or skipped by normalizeModel (duplicate or missing ids): only a full check keeps them apart.
+  if (!previous?.elements || !local || !Array.isArray(elementsRaw) || previous.model_issues?.length) return checkModel(rawModel, allRules);
   const wanted = [...new Set(ids)];
   const byRaw = rawElementsById(elementsRaw);
   if (wanted.some((id) => !previous.elements[id] || !byRaw.has(id))) return checkModel(rawModel, allRules);
@@ -844,7 +1019,7 @@ export function recheckElements(previous, rawModel, allRules, ids, { inPlace = f
   const k = UNIT_TO_MM[header.units];
   const edited = wanted.map((id) => normalizeElement(byRaw.get(id), k, header.decks[0]?.id));
   const model = { ...header, elements: edited };
-  const ctx = { model, byId: Object.fromEntries(edited.map((e) => [e.id, e])), deckById: Object.fromEntries(header.decks.map((d) => [d.id, d])) };
+  const ctx = { model, byId: Object.fromEntries(edited.map((e) => [e.id, e])), deckById: Object.fromEntries(header.decks.map((d) => [d.id, d])), shipTypes };
   const summary = { ...previous.summary };
   const elementSummary = { ...previous.element_summary };
   const elements = inPlace ? previous.elements : { ...previous.elements };
@@ -857,7 +1032,6 @@ export function recheckElements(previous, rawModel, allRules, ids, { inPlace = f
     elementSummary[after.worst ?? 'no_rule']++;
     elements[el.id] = after;
   }
-  const drafts = allRules.filter((r) => r.draft);
   return {
     ...previous,
     model: header.name,
@@ -865,6 +1039,7 @@ export function recheckElements(previous, rawModel, allRules, ids, { inPlace = f
     rule_count: rules.length,
     rules_verified: rules.filter((r) => r.verified === true).length,
     draft_rules: drafts.map((r) => ({ id: r.id, source: r.source, clause: r.clause, reason: r.draft_reason })),
+    invalid_rules: invalid,
     summary,
     element_summary: elementSummary,
     elements,

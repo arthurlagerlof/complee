@@ -6,7 +6,8 @@
 FROM node:20-alpine
 
 WORKDIR /app
-ENV NODE_ENV=production PORT=8080 MODEL_DIR=/app/model
+# HOST=0.0.0.0: reachable from the Caddy container (the server listens on 127.0.0.1 by default).
+ENV NODE_ENV=production PORT=8080 HOST=0.0.0.0 MODEL_DIR=/app/model
 
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force

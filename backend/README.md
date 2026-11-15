@@ -422,6 +422,15 @@ Manual integration check:
 4. Open the existing evidence intake, select files and a design revision, extract candidates, inspect/edit their evidence and fields, approve individual facts and candidates, and import. Verify via `GET /api/v1/design-revisions/{revision_id}/components` and `/facts`.
 5. To change the AI target, update the existing `text_component_extraction` task configuration; if that task is absent, the upload workflow uses the backend-managed Gemini model. There is no automatic fallback after a configured provider fails.
 
-AI management endpoints currently follow the backend's existing API convention and **do not have authentication/authorization middleware**. Do not expose this backend or the provider-management UI to untrusted networks. Add the deployment's authentication and user authorization before production exposure. Remote-provider access is restricted by the explicit outbound host allowlist, but that is not a substitute for network isolation.
+**Access** (`app/core/access.py`). Without `BACKEND_API_TOKEN` the backend serves this computer only: a loopback
+connection to a loopback host name, without proxy headers. With `BACKEND_API_TOKEN` (at least 24 characters) set, other
+computers are served when they send `Authorization: Bearer <token>`; the ShipCheck viewer server sends it when it has
+the same setting (environment or `shipcheck/.env`). In both cases a request that changes something (POST, PATCH,
+DELETE) is refused when another website sends it: its `Origin` must be in `FRONTEND_ORIGINS` or the backend's own.
+`GET /health` stays public. This is one shared secret for trusted servers, not user accounts: the token must never be
+put into a browser page (the landing page calls the backend from the browser, so those features work only on the
+computer that runs the backend), and per-user authorization, needed before people other than the operator use the
+backend from their own computers, is not implemented. Remote-provider access is restricted by the explicit outbound
+host allowlist, but that is not a substitute for network isolation.
 
 Current limitations: PDF, spreadsheet, DWG, STEP, IFC and other unlisted parsers; background jobs; per-user authorization; and live Ollama/PostgreSQL demonstration are not implemented. Upload processing is synchronous. Source bytes and deterministic parser output are retained in the app database; AI prompts and provider error bodies are not. Automated tests mock provider HTTP calls and do not need a live Ollama server. Do not run Alembic migrations against production from development.

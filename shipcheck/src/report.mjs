@@ -6,6 +6,7 @@ import { commentEvidence, commentSummary, COMMENT_STATUS_LABEL, EVIDENCE_LABEL }
 import { scoreLine } from './score.mjs';
 import { traceMatrix, cellLabel } from './trace.mjs';
 import { DISPOSITION_LABEL, manualRows, manualSummary } from './dispositions.mjs';
+import { csvCell } from './csv.mjs';
 
 const LABEL = { compliant: 'No deviation found', non_compliant: 'Non-compliant', not_enough_info: 'Not enough info' };
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -58,7 +59,7 @@ ${m.rows.map((r) => `<tr><td><b>${esc(r.id)}</b> ${esc(r.name)}</td>${m.rules.ma
 
 export function toCSV(rows) {
   const cols = Object.keys(rows[0] || { status: '' });
-  const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const q = csvCell; // quotes, and neutralises text Excel would run as a formula
   return '﻿' + [cols.join(','), ...rows.map((r) => cols.map((c) => q(r[c])).join(','))].join('\r\n');
 }
 
@@ -107,11 +108,19 @@ function verificationText(rule, verification) {
   return `${VERIFY_TEXT[v.label] ?? v.label}${who}${v.sources?.length ? ` (${v.sources.join('; ')})` : ''}`;
 }
 
+// Headline of the readiness check (report and viewer). "Ready to submit" only when nothing blocks and every applicable
+// rule was decided; with undecided checks it says so instead.
+export function readinessTitle(r) {
+  if (!r.ready) return `✗ Not ready to submit: ${r.blockers} blocker${r.blockers === 1 ? '' : 's'}`;
+  if (!r.complete) return `⚠ No blockers, but ${r.undecided.toLocaleString('en')} rule check${r.undecided === 1 ? '' : 's'} undecided`;
+  return '✓ Ready to submit';
+}
+
 // Submission readiness: open work before this revision can go to class or flag.
 export function readinessSection({ results, register, comments, rules, edits }) {
   const r = readiness({ results, register: register || {}, comments: comments || [], rules, edits });
   return `<h2>Submission readiness</h2>
-<div class="badge ${r.ready ? 'ok' : 'bad'}">${r.ready ? '✓ Ready to submit' : `✗ Not ready: ${r.blockers} blocker${r.blockers === 1 ? '' : 's'}`}${r.warnings ? ` · ${r.warnings} warning${r.warnings === 1 ? '' : 's'}` : ''}</div>
+<div class="badge ${r.complete ? 'ok' : 'bad'}">${readinessTitle(r)}${r.warnings ? ` · ${r.warnings} warning${r.warnings === 1 ? '' : 's'}` : ''}</div>
 ${r.items.length ? `<table><tr><th>Level</th><th>Count</th><th>Open work</th></tr>${r.items.map((i) => `<tr><td class="${i.level === 'blocker' ? 'nc' : 'ni'}">${i.level}</td><td>${i.count}</td><td>${esc(i.text)}</td></tr>`).join('')}</table>` : ''}
 <p class="muted">Counts open work only. Compliance is decided by the rule check and, finally, by class and flag.</p>`;
 }

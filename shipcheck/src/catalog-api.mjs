@@ -25,7 +25,9 @@ export async function fetchCatalog(sourceKey, { fetchImpl, signal } = {}) {
     fetchImpl = fetch;
   }
   const url = `${catalogApiBase()}/api/v1/shipcheck/catalog/${sourceKey}`;
-  const response = await fetchImpl(url, { signal, cache: 'no-store' });
+  // Backend access token (backend/app/core/access.py), when this process has one (Node only).
+  const token = typeof process !== 'undefined' ? process.env?.BACKEND_API_TOKEN : '';
+  const response = await fetchImpl(url, { signal, cache: 'no-store', ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}) });
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`ShipCheck catalog ${sourceKey} returned ${response.status}${body ? `: ${body}` : ''}`);

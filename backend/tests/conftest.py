@@ -1,3 +1,4 @@
+import re
 import uuid
 
 import pytest
@@ -153,6 +154,20 @@ def api_client(monkeypatch):
         yield client
     app.dependency_overrides.clear()
     test_engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _test_client_counts_as_local():
+    """Starlette's TestClient connects as host "testclient" to "testserver": treat it as this computer, as a browser
+    on localhost would be. tests/test_access.py restores the real values to test the access rules themselves.
+    Own MonkeyPatch, so a test calling monkeypatch.undo() does not drop it."""
+    from app.core import access
+
+    patch = pytest.MonkeyPatch()
+    patch.setattr(access, "LOCAL_CLIENTS", access.LOCAL_CLIENTS | {"testclient"})
+    patch.setattr(access, "LOCAL_HOST", re.compile(access.LOCAL_HOST.pattern.replace("localhost|", "localhost|testserver|", 1), re.IGNORECASE))
+    yield
+    patch.undo()
 
 
 @pytest.fixture(autouse=True)

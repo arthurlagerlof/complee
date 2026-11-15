@@ -447,6 +447,7 @@ table.register tr.warn td { background: #fffaf0; }
 .ready { margin-top: 6px; border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 12px; background: #fff; }
 .ready.bad { border-color: #f3b4b4; background: #fff8f8; }
 .ready.ok { border-color: #bfe3cc; background: #f3fbf6; }
+.ready.part { border-color: #f0d49a; background: #fffaf0; }
 .ready > summary { cursor: pointer; font-weight: 600; }
 .ready ul { margin: 6px 0; padding-left: 16px; }
 .ready li.blocker a { color: #9b2c2c; }

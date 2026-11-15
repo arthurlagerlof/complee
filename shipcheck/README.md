@@ -79,9 +79,12 @@ works and shows the AI as unavailable.
 | Setting (`shipcheck/.env` or environment) | Purpose |
 | --- | --- |
 | `PORT` | Server port (default 8080). |
+| `HOST` | Network interface (default `127.0.0.1`: this computer only). The Docker image sets `0.0.0.0` so the Caddy container can reach it. |
+| `TRUST_PROXY` | `true` behind a proxy that sets `X-Real-IP` (the shipped Caddy setup): the rate limit then uses that address. Off by default, so clients cannot pick their own address. |
 | `SHIPCHECK_DATA_API_URL` | Read the catalog from the database API instead of `catalog/`. |
 | `AI_API_URL` | Backend for AI and rule verification (default `http://127.0.0.1:8000`). |
-| `AI_ALLOW_REMOTE`, `VERIFY_ALLOW_REMOTE`, `CONVERT_ALLOW_REMOTE` | `true` opens AI, rule verification and Revit conversion to other computers; by default only the computer running ShipCheck may use them (they cost money or hold licensed texts). |
+| `BACKEND_API_TOKEN` | The backend's access token, sent with every backend call. Needed only when the backend runs on another computer; set the same value in `backend/.env`. Never sent to the browser. |
+| `AI_ALLOW_REMOTE`, `VERIFY_ALLOW_REMOTE`, `CONVERT_ALLOW_REMOTE` | `true` opens AI, rule verification and Revit conversion to other computers; by default only the computer running ShipCheck may use them (they cost money or hold licensed texts). "This computer" means: a loopback connection, a loopback host name, no proxy header, and a request from ShipCheck's own pages; requests that change something are refused when another website sends them (`src/request-guard.mjs`). |
 | `APS_CLIENT_ID`, `APS_CLIENT_SECRET` | Autodesk Platform Services app for the Revit conversion. |
 | `EVIDENCE_PROVIDER` | `none` turns off the SOLAS passage search on the evidence page. |
 | `ALLOWED_ORIGINS` | Origins allowed for cross-origin calls (default: localhost). |

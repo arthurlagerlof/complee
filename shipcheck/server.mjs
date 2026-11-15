@@ -18,9 +18,12 @@ import { isIP } from 'node:net';
 import { bundledCatalogEnabled, readBundledCatalog, LOCAL_CATALOG_FILES, catalogDir } from './src/catalog-local.mjs';
 import crypto from 'node:crypto';
 import { createRvtConverter, MAX_RVT_BYTES } from './src/rvt-convert.mjs';
+import { isLocalRequest, originAllowed, contentTypeIs, clientAddress as addressOf, safeForwardPath } from './src/request-guard.mjs';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8080);
+// Network interface. Default: this computer only (127.0.0.1). A container or a server behind a proxy sets HOST=0.0.0.0.
+const HOST = process.env.HOST || '127.0.0.1';
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 // Catalog source. An explicit SHIPCHECK_DATA_API_URL selects the database-backed API. Without it the bundled
 // catalog in shipcheck/catalog/ is used, so the viewer runs on its own (no database, no network).
@@ -35,16 +38,12 @@ const modelRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 4_000 
 const staticRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 600 });
 const checkRateLimit = createRateLimiter({ windowMs: 60_000, maxRequests: 30 });
 
-function clientAddress(req) {
-  const cloudflareIp = process.env.TRUST_CLOUDFLARE_TUNNEL === 'true'
-    ? String(req.headers['cf-connecting-ip'] || '').trim()
-    : '';
-  const forwarded = cloudflareIp || String(req.headers['x-real-ip'] || '').trim();
-  const address = forwarded.startsWith('::ffff:') ? forwarded.slice(7) : forwarded;
-  if (isIP(address)) return address;
-  const remote = String(req.socket?.remoteAddress || 'unknown');
-  return remote.startsWith('::ffff:') ? remote.slice(7) : remote;
-}
+// Forwarding headers count only behind a declared proxy (TRUST_PROXY=true for the shipped Caddy setup).
+const clientAddress = (req) => addressOf(req, {
+  trustProxy: process.env.TRUST_PROXY === 'true',
+  trustCloudflare: process.env.TRUST_CLOUDFLARE_TUNNEL === 'true',
+  isIP: (a) => isIP(a) !== 0,
+});
 
 function applyRateLimit(req, res, pathname) {
   if (req.method === 'OPTIONS') return true;
@@ -66,7 +65,7 @@ const localCatalog = readBundledCatalog;
 const localCatalogCache = new Map(); // sourceKey -> { stamp, entry }
 function localCatalogEntry(sourceKey) {
   let stamp = null;
-  if (sourceKey !== 'scenarios' && LOCAL_CATALOG_FILES[sourceKey]) {
+  if (sourceKey !== 'scenarios' && Object.hasOwn(LOCAL_CATALOG_FILES, sourceKey)) {
     try { const st = fs.statSync(path.join(catalogDir(), LOCAL_CATALOG_FILES[sourceKey])); stamp = `${st.size}-${st.mtimeMs}`; } catch { stamp = null; }
   }
   const hit = stamp && localCatalogCache.get(sourceKey);
@@ -103,8 +102,22 @@ export function streamManifest(modelDir = MODEL_DIR) {
 const s3Config = s3ConfigFrom(process.env, process.env.NODE_TEST_CONTEXT ? null : path.join(ROOT, '.env'));
 const s3Model = s3Config ? createS3ModelSource(s3Config, { cacheDir: path.resolve(ROOT, process.env.MODEL_CACHE_DIR || '.cache/model-s3') }) : null;
 
+// Access token of the backend (backend/app/core/access.py). The backend serves this computer without it; with
+// BACKEND_API_TOKEN set on both sides it also serves a viewer on another computer. Read from the environment or
+// shipcheck/.env into a private variable; never logged, never sent to the browser.
+let backendToken = process.env.BACKEND_API_TOKEN || '';
+if (!backendToken && !process.env.NODE_TEST_CONTEXT && fs.existsSync(path.join(ROOT, '.env'))) {
+  const m = fs.readFileSync(path.join(ROOT, '.env'), 'utf8').match(/^\s*BACKEND_API_TOKEN\s*=\s*(.*?)\s*$/m);
+  if (m) backendToken = m[1].replace(/^(['"])(.*)\1$/, '$2');
+}
+// fetch for backend calls: adds the token when there is one.
+const backendFetch = (url, init = {}) => fetch(url, backendToken
+  ? { ...init, headers: { ...(init.headers || {}), Authorization: `Bearer ${backendToken}` } }
+  : init);
+
 // Official regulation text per rule from the regulation database, via the backend API (REGULATION_API_URL).
 const regulationText = createRegulationText({
+  fetchImpl: backendFetch,
   linksProvider: () => databaseCatalog('regulation-links'),
   ruleIds: async () => (await databaseCatalog('rules')).rules.map((r) => r.id),
   apiBase: process.env.REGULATION_API_URL || SHIPCHECK_DATA_API_URL || 'http://127.0.0.1:8000',
@@ -173,7 +186,9 @@ const rvtConverter = createRvtConverter({
 const OLE_MAGIC = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]); // Revit files are OLE compound files
 
 async function receiveRvt(req, res, url) {
-  if (process.env.CONVERT_ALLOW_REMOTE !== 'true' && !isLoopback(req)) return sendJSON(res, 403, { error: 'Revit conversion is only available on the computer that runs Complee.' });
+  if (process.env.CONVERT_ALLOW_REMOTE !== 'true' && !isLoopback(req)) { req.resume(); return sendJSON(res, 403, { error: 'Revit conversion is only available on the computer that runs Complee.' }); }
+  // A binary content type is not a "simple" request: a browser asks first (CORS preflight), so other sites cannot upload.
+  if (!contentTypeIs(req, 'application/octet-stream')) { req.resume(); return sendJSON(res, 415, { error: 'Send the Revit file as application/octet-stream.' }); }
   if (!rvtConverter.configured()) {
     req.resume();
     return sendJSON(res, 503, { error: 'Revit conversion needs Autodesk Platform Services keys (APS_CLIENT_ID and APS_CLIENT_SECRET in shipcheck/.env). Without them, export the model from Revit as IFC (File > Export > IFC) and open the .ifc file.' });
@@ -212,16 +227,18 @@ async function receiveRvt(req, res, url) {
 const AI_API_URL = (process.env.AI_API_URL || process.env.SHIPCHECK_DATA_API_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
 async function forwardAssist(req, res, name) {
   if (process.env.AI_ALLOW_REMOTE !== 'true' && !isLoopback(req)) return sendJSON(res, 403, { error: 'AI assistance is only available on the computer that runs Complee.' });
+  if (req.method !== (name === 'status' ? 'GET' : 'POST')) return sendJSON(res, 405, { error: 'Method not allowed' });
   let body;
   try {
     body = req.method === 'POST' ? JSON.stringify(await readBody(req, 400_000)) : undefined;
   } catch (e) {
-    return sendJSON(res, 400, { error: e.message });
+    return bodyError(req, res, e);
   }
   try {
-    const upstream = await fetch(`${AI_API_URL}/api/v1/ai/assist/${name}`, {
+    const upstream = await backendFetch(`${AI_API_URL}/api/v1/ai/assist/${name}`, {
       method: req.method, body, headers: body ? { 'Content-Type': 'application/json' } : {},
-      signal: AbortSignal.timeout(180_000),
+      // The status check must answer quickly (the top bar waits for it); an answer may take minutes.
+      signal: AbortSignal.timeout(name === 'status' ? 10_000 : 180_000),
     });
     const text = await upstream.text();
     let data = null;
@@ -243,14 +260,16 @@ async function forwardAssistStream(req, res, name) {
   if (process.env.AI_ALLOW_REMOTE !== 'true' && !isLoopback(req)) return sendJSON(res, 403, { error: 'AI assistance is only available on the computer that runs Complee.' });
   if (name === 'status' || req.method !== 'POST') return sendJSON(res, 405, { error: 'Method not allowed' });
   let body;
-  try { body = JSON.stringify(await readBody(req, 400_000)); } catch (e) { return sendJSON(res, 400, { error: e.message }); }
+  try { body = JSON.stringify(await readBody(req, 400_000)); } catch (e) { return bodyError(req, res, e); }
   const abort = new AbortController();
   res.on('close', () => abort.abort()); // the viewer went away: stop paying for the answer
   let upstream;
   try {
-    upstream = await fetch(`${AI_API_URL}/api/v1/ai/assist/${name}/stream`, {
+    // A backend that accepts the connection but never starts answering must not hold the request forever.
+    const noAnswer = setTimeout(() => abort.abort(), 60_000);
+    upstream = await backendFetch(`${AI_API_URL}/api/v1/ai/assist/${name}/stream`, {
       method: 'POST', body, headers: { 'Content-Type': 'application/json' }, signal: abort.signal,
-    });
+    }).finally(() => clearTimeout(noAnswer));
   } catch {
     return sendJSON(res, 503, { error: 'The AI service is not running. Start the backend (cd backend; .venv\\Scripts\\python -m uvicorn app.main:app --port 8000).' });
   }
@@ -270,7 +289,7 @@ async function forwardAssistStream(req, res, name) {
 // Rule verification (sources, rule versions, quoted evidence, verifications) lives in the backend database. It holds
 // licensed regulation texts and records who verified what, so it is open to this computer only unless
 // VERIFY_ALLOW_REMOTE=true (put it behind authentication before that).
-async function forwardVerification(req, res, rest) {
+async function forwardVerification(req, res, rest, search = '') {
   if (process.env.VERIFY_ALLOW_REMOTE !== 'true' && !isLoopback(req)) return sendJSON(res, 403, { error: 'Rule verification is only available on the computer that runs Complee.' });
   if (!['GET', 'POST'].includes(req.method)) return sendJSON(res, 405, { error: 'Method not allowed' });
   let body;
@@ -278,10 +297,10 @@ async function forwardVerification(req, res, rest) {
     // Source documents arrive base64-encoded: up to 40 MB of file, about 55 MB of JSON.
     body = req.method === 'POST' ? JSON.stringify(await readBody(req, 56_000_000)) : undefined;
   } catch (e) {
-    return sendJSON(res, 400, { error: e.message });
+    return bodyError(req, res, e);
   }
   try {
-    const upstream = await fetch(`${AI_API_URL}/api/v1/rule-verification/${rest}`, {
+    const upstream = await backendFetch(`${AI_API_URL}/api/v1/rule-verification/${rest}${search}`, {
       method: req.method, body, headers: body ? { 'Content-Type': 'application/json' } : {}, signal: AbortSignal.timeout(180_000),
     });
     const text = await upstream.text();
@@ -298,8 +317,11 @@ async function forwardVerification(req, res, rest) {
   }
 }
 
-const isLoopback = (req) => ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req?.socket?.remoteAddress);
+// "This computer only": loopback socket, loopback Host, no proxy headers, not sent by another site (request-guard.mjs).
+const isLoopback = (req) => isLocalRequest(req, ALLOWED_ORIGINS);
 const localOnly = (req) => { if (!isLoopback(req)) throw Object.assign(new Error('Only available on this computer'), { status: 403 }); };
+// Routes that are local only: refused before their body is read.
+const LOCAL_ROUTES = new Set(['POST /api/evidence/review', 'POST /api/aps/fallback', 'GET /api/aps/token']);
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.js': 'text/javascript',
@@ -317,6 +339,9 @@ const STATIC = [
   ['/model/', process.env.MODEL_DIR || 'model'],
   ['/', 'public'],
 ];
+// File types served below a prefix (others: 404). The model folder can hold the source model (.nwd, .rvt, IFC) next
+// to the exported tiles; only what the viewer loads is served, as in model-server.mjs.
+const STATIC_TYPES = { '/model/': new Set(['.glb', '.json']) };
 const MODEL_CATALOG_BY_FILE = {
   'ships/rcrv/parts.json': 'model-rcrv-parts',
   'ships/rcrv/rcrv-3d.meta.json': 'model-rcrv-meta',
@@ -337,12 +362,37 @@ function sendJSON(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
+// JSON request body. Errors carry an HTTP status. Past the limit the rest of the body is not kept in memory (before,
+// one oversized request grew a string until the process ran out of memory and stopped). The body is collected as
+// bytes, so a character split between two network packets is not damaged. application/json is required: browsers
+// send it only after a CORS preflight, which other websites do not pass.
 function readBody(req, limit = 200_000) {
   return new Promise((resolve, reject) => {
-    let data = '';
-    req.on('data', (c) => { data += c; if (data.length > limit) reject(new Error('Request too large')); });
-    req.on('end', () => { try { resolve(data ? JSON.parse(data) : {}); } catch { reject(new Error('Invalid JSON')); } });
+    const fail = (status, message) => reject(Object.assign(new Error(message), { status }));
+    if (!contentTypeIs(req, 'application/json')) { req.resume(); return fail(415, 'Send the request body as application/json.'); }
+    const declared = Number(req.headers['content-length']);
+    if (Number.isFinite(declared) && declared > limit) { req.resume(); return fail(413, 'Request too large'); }
+    const chunks = [];
+    let size = 0, over = false;
+    req.on('data', (c) => {
+      if (over) return;
+      size += c.length;
+      if (size > limit) { over = true; chunks.length = 0; fail(413, 'Request too large'); return; }
+      chunks.push(c);
+    });
+    req.on('error', () => fail(400, 'The request was interrupted.'));
+    req.on('end', () => {
+      if (over) return;
+      const text = Buffer.concat(chunks).toString('utf8');
+      try { resolve(text ? JSON.parse(text) : {}); } catch { fail(400, 'Invalid JSON'); }
+    });
   });
+}
+// Answer a body error; after "too large" the connection is closed instead of reading the rest.
+function bodyError(req, res, e) {
+  if (e.status === 413) res.setHeader('Connection', 'close');
+  sendJSON(res, e.status || 400, { error: e.message });
+  if (e.status === 413) res.on('finish', () => req.destroy());
 }
 
 // Static files: content-addressed model tiles are immutable (cached for a year); everything else is revalidated with
@@ -355,7 +405,8 @@ async function serveStatic(p, res, req) {
     if (!p.startsWith(prefix)) continue;
     const base = path.resolve(ROOT, dir);
     const candidate = path.normalize(path.join(base, p.slice(prefix.length) || 'index.html'));
-    if (candidate.startsWith(base + path.sep) || candidate === base) file = candidate;
+    const typeOk = !STATIC_TYPES[prefix] || STATIC_TYPES[prefix].has(path.extname(candidate).toLowerCase());
+    if (typeOk && (candidate.startsWith(base + path.sep) || candidate === base)) file = candidate;
     break;
   }
   let stat = null;
@@ -448,7 +499,7 @@ function catalogEntry(sourceKey) {
     const cached = catalogCache.get(sourceKey);
     const target = new URL(`/api/v1/shipcheck/catalog/${sourceKey}`, SHIPCHECK_DATA_API_URL);
     const headers = cached?.etag ? { 'If-None-Match': cached.etag } : {};
-    const upstream = await fetch(target, { headers, signal: AbortSignal.timeout(90_000) });
+    const upstream = await backendFetch(target, { headers, signal: AbortSignal.timeout(90_000) });
     if (upstream.status === 304 && cached) return cached;
     const body = Buffer.from(await upstream.arrayBuffer());
     const entry = {
@@ -515,6 +566,7 @@ export async function handleRequest(req, res) {
     return sendJSON(res, 400, { error: 'Invalid request path.' });
   }
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
   // CORS: headers only for allowed origins; preflight answered here (204 allowed, 403 not allowed).
   const origin = req.headers.origin;
   const cors = corsHeaders(origin, ALLOWED_ORIGINS);
@@ -524,6 +576,12 @@ export async function handleRequest(req, res) {
     return res.end();
   }
   if (!applyRateLimit(req, res, p)) return;
+  // Anything but reading must come from this site or an allowed origin: another web page in the engineer's browser
+  // must not be able to spend AI credits, write verification records or upload files.
+  if (req.method !== 'GET' && req.method !== 'HEAD' && !originAllowed(req, ALLOWED_ORIGINS)) {
+    req.resume();
+    return sendJSON(res, 403, { error: 'Requests from other websites are not accepted.' });
+  }
   const catalogMatch = /^\/api\/catalog\/([a-z0-9-]+)$/.exec(p);
   if (req.method === 'GET' && catalogMatch) {
     if (!LOCAL_CATALOG && !SHIPCHECK_DATA_API_URL) {
@@ -549,8 +607,11 @@ export async function handleRequest(req, res) {
     }
   }
   if (req.method === 'POST' && p === '/api/convert/rvt') return receiveRvt(req, res, url);
-  const verifyMatch = /^\/api\/rule-verification\/([\w\-./@%]+)$/.exec(p);
-  if (verifyMatch && !verifyMatch[1].includes('..')) return forwardVerification(req, res, verifyMatch[1]);
+  const verifyMatch = /^\/api\/rule-verification\/(.+)$/.exec(p);
+  if (verifyMatch) {
+    if (!safeForwardPath(verifyMatch[1])) return sendJSON(res, 404, { error: 'Unknown rule verification path.' });
+    return forwardVerification(req, res, verifyMatch[1], url.search);
+  }
   const assistMatch = /^\/api\/assist\/(status|explain-finding|escape-suggestions|comment-reply)(\/stream)?$/.exec(p);
   if (assistMatch) return assistMatch[2] ? forwardAssistStream(req, res, assistMatch[1]) : forwardAssist(req, res, assistMatch[1]);
   const convertMatch = /^\/api\/convert\/jobs\/([0-9a-f-]{36})(\/ifc)?$/.exec(p);
@@ -564,11 +625,16 @@ export async function handleRequest(req, res) {
       'Content-Disposition': `attachment; filename="${job.name.replace(/\.rvt$/i, '')}.ifc"` });
     return fs.createReadStream(file).pipe(res);
   }
-  const handler = routes[`${req.method} ${p}`];
+  const key = `${req.method} ${p}`;
+  const handler = Object.hasOwn(routes, key) ? routes[key] : null;
   if (handler) {
+    if (LOCAL_ROUTES.has(key) && !isLoopback(req)) { req.resume(); return sendJSON(res, 403, { error: 'Only available on this computer' }); }
     try {
       const limit = p === '/api/aps/fallback' ? 8_000_000 : p === '/api/evidence/review' ? 12_000_000 : 200_000;
-      const body = req.method === 'POST' ? await readBody(req, limit) : undefined;
+      let body;
+      if (req.method === 'POST') {
+        try { body = await readBody(req, limit); } catch (e) { return bodyError(req, res, e); }
+      }
       return sendJSON(res, 200, await handler(url.searchParams, body, req));
     } catch (e) {
       const code = e.status || 500;
@@ -587,6 +653,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   if (e.code !== 'EADDRINUSE') throw e;
   console.error(`Port ${PORT} is already in use: Complee (or another program) is already running there. Open http://localhost:${PORT}, or stop the other process, or start on another port: set PORT=8090 (PowerShell: $env:PORT=8090).`);
   process.exit(1);
-}).listen(PORT, () => {
-  console.log(`Open http://localhost:${PORT}`);
+}).listen(PORT, HOST, () => {
+  console.log(`Open http://localhost:${PORT}${HOST === '127.0.0.1' ? ' (this computer only; set HOST=0.0.0.0 to serve other computers)' : ` (listening on ${HOST})`}`);
 });

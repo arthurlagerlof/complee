@@ -3,7 +3,8 @@
 import { checkModel, recheckElements, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK, coverageOf } from './src/checker.mjs';
 import { scoreResults, scoreLine, badgeText } from './src/score.mjs';
 import { partsToModel } from './src/parts-model.mjs';
-import { reportRows, toCSV, toHTML } from './src/report.mjs';
+import { reportRows, toCSV, toHTML, readinessTitle } from './src/report.mjs';
+import { csvCell } from './src/csv.mjs';
 import { traceMatrix, traceCSV, cellLabel } from './src/trace.mjs';
 import { createViewer, STATUS_HEX } from './viewer3d.js';
 import { analyzeEscape, ESCAPE_LABEL } from './src/escape.mjs';
@@ -341,7 +342,7 @@ async function loadScenario(id) {
     const decks = S.norm.decks;
     $('#deck').innerHTML = `<option value="all">All decks</option>` +
       (decks.length > 1 ? `<option value="exploded">Exploded</option>` : '') +
-      decks.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+      decks.map((d) => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('');
     S.filter.deck = '';
     S.filter.text = '';
     S.compare = null;
@@ -550,8 +551,8 @@ function readinessHTML() {
   if (S.precomputed) return '';
   const r = readinessOf();
   const line = (i) => `<li class="${i.level}"><a href="#" class="readyGo" data-id="${esc(i.id)}"><b>${i.count}</b> ${esc(i.text)}</a></li>`;
-  return `<details class="ready ${r.ready ? 'ok' : 'bad'}" id="readyBox" ${readinessOpen ? 'open' : ''}>
-    <summary>${r.ready ? '✓ Ready to submit' : `✗ Not ready to submit: ${r.blockers} blocker${r.blockers === 1 ? '' : 's'}`}${r.warnings ? ` · ${r.warnings} warning${r.warnings === 1 ? '' : 's'}` : ''}</summary>
+  return `<details class="ready ${r.complete ? 'ok' : r.ready ? 'part' : 'bad'}" id="readyBox" ${readinessOpen ? 'open' : ''}>
+    <summary>${readinessTitle(r)}${r.warnings ? ` · ${r.warnings} warning${r.warnings === 1 ? '' : 's'}` : ''}</summary>
     ${r.items.length ? `<ul>${r.items.map(line).join('')}</ul>` : '<p class="muted">No open work recorded for this revision.</p>'}
     <p class="muted">Counts open work only; compliance is decided by the rule check and, finally, by class and flag.</p>
     <div class="ready-actions"><button class="tiny" id="projSave" title="Findings register, manual-check confirmations and class comments as one file: back it up or hand it to a colleague">Save project file</button>
@@ -606,6 +607,14 @@ function goReadiness(item) {
   }
 }
 
+// Model elements the checker had to rename or skip, and rules it did not run: shown above the results, never hidden.
+function dataIssuesHTML() {
+  const m = S.results.model_issues || [], bad = S.results.invalid_rules || [];
+  if (!m.length && !bad.length) return '';
+  const list = (items) => `<ul>${items.slice(0, 8).map((t) => `<li>${esc(t)}</li>`).join('')}${items.length > 8 ? `<li>… ${items.length - 8} more</li>` : ''}</ul>`;
+  return `<div class="note">${m.length ? `<b>${m.length} model data error${m.length === 1 ? '' : 's'}</b>${list(m.map((i) => i.text))}` : ''}${bad.length ? `<b>${bad.length} rule${bad.length === 1 ? '' : 's'} not run (invalid)</b>${list(bad.map((r) => `${r.id}: ${r.errors.join('; ')}`))}` : ''}</div>`;
+}
+
 function renderSummary() {
   const s = S.results.summary, e = S.results.element_summary;
   $('#summary').innerHTML = `
@@ -615,6 +624,7 @@ function renderSummary() {
       <div class="pill st-compliant" title="No deviation in the rules checked automatically. This is not a statement of full compliance: see the manual checks.">${s.compliant}<small>no deviation</small></div>
     </div>
     <div class="muted">Rule checks per element. Elements: ${e.non_compliant} red, ${e.not_enough_info} amber, ${e.compliant} green, ${e.no_rule} without a rule. Checked in ${S.lastCheckMs.toFixed(1)} ms.</div>
+    ${dataIssuesHTML()}
     ${coverageHTML()}
     ${readinessHTML()}`;
   wireReadiness();
@@ -644,7 +654,7 @@ function renderFilters() {
   $('#filters').innerHTML = `<div class="chips">${chips}</div>
     <div class="filters-row">
       <select id="fFam"><option value="">All rule sources</option>${fams.map((f) => `<option ${S.filter.family === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>
-      <select id="fDeck"><option value="">All decks</option>${S.norm.decks.map((d) => `<option value="${d.id}" ${S.filter.deck === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>
+      <select id="fDeck"><option value="">All decks</option>${S.norm.decks.map((d) => `<option value="${esc(d.id)}" ${S.filter.deck === d.id ? 'selected' : ''}>${esc(d.name)}</option>`).join('')}</select>
     </div>
     <input id="fText" type="search" placeholder="Search id, name or type" value="${esc(S.filter.text ?? '')}" style="width:100%;margin-bottom:6px">`;
   $('#fText').oninput = (e) => { S.filter.text = e.target.value; listLimit = LIST_PAGE; renderList(); };
@@ -715,7 +725,7 @@ function renderDetail(id) {
   const e = S.results.elements[id], el = elById(id);
   $('#detail').innerHTML = `
     <h1>${esc(id)} · ${esc(el.name)}</h1>
-    <div class="muted">${esc(el.type)} · ${esc(deckName(el.deck))}${el.objectid != null ? ` · viewer dbId ${el.objectid}` : ''} · source: ${prov(el.source || S.model.source || 'not stated')}</div>
+    <div class="muted">${esc(el.type)} · ${esc(deckName(el.deck))}${el.objectid != null ? ` · viewer dbId ${esc(el.objectid)}` : ''} · source: ${prov(el.source || S.model.source || 'not stated')}</div>
     <div id="dStatus" style="margin-top:6px"></div>
     ${S.sc.viewer === 'local' ? '<button id="backOverview" class="tiny" style="margin-top:6px">← Back to the whole ship</button>' : ''}
     ${el.note ? `<div class="note"><b>Model note:</b> ${esc(el.note)}</div>` : ''}
@@ -899,7 +909,7 @@ function renderEscapeDetail(id) {
 }
 
 function exportEscapeCSV() {
-  const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const q = csvCell; // quotes, and neutralises text Excel would run as a formula
   const rows = [['room', 'name', 'deck', 'status', 'shortest_m', 'shortest_via', 'narrowest_clear_width_mm', 'narrowest_at', 'alternative_m', 'alternative_via']];
   for (const o of escapeRooms()) {
     const el = elById(o.id);

@@ -102,8 +102,11 @@ built by Netlify, `netlify.toml`). Commit messages describe what changed and why
 
 ## Deployment
 
-Landing page on Netlify: set `VITE_API_BASE_URL` to the public backend URL and `VITE_SHIPCHECK_REVIEW_URL` to the
-public ShipCheck URL. ShipCheck on a server (Vultr): see [shipcheck/README.md](./shipcheck/README.md#deploy-to-vultr).
-Backend: see [backend/README.md](./backend/README.md).
+Landing page on Netlify: set `VITE_SHIPCHECK_REVIEW_URL` to the public ShipCheck URL. The landing page's evidence and
+AI workspaces call the backend from the browser; the backend now refuses other computers unless they send its access
+token, which must never be put into a web page, so these workspaces work only where the backend runs (`VITE_API_BASE_URL`
+pointing at a public backend no longer works, by design). ShipCheck on a server (Vultr): see
+[shipcheck/README.md](./shipcheck/README.md#deploy-to-vultr); set the same `BACKEND_API_TOKEN` on ShipCheck and the
+backend when they run on different computers. Backend: see [backend/README.md](./backend/README.md#access).
 
 Created by team KEEP.

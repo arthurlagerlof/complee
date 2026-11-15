@@ -7,6 +7,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
 
 from app.api.routes import ai, assessments, assist, calculations, design, knowledge, regulations, rule_verification, shipcheck
+from app.core.access import AccessMiddleware
 from app.core.config import settings
 from app.db.database import engine
 from app.services.common import ConflictError, EntityNotFound, InvalidReference
@@ -24,6 +25,9 @@ app = FastAPI(
     debug=settings.debug,
 )
 
+# Access (innermost: CORS still answers preflights and labels refusals): this computer, or the access token; never
+# a state-changing request from another website. See app/core/access.py.
+app.add_middleware(AccessMiddleware, token=lambda: settings.backend_api_token, origins=lambda: settings.allowed_origins)
 # Catalog and assessment JSON compress 5-10x; the ShipCheck proxy and browsers both accept gzip.
 app.add_middleware(GZipMiddleware, minimum_size=2048)
 app.add_middleware(

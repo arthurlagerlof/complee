@@ -1610,6 +1610,7 @@
     "h": 2100
    },
    "props": {
+    "weathertight": { "value": false, "source": "interior door (named so in the model); stated so the Load Line sill rule is decided" },
     "clear_width": 1000,
     "zone": "circulation"
    }
@@ -1647,6 +1648,7 @@
     "h": 2100
    },
    "props": {
+    "weathertight": { "value": false, "source": "interior door (named so in the model); stated so the Load Line sill rule is decided" },
     "clear_width": 900
    }
   },
@@ -1664,6 +1666,7 @@
     "h": 2100
    },
    "props": {
+    "weathertight": { "value": false, "source": "interior door (named so in the model); stated so the Load Line sill rule is decided" },
     "clear_width": 900
    }
   },
@@ -1681,6 +1684,7 @@
     "h": 2000
    },
    "props": {
+    "weathertight": { "value": false, "source": "interior door (named so in the model); stated so the Load Line sill rule is decided" },
     "clear_width": 800
    }
   },
@@ -1698,6 +1702,7 @@
     "h": 2000
    },
    "props": {
+    "weathertight": { "value": false, "source": "interior door (named so in the model); stated so the Load Line sill rule is decided" },
     "clear_width": 800
    }
   },

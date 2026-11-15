@@ -1,6 +1,7 @@
 // Traceability matrix: parts x rules, one status per cell. Pure function, shared by the UI panel,
 // the HTML report and the CSV export, so all three show the same data.
 import { STATUS_RANK } from './checker.mjs';
+import { csvCell } from './csv.mjs';
 
 const ORDER = { non_compliant: 0, not_enough_info: 1, compliant: 2 };
 
@@ -33,7 +34,7 @@ const LABEL = { compliant: 'no deviation', non_compliant: 'non-compliant', not_e
 export const cellLabel = (st) => (st ? LABEL[st] : '');
 
 export function traceCSV(matrix) {
-  const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const q = csvCell; // quotes, and neutralises text Excel would run as a formula
   const head = ['part', 'name', 'group', ...matrix.rules.map((r) => r.id)];
   const lines = matrix.rows.map((r) => [r.id, r.name, r.deck, ...matrix.rules.map((c) => cellLabel(r.cells[c.id]))].map(q).join(','));
   return '﻿' + [head.map(q).join(','), ...lines].join('\r\n');

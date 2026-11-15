@@ -41,7 +41,8 @@ if [ "${MODEL_SOURCE:-}" = "vultr" ]; then
   # model tiles are streamed from the bucket: upload an empty model/ folder
   mkdir -p "$TMP/empty/model" && tar -cf "$TMP/model.tar" -C "$TMP/empty" model
 else
-  tar -cf "$TMP/model.tar" --exclude=model/source-coverage.json --exclude=model/tile-integrity.json -C "$SC" model
+  # Only what the viewer loads: never the source model (.nwd, .rvt, .ifc) that may sit in the same folder.
+  tar -cf "$TMP/model.tar" --exclude=model/source-coverage.json --exclude=model/tile-integrity.json --exclude="*.nwd" --exclude="*.rvt" --exclude="*.ifc" -C "$SC" model
 fi
 printf 'DOMAIN=%s\nALLOWED_ORIGINS=%s\nCADDY_BIND_ADDRESS=%s\nTRUST_CLOUDFLARE_TUNNEL=%s\nSHIPCHECK_DATA_API_URL=%s\nREGULATION_API_URL=%s\nMODEL_SOURCE=%s\nVULTR_S3_ENDPOINT=%s\nVULTR_S3_BUCKET=%s\nVULTR_S3_ACCESS_KEY=%s\nVULTR_S3_SECRET_KEY=%s\nVULTR_S3_REGION=%s\n' \
   "${DOMAIN:-}" "${ALLOWED_ORIGINS:-}" "${CADDY_BIND_ADDRESS:-}" "${TRUST_CLOUDFLARE_TUNNEL:-false}" "${SHIPCHECK_DATA_API_URL:-}" "${REGULATION_API_URL:-}" "${MODEL_SOURCE:-local}" "${VULTR_S3_ENDPOINT:-}" "${VULTR_S3_BUCKET:-}" \

@@ -1,4 +1,9 @@
 // Bounds-based streaming: retain complete exterior coverage, then refine visible regions.
+// Queries use indexes built once per manifest (tile-index.mjs), so their cost follows what is in view, not the size
+// of the ship: a spatial index over the detail tiles, part -> tiles, and the level-of-detail pyramid of the base layer.
+import { buildTileIndex, queryTiles, buildPartIndex, prepareLod, selectLod, projectedPixels, distanceSq } from './tile-index.mjs';
+
+export { projectedPixels };
 export function intersectsPlanes(bounds, planes) {
   return planes.every(
     ([x, y, z, w]) =>
@@ -9,17 +14,33 @@ export function intersectsPlanes(bounds, planes) {
       0,
   );
 }
-const distanceSq = (b, p) =>
-  b.min.reduce((s, x, k) => s + Math.max(x - p[k], 0, p[k] - b.max[k]) ** 2, 0);
 const cost = (c) => c.resident_bytes ?? c.decoded_bytes ?? c.bytes;
-const diagonal = (b) => Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
-// On-screen size of a tile in CSS pixels: its diagonal at its nearest distance from the eye. screenScale is
-// viewportHeightPx / (2 · tan(fov / 2)). Infinity when the eye is unknown or inside the tile.
-export function projectedPixels(bounds, eye, screenScale) {
-  if (!eye || !screenScale) return Infinity;
-  const d = Math.sqrt(distanceSq(bounds, eye));
-  return d > 0 ? (diagonal(bounds) * screenScale) / d : Infinity;
+const groupClass = (c) => (c.group === "context" ? 0 : c.group === "rest" ? 1 : 2);
+
+// Everything derived from a manifest, built on first use and kept as long as the manifest object lives.
+const PREPARED = new WeakMap();
+export function prepareManifest(manifest) {
+  let p = PREPARED.get(manifest);
+  if (p && p.chunks === manifest.chunks) return p;
+  const context = manifest.chunks.filter((c) => c.group === "context");
+  const overview = manifest.overview?.chunks || [];
+  const lod = {
+    overview: overview.length ? prepareLod(manifest.lod?.trees?.overview, overview) : null,
+    context: prepareLod(manifest.lod?.trees?.context, context),
+  };
+  // Parent of every tile that takes part in a pyramid (node or source tile), for the viewer's level transitions.
+  const lodParent = new Map();
+  const lodNodes = [];
+  for (const tree of [lod.overview, lod.context]) {
+    if (!tree) continue;
+    for (const [name, up] of tree.parent) lodParent.set(name, up);
+    for (const n of tree.nodes) if (n.file) lodNodes.push(n);
+  }
+  p = { chunks: manifest.chunks, index: buildTileIndex(manifest.chunks), parts: buildPartIndex(manifest.chunks), context, lod, lodParent, lodNodes };
+  PREPARED.set(manifest, p);
+  return p;
 }
+
 export function selectViewportTiles(manifest, options) {
   const {
     planes = [],
@@ -42,13 +63,17 @@ export function selectViewportTiles(manifest, options) {
     // covers the ship). Tiles already loaded stay down to keep_ratio of it, so zooming does not make them flicker.
     min_detail_screen_px: 56,
     detail_keep_ratio: 0.6,
+    // Base layer with a level-of-detail pyramid: a coarse tile stands in while its error is below this on screen,
+    // and the base layer as a whole stays below max_base_triangles (it gets coarser instead of heavier).
+    lod_pixel_error: manifest.lod?.pixel_error ?? 4,
+    max_base_triangles: 2500000,
     ...manifest.streaming,
     ...options.budget,
   };
+  const prep = prepareManifest(manifest);
   // A component is atomic: never silently omit some of its tiles to fit a budget.
   if (selectedDb !== null) {
-    // tilesByDb (dbId -> tiles, built once by the viewer) avoids scanning every tile's part list per query.
-    const tiles = options.tilesByDb?.get(selectedDb) ?? manifest.chunks.filter((c) => c.dbIds.includes(selectedDb)),
+    const tiles = options.tilesByDb?.get(selectedDb) ?? prep.parts.get(selectedDb) ?? [],
       bytes = tiles.reduce((s, c) => s + cost(c), 0);
     if (bytes > cfg.max_resident_bytes)
       return {
@@ -81,6 +106,8 @@ export function selectViewportTiles(manifest, options) {
       detail: true,
       detailTriangles: tiles.reduce((s, c) => s + c.triangles, 0) + (context.detailTriangles || 0),
       componentTiles: tiles.length,
+      baseTriangles: context.baseTriangles || 0,
+      lodError: context.lodError ?? null,
     };
   }
   const visible = (c) =>
@@ -89,9 +116,19 @@ export function selectViewportTiles(manifest, options) {
     fullModel && manifest.overview?.chunks?.length
       ? manifest.overview.chunks
       : null;
-  const base = (
-    exterior || manifest.chunks.filter((c) => c.group === "context")
-  ).filter(visible);
+  // Base layer: the pyramid's cut for this view when there is one, else every visible base tile.
+  const lod = exterior ? prep.lod.overview : prep.lod.context;
+  let base,
+    lodError = null;
+  if (lod) {
+    lodError = cfg.lod_pixel_error;
+    for (let attempt = 0; ; attempt++) {
+      base = selectLod(lod, { visible, eye, screenScale, pixelError: lodError, keepRatio: cfg.detail_keep_ratio, resident });
+      const triangles = base.reduce((s, c) => s + c.triangles, 0);
+      if (triangles <= cfg.max_base_triangles || attempt >= 5 || !eye || !screenScale) break;
+      lodError *= 1.6; // too heavy for this view: accept a coarser picture rather than an unbounded load
+    }
+  } else base = (exterior || prep.context).filter(visible);
   const detail =
     span <= cfg.detail_span_mm ||
     filterDbs !== null ||
@@ -100,28 +137,28 @@ export function selectViewportTiles(manifest, options) {
   // Selected parts (rule or findings filter) always load; everything else must be large enough on screen.
   const sizeRule = ruleDbs === null && filterDbs === null;
   let smallDeferred = 0;
-  const bigEnough = (c) => {
-    const limit = cfg.min_detail_screen_px * (resident?.has(c.name) ? cfg.detail_keep_ratio : 1);
-    if (projectedPixels(c.bounds_mm, eye, screenScale) >= limit) return true;
-    smallDeferred++;
-    return false;
-  };
-  const extras = detail
-    ? manifest.chunks.filter((c) => {
-        if (!visible(c) || (!exterior && c.group === "context")) return false;
-        if (
-          c.group === "rest" &&
-          (!fullModel || filterDbs !== null || ruleDbs !== null)
-        )
-          return false;
-        if (ruleDbs !== null && !c.dbIds.some((d) => ruleDbs.has(d)))
-          return false;
-        if (filterDbs !== null && !c.dbIds.some((d) => filterDbs.has(d)))
-          return false;
-        // Frustum-visible geometry is not cut by distance to the target, only by its own size on screen.
-        return !sizeRule || bigEnough(c);
-      })
-    : [];
+  let extras = [];
+  if (detail) {
+    // Tile groups in play: hull/deck context only next to an exterior overview; the unchecked rest only in the
+    // full model and never under a rule view or findings filter.
+    const classes = [!!exterior, fullModel && sizeRule, true];
+    if (sizeRule) {
+      // Frustum-visible geometry is not cut by distance to the target, only by its own size on screen.
+      const found = queryTiles(prep.index, { planes, cutHeight, classes, eye, screenScale, limit: cfg.min_detail_screen_px, keepRatio: cfg.detail_keep_ratio, resident });
+      extras = found.tiles;
+      smallDeferred = found.small;
+    } else {
+      // Only tiles that hold one of the selected parts: looked up by part when the selection is small.
+      const sets = [ruleDbs, filterDbs].filter(Boolean).sort((a, b) => a.size - b.size);
+      const candidates = sets[0].size < manifest.chunks.length ? prep.parts.union(sets[0]) : manifest.chunks;
+      extras = candidates.filter((c) => {
+        if (!visible(c) || !classes[groupClass(c)]) return false;
+        if (ruleDbs !== null && !c.dbIds.some((d) => ruleDbs.has(d))) return false;
+        if (filterDbs !== null && !c.dbIds.some((d) => filterDbs.has(d))) return false;
+        return true;
+      });
+    }
+  }
   const near = (a, b) =>
     distanceSq(a.bounds_mm, target) - distanceSq(b.bounds_mm, target) ||
     a.name.localeCompare(b.name);
@@ -132,6 +169,7 @@ export function selectViewportTiles(manifest, options) {
   const tiles = [];
   let bytes = 0,
     detailTriangles = 0,
+    baseTriangles = 0,
     overviewDeferred = 0;
   for (const c of base) {
     if (bytes + cost(c) > cfg.max_resident_bytes) {
@@ -140,6 +178,7 @@ export function selectViewportTiles(manifest, options) {
     }
     tiles.push(c);
     bytes += cost(c);
+    baseTriangles += c.triangles;
   }
   for (const c of extras) {
     if (
@@ -160,7 +199,10 @@ export function selectViewportTiles(manifest, options) {
     smallDeferred,
     detail,
     detailTriangles,
+    baseTriangles,
     hasExterior: !!exterior,
+    // Pixel error the base layer was selected with (null: no pyramid); above lod_pixel_error = coarsened for budget.
+    lodError,
   };
 }
 // Continuous camera events must not keep postponing requests.
@@ -193,13 +235,11 @@ export function viewportScheduler(
 export function selectFocusTiles(manifest, box, options = {}) {
   const { cutHeight = Infinity, fullModel = true, eye = null, screenScale = null, resident = null } = options;
   const cfg = { min_detail_screen_px: 56, detail_keep_ratio: 0.6, max_focus_triangles: 8000000, ...manifest.streaming, ...options.budget };
-  const inside = (b) => b.min[1] <= cutHeight && [0, 1, 2].every((k) => b.max[k] >= box.min[k] && b.min[k] <= box.max[k]);
-  const candidates = manifest.chunks.filter((c) => (fullModel || c.group !== 'rest') && inside(c.bounds_mm));
-  const size = new Map(candidates.map((c) => [c, projectedPixels(c.bounds_mm, eye, screenScale)]));
-  const bigEnough = (c) => size.get(c) >= cfg.min_detail_screen_px * (resident?.has(c.name) ? cfg.detail_keep_ratio : 1);
-  const wanted = candidates
-    .filter(bigEnough)
-    .sort((a, b) => (Number.isFinite(size.get(a)) && Number.isFinite(size.get(b)) ? size.get(b) - size.get(a) : 0) || a.name.localeCompare(b.name));
+  const found = queryTiles(prepareManifest(manifest).index, { box, cutHeight, classes: [true, fullModel, true], eye, screenScale, limit: cfg.min_detail_screen_px, keepRatio: cfg.detail_keep_ratio, resident });
+  const size = new Map(found.tiles.map((c) => [c, projectedPixels(c.bounds_mm, eye, screenScale)]));
+  const wanted = found.tiles.sort(
+    (a, b) => (Number.isFinite(size.get(a)) && Number.isFinite(size.get(b)) ? size.get(b) - size.get(a) : 0) || a.name.localeCompare(b.name),
+  );
   const tiles = [];
   let triangles = 0;
   for (const c of wanted) {
@@ -207,6 +247,5 @@ export function selectFocusTiles(manifest, box, options = {}) {
     tiles.push(c);
     triangles += c.triangles;
   }
-  const smallDeferred = candidates.length - wanted.length;
-  return { tiles, triangles, smallDeferred, budgetDeferred: wanted.length - tiles.length };
+  return { tiles, triangles, smallDeferred: found.small, budgetDeferred: wanted.length - tiles.length };
 }

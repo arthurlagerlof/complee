@@ -116,7 +116,7 @@
       "text": "Ramp runs shall have a running slope not steeper than 1:12.",
       "text_status": "paraphrase",
       "basis": "explicit",
-      "check": "max", "parameter": "slope", "value": 0.0833, "unit": "ratio",
+      "check": "max", "parameter": "slope", "value": 0.08333333333333333, "unit": "ratio",
       "applies_to": { "types": ["ramp"], "where": { "accessible_route": true }, "ship": { "type_in": ["passenger"], "operating_area_any": ["US"] } },
       "related": ["ADA-403.5.1"],
       "verified": false, "review_status": "reviewed by Meyer mentors (Q&A, 7 Nov)",

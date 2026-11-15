@@ -44,8 +44,11 @@ test('no replacement when the replacing rule does not apply or its applicability
   const other = checkModel(model(870, { type: { value: 'passenger' }, flag: { value: 'NO' } }), rules).elements.C1;
   assert.deepEqual(other.results.map((r) => [r.rule_id, r.status]), [['INTL', 'non_compliant']]);
   const unknown = checkModel(model(870), rules).elements.C1;
-  assert.deepEqual(unknown.results.map((r) => [r.rule_id, r.status]), [['NAT', 'not_enough_info'], ['INTL', 'non_compliant']]);
+  // NAT may or may not apply (flag unknown); the design meets it either way, but it cannot exempt INTL.
+  assert.deepEqual(unknown.results.map((r) => [r.rule_id, r.status, r.applicability]), [['NAT', 'compliant', 'unknown'], ['INTL', 'non_compliant', undefined]]);
   assert.deepEqual(unknown.superseded, []);
+  const unknownLow = checkModel(model(800), rules).elements.C1;
+  assert.deepEqual(unknownLow.results.map((r) => [r.rule_id, r.status]), [['NAT', 'not_enough_info'], ['INTL', 'non_compliant']]);
   const applies = checkModel(model(870, { type: { value: 'passenger' }, flag: { value: 'DE' } }), rules).elements.C1;
   assert.deepEqual(applies.superseded.map((x) => [x.rule_id, x.type]), [['INTL', 'exempts']]);
 });

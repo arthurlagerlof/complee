@@ -31,7 +31,7 @@ export function bundledCatalogEnabled() {
 }
 
 export function hasBundledCatalog(sourceKey) {
-  const file = LOCAL_CATALOG_FILES[sourceKey];
+  const file = Object.hasOwn(LOCAL_CATALOG_FILES, sourceKey) ? LOCAL_CATALOG_FILES[sourceKey] : null; // not "constructor" & co.
   return !!file && fs.existsSync(path.join(catalogDir(), file));
 }
 

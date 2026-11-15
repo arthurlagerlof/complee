@@ -61,12 +61,12 @@
 
     { "id": "D1", "type": "door", "name": "Door cabin 5001",
       "geom": { "x": 1800, "y": 6550, "lx": 900, "ly": 100, "h": 2100 },
-      "props": { "clear_width": 850, "accessible_route": true } },
+      "props": { "weathertight": { "value": false, "source": "interior door (named so in the model); stated so the Load Line sill rule is decided" }, "clear_width": 850, "accessible_route": true } },
     { "id": "D2", "type": "door", "name": "Door accessible cabin 5003",
       "geom": { "x": 6200, "y": 6550, "lx": 800, "ly": 100, "h": 2100 },
-      "props": { "clear_width": 760, "accessible_route": true } },
+      "props": { "weathertight": { "value": false, "source": "interior door (named so in the model); stated so the Load Line sill rule is decided" }, "clear_width": 760, "accessible_route": true } },
     { "id": "D3", "type": "door", "name": "Door aft lounge",
       "geom": { "x": 17000, "y": 4150, "lx": 1200, "ly": 100, "h": 2100 },
-      "props": { "accessible_route": true } }
+      "props": { "weathertight": { "value": false, "source": "interior door (named so in the model); stated so the Load Line sill rule is decided" }, "accessible_route": true } }
   ]
 }

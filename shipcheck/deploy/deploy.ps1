@@ -47,7 +47,8 @@ try {
     New-Item -ItemType Directory -Force (Join-Path $Tmp 'empty\model') | Out-Null
     tar -cf (Join-Path $Tmp 'model.tar') -C (Join-Path $Tmp 'empty') model
   } else {
-    tar -cf (Join-Path $Tmp 'model.tar') --exclude=model/source-coverage.json --exclude=model/tile-integrity.json -C $Sc model
+    # Only what the viewer loads: never the source model (.nwd, .rvt, .ifc) that may sit in the same folder.
+    tar -cf (Join-Path $Tmp 'model.tar') --exclude=model/source-coverage.json --exclude=model/tile-integrity.json --exclude='*.nwd' --exclude='*.rvt' --exclude='*.ifc' -C $Sc model
   }
   if ($LASTEXITCODE -ne 0) { throw 'tar failed' }
   $modelSource = if ($FromBucket) { 'vultr' } else { 'local' }

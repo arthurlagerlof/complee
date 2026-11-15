@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     debug: bool = False
     database_url: str | None = None
     frontend_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Access token for requests from other computers (app/core/access.py). Unset: this computer only.
+    backend_api_token: str | None = Field(default=None, min_length=24)
     embedding_model: str = "BAAI/bge-m3"
     embedding_model_revision: str = "5617a9f61b028005a4858fdac845db406aefb181"
     embedding_device: str = "cpu"
@@ -54,6 +56,12 @@ class Settings(BaseSettings):
     ai_cost_profile: str = "fast"
     ai_chain_step_timeout_seconds: float = Field(default=45, gt=0, le=600)
     ai_chain_max_tokens: int = Field(default=8000, ge=256, le=64000)
+
+    @field_validator("backend_api_token", mode="before")
+    @classmethod
+    def _empty_token_is_none(cls, value):
+        # "BACKEND_API_TOKEN=" (as in .env.example) means: no token, this computer only.
+        return None if value is None or not str(value).strip() else str(value).strip()
 
     @property
     def allowed_origins(self) -> list[str]:

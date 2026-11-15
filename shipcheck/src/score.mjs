@@ -11,8 +11,12 @@ import { findingsOf } from './checker.mjs';
 const key = (f) => `${f.element}|${f.rule ?? f.rule_id}`;
 
 export function scoreResults(results, expected) {
-  const actual = new Map(findingsOf(results).map((f) => [key(f), f]));
   const expectedKeys = new Set(expected.findings.map(key));
+  // Findings whose rule may not apply (a value its scope depends on is missing) are open questions, not detections or
+  // false alarms: they are counted apart, unless the ground truth lists them by name.
+  const all = findingsOf(results);
+  const scopeOpen = all.filter((f) => f.applicability === 'unknown' && !expectedKeys.has(key(f)));
+  const actual = new Map(all.filter((f) => !scopeOpen.includes(f)).map((f) => [key(f), f]));
   const detected = [], missed = [], wrongStatus = [];
   for (const e of expected.findings) {
     const a = actual.get(key(e));
@@ -50,18 +54,21 @@ export function scoreResults(results, expected) {
     bulk,
     bulk_failed: bulkFailed,
     bulk_findings: bulk.reduce((s, b) => s + b.count, 0),
+    scope_open: scopeOpen.length,
     pass: !missed.length && !wrongStatus.length && !falseAlarms.length && passes.every((p) => p.ok) && !bulkFailed.length,
   };
 }
+
+const scopeNote = (s) => (s.scope_open ? `; ${s.scope_open.toLocaleString('en')} further check${s.scope_open === 1 ? '' : 's'} open because the model does not say whether the rule applies` : '');
 
 export function scoreLine(s) {
   const fa = `${s.false_alarms.length} false alarm${s.false_alarms.length === 1 ? '' : 's'}`;
   if (s.bulk?.length) {
     return `${s.detected}/${s.expected} hand-checked findings detected, ${s.bulk.length - s.bulk_failed.length}/${s.bulk.length} finding counts match an independent scan` +
-      ` (${s.bulk_findings.toLocaleString('en')} findings), ${fa}` + (s.passes_expected ? `, ${s.passes_ok}/${s.passes_expected} expected passes` : '');
+      ` (${s.bulk_findings.toLocaleString('en')} findings), ${fa}` + (s.passes_expected ? `, ${s.passes_ok}/${s.passes_expected} expected passes` : '') + scopeNote(s);
   }
   return `${s.detected}/${s.expected} expected findings detected, ${fa}` +
-    (s.passes_expected ? `, ${s.passes_ok}/${s.passes_expected} expected passes` : '');
+    (s.passes_expected ? `, ${s.passes_ok}/${s.passes_expected} expected passes` : '') + scopeNote(s);
 }
 
 // Short form for the top-bar badge: "7/7 expected findings, 0 false alarms".

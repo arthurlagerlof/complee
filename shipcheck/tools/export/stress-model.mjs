@@ -1,6 +1,7 @@
 // Large synthetic model for load tests: the production tile layout (hp: float32 positions per tile, 8-bit normals
 // with opacity, dbId bytes, meshopt) at a size close to a real production model in part count.
-//   node tools/export/stress-model.mjs <outDir> [parts=200000]
+//   node tools/export/stress-model.mjs <outDir> [parts=200000] [length_m=120] [beam_m=18] [height_m=12] [checkedShare=0.3]
+// Cruise-ship scale, e.g.: node tools/export/stress-model.mjs work/cruise 2000000 360 48 60 0.02   (then build-lod.mjs)
 // Default: 200,000 parts, 9.6 million triangles, 70,000 checked parts in the catalog (as many as the real RCRV).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,8 +11,6 @@ import { MeshoptEncoder, MeshoptDecoder } from 'meshoptimizer';
 import { encode, writeGlb } from './synthetic-model.mjs';
 
 const CELL = 6000, PITCH = 400, SIZE = 300, N = 2, MAX_TRIS = 40000;
-const L = 120000, W = 18000, H = 12000;
-const NX = L / PITCH, NY = H / PITCH, NZ = W / PITCH;
 const VERTS = 6 * (N + 1) * (N + 1), TRIS = 6 * N * N * 2;
 // Deterministic hash in [0, 1).
 const rnd = (i) => { let x = Math.imul(i ^ 0x9e3779b9, 0x85ebca6b); x ^= x >>> 13; x = Math.imul(x, 0xc2b2ae35); x ^= x >>> 16; return (x >>> 0) / 4294967296; };
@@ -80,7 +79,9 @@ function writeTile(dir, name, group, parts) {
   return { name, file, group, source_chunk: group, bytes: glb.length, decoded_bytes: resident, resident_bytes: resident, vertices: nv, triangles: nt, parts: parts.length, dbIds: parts.map((p) => p.dbId), bounds_mm: { min, max } };
 }
 
-export async function writeStressModel(outDir, { parts: wanted = 200000 } = {}) {
+export async function writeStressModel(outDir, { parts: wanted = 200000, length = 120, beam = 18, height = 12, checkedShare = 0.3 } = {}) {
+  const L = length * 1000, W = beam * 1000, H = height * 1000;
+  const NX = L / PITCH, NY = H / PITCH, NZ = W / PITCH;
   await Promise.all([MeshoptEncoder.ready, MeshoptDecoder.ready]);
   const dir = path.join(outDir, 'stream-hp');
   fs.mkdirSync(dir, { recursive: true });
@@ -94,7 +95,7 @@ export async function writeStressModel(outDir, { parts: wanted = 200000 } = {}) 
     if (!shell && rnd(slot) > fill) continue;
     dbId++;
     const r = rnd(slot + 7919);
-    const group = shell ? 'context' : r < 0.3 ? 'checked' : 'rest';
+    const group = shell ? 'context' : r < checkedShare ? 'checked' : 'rest';
     const at = [ix * PITCH - L / 2, iy * PITCH - H / 2, iz * PITCH - W / 2];
     const key = `${group}-${Math.floor(at[0] / CELL)}_${Math.floor(at[1] / CELL)}_${Math.floor(at[2] / CELL)}`;
     if (!cells.has(key)) cells.set(key, { group, parts: [] });
@@ -128,7 +129,7 @@ export async function writeStressModel(outDir, { parts: wanted = 200000 } = {}) 
       { id: 'TEST-MATERIAL', source: 'test rule set', clause: 'A.2', text: 'Plating is carbon steel.', check: 'in_set', parameter: 'material_family', values: ['carbon steel'], verified: false, applies_to: { types: ['plate'] } },
     ] },
     'model-rcrv-parts': { name: 'Load-test ship (parts)', source: { file: 'synthetic.nwd', model_unit: 'mm' }, counts: { objects: dbId, kept: catalogParts.length }, parts: catalogParts },
-    'model-rcrv-meta': { name: 'Load-test ship', ship: { type: { value: 'research vessel', source: 'test' }, length_overall: { value: 120, unit: 'm', source: 'test' } } },
+    'model-rcrv-meta': { name: 'Load-test ship', ship: { type: { value: 'research vessel', source: 'test' }, length_overall: { value: length, unit: 'm', source: 'test' } } },
     'regulation-links': { database: 'none', loaded_instruments: 'none', method: 'none', rules: {} },
   };
   fs.writeFileSync(path.join(outDir, 'catalog.json'), JSON.stringify(catalog));
@@ -137,6 +138,6 @@ export async function writeStressModel(outDir, { parts: wanted = 200000 } = {}) 
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const t0 = Date.now();
-  const r = await writeStressModel(path.resolve(process.argv[2] || 'work/stress-model'), { parts: Number(process.argv[3]) || 200000 });
+  const r = await writeStressModel(path.resolve(process.argv[2] || 'work/stress-model'), { parts: Number(process.argv[3]) || 200000, length: Number(process.argv[4]) || 120, beam: Number(process.argv[5]) || 18, height: Number(process.argv[6]) || 12, checkedShare: process.argv[7] ? Number(process.argv[7]) : 0.3 });
   console.log(`${r.parts.toLocaleString('en')} parts (${r.checked.toLocaleString('en')} checked), ${r.triangles.toLocaleString('en')} triangles, ${r.tiles} tiles, ${(r.bytes / 1e6).toFixed(1)} MB, manifest ${(fs.statSync(path.join(process.argv[2] || 'work/stress-model', 'stream-hp/manifest.json')).size / 1e6).toFixed(1)} MB, ${Math.round((Date.now() - t0) / 1000)} s`);
 }

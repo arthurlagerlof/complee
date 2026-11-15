@@ -40,13 +40,31 @@ test('open work is counted as blockers and warnings; cleared work disappears', (
   assert.deepEqual(ids(r), { missing_info: 1, unverified: 1 });
   // Without that justification the reply and the design disagree: a blocker.
   const unjustified = withDisposition(register, w, { disposition: 'fix', note: '' });
-  assert.equal(ids(readiness({ results, register: unjustified, comments: comments.comments, rules: RULES })).contradicted, 1);
+  const planned = readiness({ results, register: unjustified, comments: comments.comments, rules: RULES });
+  assert.equal(ids(planned).contradicted, 1);
+  // A design change that is only planned leaves the deviation in the design: it blocks the submission.
+  assert.equal(ids(planned).fix_planned, 1);
+  assert.equal(planned.ready, false);
 
   const fixed = checkModel(model(950), RULES);
   r = readiness({ results: fixed, register, comments: comments.comments, rules: RULES });
   assert.equal(r.ready, true);
+  // Nothing blocks, but one rule check is undecided: never shown as plainly "Ready to submit".
+  assert.equal(r.complete, false);
   assert.deepEqual(ids(r), { missing_info: 1, unverified: 1 });
-  assert.match(toHTML({ title: 't', scenario: 's', results: fixed, model: model(950), rules: RULES, register, comments: comments.comments }), /✓ Ready to submit · 2 warnings/);
+  const html = toHTML({ title: 't', scenario: 's', results: fixed, model: model(950), rules: RULES, register, comments: comments.comments });
+  assert.match(html, /No blockers, but 1 rule check undecided · 2 warnings/);
+  assert.doesNotMatch(html, /✓ Ready to submit/);
+});
+
+test('an empty or broken check is never ready: no results, model data errors, invalid rules', () => {
+  const empty = readiness({ results: { elements: {} }, rules: RULES });
+  assert.equal(empty.ready, false);
+  assert.equal(ids(empty).nothing_checked, 1);
+  const results = checkModel({ ...model(950), elements: [...model(950).elements, { ...model(950).elements[0] }] }, RULES);
+  assert.equal(ids(readiness({ results, rules: RULES })).model_issues, 1);
+  const bad = { id: 'BAD', source: 's', clause: 'c', text: 't', check: 'min', parameter: 'clear_width', value: null, unit: 'mm', applies_to: { types: ['corridor'] }, verified: false };
+  assert.equal(ids(readiness({ results: checkModel(model(950), [...RULES, bad]), rules: RULES })).invalid_rules, 1);
 });
 
 test('project file round trip; foreign or broken files are refused or flagged', () => {

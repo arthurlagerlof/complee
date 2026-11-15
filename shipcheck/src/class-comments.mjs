@@ -4,6 +4,7 @@
 //
 // store: { comments: [{ id, ref, text, document, received, revision, links: { elements, rules },
 //                       status, response, responsible, updated, created }] }
+import { csvCell } from './csv.mjs';
 
 export const COMMENT_STATUSES = [
   { id: 'open', label: 'Open' },
@@ -206,7 +207,7 @@ export function commentSummary(comments, results, register = {}) {
 
 /** Comment resolution sheet (CSV), one row per comment. */
 export function commentsCSV(comments, results) {
-  const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const q = csvCell; // quotes, and neutralises text Excel would run as a formula
   const head = ['ref', 'document', 'received', 'comment', 'elements', 'rules', 'rule_check_now', 'status', 'response', 'responsible', 'updated', 'revision_received'];
   const lines = (comments ?? []).map((c) => {
     const ev = results ? commentEvidence(c, results) : { state: 'unlinked' };

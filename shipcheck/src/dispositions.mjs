@@ -5,6 +5,7 @@
 // store: { "<element>|<rule>": { disposition, responsible, note, updated, measured, status } }
 // Manual checks share the store: { kind: 'manual', done, responsible, note, updated } under the same key form.
 import { findingsOf, manualChecksOf } from './checker.mjs';
+import { csvCell } from './csv.mjs';
 
 export const DISPOSITIONS = [
   { id: 'open', label: 'Open' },
@@ -53,7 +54,8 @@ export function registerRows(results, store = {}) {
       measured: measuredText(f), required: f.required,
       disposition, responsible: d?.responsible ?? '', note: d?.note ?? '', updated: d?.updated ?? '',
       // The design value or the result changed after the disposition was written: it must be looked at again.
-      stale: !!d && disposition !== 'open' && (d.measured !== measuredText(f) || d.status !== f.status),
+      // A changed requirement (rule value or rule text edited) also makes it stale: an acceptance for 380 mm does not cover 600 mm.
+      stale: !!d && disposition !== 'open' && (d.measured !== measuredText(f) || d.status !== f.status || (d.required != null && d.required !== f.required)),
       missing_note: needsNote(disposition) && !String(d?.note ?? '').trim(),
       resolved: false,
     });
@@ -99,7 +101,7 @@ export function withDisposition(store, finding, patch, now = new Date()) {
 const STATUS_LABEL = { non_compliant: 'Non-compliant', not_enough_info: 'Not enough info', compliant: 'Resolved (no finding now)' };
 
 export function registerCSV(rows) {
-  const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const q = csvCell; // quotes, and neutralises text Excel would run as a formula
   const head = ['status', 'element', 'name', 'deck', 'rule', 'measured', 'required', 'disposition', 'responsible', 'note', 'updated', 'revision', 'review_again'];
   const lines = rows.map((r) => [STATUS_LABEL[r.status], r.element, r.name, r.deck, r.rule_id, r.measured, r.required,
     DISPOSITION_LABEL[r.disposition], r.responsible, r.note, r.updated, r.revision, r.stale ? 'yes: value changed since the disposition' : ''].map(q).join(','));

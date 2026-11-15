@@ -195,11 +195,15 @@ test('IGF rules do not apply to MGO tanks', () => {
 
 test('count_min ignores ids that do not exist or have the wrong type', () => {
   const m = clone(RCRV);
-  m.elements.find((e) => e.id === '01-Z1').props.escape_routes = ['MD-ST1', 'NOPE', 'MD-WETLAB'];
+  m.elements.find((e) => e.id === '01-Z1').props.escape_routes = ['MD-ST1', 'MD-WETLAB'];
   const r = resultOf(checkModel(m, RULES), '01-Z1', 'SOLAS-II-2-13-ESCAPE-ACCOM');
   assert.equal(r.status, 'non_compliant');
-  assert.match(r.explanation, /NOPE not found/);
   assert.match(r.explanation, /MD-WETLAB not counted/);
+  // Too few counted while a listed route is not in the model: it may exist in the design, so the result is open.
+  m.elements.find((e) => e.id === '01-Z1').props.escape_routes = ['MD-ST1', 'NOPE', 'MD-WETLAB'];
+  const open = resultOf(checkModel(m, RULES), '01-Z1', 'SOLAS-II-2-13-ESCAPE-ACCOM');
+  assert.equal(open.status, 'not_enough_info');
+  assert.match(open.explanation, /NOPE is listed but not in the model/);
   m.elements.find((e) => e.id === '01-Z1').props.escape_routes = ['MD-ST1', '01-EXT1'];
   assert.equal(resultOf(checkModel(m, RULES), '01-Z1', 'SOLAS-II-2-13-ESCAPE-ACCOM').status, 'compliant');
 });

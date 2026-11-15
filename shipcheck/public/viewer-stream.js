@@ -5,6 +5,7 @@ import { createSceneOverlay } from "./viewer-scene.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import {
+  prepareManifest,
   selectFocusTiles,
   selectViewportTiles,
   viewportScheduler,
@@ -73,7 +74,8 @@ export async function createLocalViewer(
     throw new Error("The 3D viewer needs WebGL 2; this browser only offers WebGL 1");
   }
   // Keep GPU fill/fragment work bounded on high-DPI displays; screenshots still use the preserved drawing buffer.
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.25));
+  const PIXEL_RATIO = Math.min(devicePixelRatio, 1.25);
+  renderer.setPixelRatio(PIXEL_RATIO);
   renderer.setClearColor(0xeef1f5);
   renderer.localClippingEnabled = true;
   host.append(renderer.domElement);
@@ -90,9 +92,14 @@ export async function createLocalViewer(
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.15;
+  // The wheel zooms towards the point under the pointer, so a small part can be approached directly.
+  controls.zoomToCursor = true;
   const clipping = [];
   const overviewInfos = manifest.overview?.chunks || [];
-  const allInfos = [...manifest.chunks, ...overviewInfos];
+  // Indexes over the manifest (built once): spatial index, part -> tiles, level-of-detail pyramid of the base layer.
+  const prepared = prepareManifest(manifest);
+  const lodParent = prepared.lodParent;
+  const allInfos = [...manifest.chunks, ...overviewInfos, ...prepared.lodNodes];
   // ---------- per-part state (colour + visibility), one texel per dbId ----------
   // Every vertex carries its part's dbId (the tile's COLOR_0 bytes, bound unchanged as `partId`) and its source
   // opacity (`partOpacity`). The vertex shader looks the part's state up in a small texture, so a state change
@@ -102,7 +109,8 @@ export async function createLocalViewer(
   // 1..253 forced see-through alpha (rule-view context ghost), 0 hidden.
   const STATE_W = 2048;
   let maxDb = 0;
-  for (const c of allInfos) for (const db of c.dbIds) if (db > maxDb) maxDb = db;
+  // (Level-of-detail tiles list no parts of their own: they only hold parts of the tiles they stand in for.)
+  for (const c of allInfos) if (c.dbIds) for (const db of c.dbIds) if (db > maxDb) maxDb = db;
   const stateRows = Math.max(1, Math.ceil((maxDb + 1) / STATE_W));
   const stateData = new Uint8Array(STATE_W * stateRows * 4);
   const stateTexture = new THREE.DataTexture(stateData, STATE_W, stateRows, THREE.RGBAFormat, THREE.UnsignedByteType);
@@ -232,12 +240,7 @@ diffuseColor.a = ${alpha};
     desired = new Set(),
     failed = new Set(),
     infoByName = new Map(allInfos.map((c) => [c.name, c]));
-  const byDb = new Map();
-  for (const c of manifest.chunks)
-    for (const db of c.dbIds) {
-      if (!byDb.has(db)) byDb.set(db, []);
-      byDb.get(db).push(c);
-    }
+  const byDb = prepared.parts; // part -> detail tiles (get(dbId)), stored in typed arrays
   let idToDb = new Map(),
     dbToId = new Map(),
     context = new Set(),
@@ -257,10 +260,19 @@ diffuseColor.a = ${alpha};
   // view (outline and label inside the view, the part still large), all parts of a rule in the rule view.
   const MARGIN = { overview: 1.12, component: 3.2, rule: 1.15 };
   const cornersOf = (b) => { const out = []; for (const x of [b.min[0], b.max[0]]) for (const y of [b.min[1], b.max[1]]) for (const z of [b.min[2], b.max[2]]) out.push([x, y, z]); return out; };
-  // Component view frame: at least ~4.5 m around the part, so it is seen in its place in the ship.
+  // Component view frame: about three times the part, so a small part (a deck socket, a bracket, a valve) fills a good
+  // share of the view and its surroundings still show; at least 16 cm, and at most the former 4.5 m context for large
+  // parts (a part larger than that is framed on its own). Zooming out shows more of the ship around it.
   const contextBox = (b) => {
-    const size = b.getSize(new THREE.Vector3());
-    return b.clone().expandByScalar(Math.max(0, (4500 - Math.max(size.x, size.y, size.z)) / 2));
+    const size = b.getSize(new THREE.Vector3()), largest = Math.max(size.x, size.y, size.z);
+    const frame = Math.min(Math.max(largest * 3, 160), Math.max(largest, 4500));
+    return b.clone().expandByScalar(Math.max(0, (frame - largest) / 2));
+  };
+  // Height of the cut above the part: above the camera of the component view (no structure between camera and part),
+  // 15 cm for the smallest parts up to 1 m for large ones.
+  const cutAbove = (b) => {
+    const s = contextBox(b).getSize(new THREE.Vector3());
+    return Math.min(1000, Math.max(150, Math.max(s.x, s.y, s.z) * 0.9));
   };
   let framedPoints = null;
   let framedBox = null,
@@ -288,7 +300,13 @@ diffuseColor.a = ${alpha};
     residentTiles: 0,
     pending: 0,
     deferred: 0,
-    evicted: 0,
+    evicted: 0, // tiles that left the view (parked or released)
+    parked: 0, // of those, still held hidden for a quick return
+    destroyed: 0, // released from the GPU and the picking index
+    held: 0, // base tiles shown until the level of detail replacing them has loaded
+    baseTriangles: 0,
+    lodError: null,
+    lowResolution: false,
     errors: [],
     errorDetails: [],
     kind: "viewport",
@@ -382,6 +400,7 @@ diffuseColor.a = ${alpha};
   });
   controls.addEventListener("change", () => {
     viewRevision++;
+    cameraMoved = true;
     const d = camera.position.distanceTo(controls.target);
     const range = geometryDepthRange(camera.position, residentDepthBoxes(), d);
     camera.near = range.near;
@@ -392,7 +411,16 @@ diffuseColor.a = ${alpha};
     schedule();
   });
   void boundsScratch;
+  // Slow graphics hardware: while the camera moves and frames take longer than 50 ms, draw at 60 % resolution to stay
+  // responsive; the picture is sharpened again as soon as the camera rests.
+  let tick = 0, lastDrawTick = -2, lastDrawTime = 0, slowFrames = 0, lowRes = false, cameraMoved = false, sharpenAt = 0;
+  function setResolution(low) {
+    lowRes = low;
+    renderer.setPixelRatio(low ? PIXEL_RATIO * 0.6 : PIXEL_RATIO);
+    stats.lowResolution = low;
+  }
   renderer.setAnimationLoop(() => {
+    tick++;
     if (!active || gpuLost || !container.offsetParent) return;
     if (flight) {
       const k = Math.min(1, (performance.now() - flight.t0) / flight.ms),
@@ -402,6 +430,7 @@ diffuseColor.a = ${alpha};
       flight.done(e);
       controls.update();
       controls.enableDamping = damping;
+      cameraMoved = true;
       invalidate();
       if (k >= 1) {
         const f = flight;
@@ -411,10 +440,26 @@ diffuseColor.a = ${alpha};
     }
     controls.update();
     if (dirty) {
+      const now = performance.now();
+      if (cameraMoved && lastDrawTick === tick - 1) {
+        const dt = now - lastDrawTime;
+        stats.frameMs = stats.frameMs ? stats.frameMs * 0.8 + dt * 0.2 : dt;
+        if (dt > 50) slowFrames++;
+        else if (slowFrames > 0) slowFrames--;
+        if (slowFrames >= 4 && !lowRes) setResolution(true);
+      }
+      if (cameraMoved) sharpenAt = now + 300;
+      cameraMoved = false;
+      lastDrawTick = tick;
+      lastDrawTime = now;
       dirty = false;
       renderer.render(scene, camera);
       afterRender();
       placeLabel();
+    } else if (lowRes && performance.now() > sharpenAt) {
+      setResolution(false);
+      slowFrames = 0;
+      dirty = true;
     }
   });
   function showBox(box, html = labelHTML, status = labelStatus) {
@@ -430,13 +475,25 @@ diffuseColor.a = ${alpha};
     placeLabel();
     invalidate();
   }
+  // The label points at the top edge of the part as it appears on screen, so it never covers the part itself (a part
+  // framed large in the component view would otherwise disappear behind its own label).
+  const labelCorner = new THREE.Vector3();
   function placeLabel() {
     if (!labelAnchor || labelEl.hidden) return;
     const p = labelAnchor.clone().project(camera);
     labelEl.style.visibility =
       p.z > 1 || Math.abs(p.x) > 1 || Math.abs(p.y) > 1 ? "hidden" : "visible";
+    let top = p.y;
+    if (selectionBox && p.z <= 1) {
+      const b = selectionBox;
+      for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) {
+        labelCorner.set(x, y, z).project(camera);
+        if (labelCorner.z <= 1 && labelCorner.y > top) top = labelCorner.y;
+      }
+      top = Math.min(top, 0.92); // stay inside the view
+    }
     labelEl.style.left = `${((p.x + 1) / 2) * container.clientWidth}px`;
-    labelEl.style.top = `${((1 - p.y) / 2) * container.clientHeight}px`;
+    labelEl.style.top = `${((1 - top) / 2) * container.clientHeight}px`;
   }
   // points: corners of the real geometry (tile boxes), so the ship itself is centred, not its overall bounding box.
   // ms > 0: fly there smoothly (overview, rule view); 0: jump (first frame, resize).
@@ -532,40 +589,81 @@ diffuseColor.a = ${alpha};
     }
   }
   // All dbIds the model contains (every tile), so a full recompute covers tiles that are still to arrive.
-  const dbList = Uint32Array.from(new Set(allInfos.flatMap((c) => c.dbIds))).sort();
-  function colorState(db, isRest) {
-    const id = dbToId.get(db);
-    if (selectedDb !== null) return db === selectedDb ? 255 : 0;
-    if (override) return override.has(id) || context.has(db) ? 255 : 0;
-    if (filterDbs && !context.has(db) && !filterDbs.has(db)) return 0;
-    if (isRest && (!fullModel || filterDbs || override)) return 0;
-    return 255;
+  const dbList = (() => {
+    const mark = new Uint8Array(maxDb + 1);
+    let n = 0;
+    for (const c of allInfos) if (c.dbIds) for (const db of c.dbIds) if (!mark[db]) { mark[db] = 1; n++; }
+    const out = new Uint32Array(n);
+    for (let db = 0, i = 0; db <= maxDb; db++) if (mark[db]) out[i++] = db;
+    return out;
+  })();
+  // What the state of a part depends on, per dbId in typed arrays, so recomputing every part of a large ship is a
+  // tight loop (millions of parts in a few milliseconds) instead of several Map lookups per part:
+  //   partFlags   bit 1: the part is an element of the checked model (else untested "rest"); bit 2: hull/deck context
+  //   partStatus  the worst result of the element (index into STATUS; 0 = none)
+  //   ruleCode    rule view: 0 = not part of the rule, else status index + 1 (null: no rule view)
+  //   filterMask  findings filter: 1 = shown (null: no filter)
+  const STATUS = ["none", "non_compliant", "not_enough_info", "compliant", "context"];
+  const STATUS_CODE = Object.fromEntries(STATUS.map((k, i) => [k, i]));
+  const STATUS_COLOUR = STATUS.map((k) => LINEAR[k]);
+  const CONTEXT_CODE = STATUS_CODE.context, COMPLIANT_CODE = STATUS_CODE.compliant;
+  const partFlags = new Uint8Array(maxDb + 1), partStatus = new Uint8Array(maxDb + 1);
+  let ruleCode = null, filterMask = null;
+  // ids: element ids whose result changed (null: all).
+  function syncStatus(ids = null) {
+    if (ids) {
+      for (const id of ids) {
+        const db = idToDb.get(id);
+        if (db !== undefined && db <= maxDb) partStatus[db] = STATUS_CODE[results?.elements[id]?.worst] || 0;
+      }
+    } else {
+      partStatus.fill(0);
+      for (const [id, db] of idToDb) if (db <= maxDb) partStatus[db] = STATUS_CODE[results?.elements[id]?.worst] || 0;
+    }
+  }
+  function syncRule() {
+    ruleCode = null;
+    if (!override) return;
+    ruleCode = new Uint8Array(maxDb + 1);
+    for (const [id, st] of override) {
+      const db = idToDb.get(id);
+      if (db !== undefined && db <= maxDb) ruleCode[db] = (STATUS_CODE[st] || 0) + 1;
+    }
+  }
+  function syncFilter() {
+    filterMask = null;
+    if (!filterDbs) return;
+    filterMask = new Uint8Array(maxDb + 1);
+    for (const db of filterDbs) if (db <= maxDb) filterMask[db] = 1;
   }
   let ghostParts = 0; // parts with a forced see-through alpha (rule-view context): tiles then need the glass pass
   function writeState(db) {
-    const id = dbToId.get(db),
-      st = override?.get(id) ?? results?.elements[id]?.worst,
-      isRest = id === undefined;
+    const flags = partFlags[db], isRest = !(flags & 1), isContext = (flags & 2) !== 0;
+    const inRule = ruleCode ? ruleCode[db] : 0;
+    const st = inRule ? inRule - 1 : partStatus[db];
     // Rule view: only the rule's parts carry a status colour; the hull around them is neutral context, so the
     // result of that rule is what stands out (the parts' own results of other rules are not mixed in).
-    const ruleContext = override && !override.has(id) && !sceneMode;
+    const ruleContext = ruleCode !== null && !inRule && !sceneMode;
     // Component view: the selected part in its colour, the real ship around it solid and neutral (cut open above
     // the part), never a part alone.
     const selGhost = !sceneMode && selectedDb !== null && db !== selectedDb;
-    const col = LINEAR[
+    const col = STATUS_COLOUR[
       sceneMode || selGhost || ruleContext
-        ? "context"
+        ? CONTEXT_CODE
         : isRest
-          ? "none"
-          : simple && context.has(db) && (!st || st === "compliant")
-            ? "context"
-            : st || "none"
+          ? 0
+          : simple && isContext && (!st || st === COMPLIANT_CODE)
+            ? CONTEXT_CODE
+            : st
     ];
-    const shown = sceneMode
-      ? isRest && !fullModel ? 0 : 255
-      : selGhost
-        ? 255
-        : colorState(db, isRest);
+    let shown;
+    if (sceneMode) shown = isRest && !fullModel ? 0 : 255;
+    else if (selGhost) shown = 255;
+    else if (selectedDb !== null) shown = 255; // the selected part itself
+    else if (ruleCode) shown = inRule || isContext ? 255 : 0;
+    else if (filterMask && !isContext && !filterMask[db]) shown = 0;
+    else if (isRest && (!fullModel || filterMask)) shown = 0;
+    else shown = 255;
     let alpha = shown;
     // Rule view: the hull around the rule's parts is a light see-through ghost, so parts inside the ship show.
     if (ruleContext && alpha) alpha = 40;
@@ -588,7 +686,6 @@ diffuseColor.a = ${alpha};
   }
   // Extra passes per tile, created on demand and sharing the tile's geometry: see-through (source transparency or
   // ghosted parts) and x-ray (the tile holds the selected part).
-  let xrayFor = undefined, xrayNames = new Set();
   function extraPass(c, key, mat, order) {
     if (c[key]) return c[key];
     const pass = new THREE.Mesh(c.geom, mat);
@@ -601,27 +698,24 @@ diffuseColor.a = ${alpha};
     c[key] = pass;
     return pass;
   }
+  const tileParts = (c) => (c.dbSet ??= new Set(c.info.dbIds));
   function tileNeedsGlass(c) {
     if (c.transparentSource) return true;
     if (!ghostParts) return false;
-    for (const db of c.info.dbIds) {
+    for (const db of c.info.dbIds || tileParts(c)) {
       const a = stateData[db * 4 + 3];
       if (a > 0 && a < 254) return true;
     }
     return false;
   }
   function updatePasses(only = null) {
-    if (xrayFor !== selectedDb) {
-      xrayFor = selectedDb;
-      xrayNames = new Set();
-      if (selectedDb !== null) for (const info of allInfos) if (info.dbIds.includes(selectedDb)) xrayNames.add(info.name);
-    }
     const holdsSelected = !sceneMode && selectedDb !== null && stateData[selectedDb * 4 + 3] === 254;
     for (const c of only ? [only] : cache.values()) {
       const glass = tileNeedsGlass(c);
       if (glass) extraPass(c, "glass", glassMaterial, 2).visible = true;
       else if (c.glass) c.glass.visible = false;
-      const xray = holdsSelected && xrayNames.has(c.info.name);
+      // Only resident tiles are asked whether they hold the selected part (no scan of every tile of the ship).
+      const xray = holdsSelected && tileParts(c).has(selectedDb);
       if (xray) extraPass(c, "xray", xrayMaterial, 5).visible = true;
       else if (c.xray) c.xray.visible = false;
     }
@@ -805,6 +899,8 @@ diffuseColor.a = ${alpha};
         ready: false,
         glass: null,
         xray: null,
+        // Level-of-detail tiles carry no part list in the manifest: take it from the vertices.
+        dbSet: info.dbIds ? null : new Set(dbids),
       };
     for (const a of [
       geom.attributes.position,
@@ -818,6 +914,11 @@ diffuseColor.a = ${alpha};
     cache.set(info.name, c);
     workerChunks.set(c.key, c);
     updatePasses(c);
+    if (held.size) {
+      // Its coarser stand-in is still on screen: stay hidden until the whole replacement has arrived (next refresh).
+      if (coveredByHeld(info.name)) c.group.visible = false;
+      scheduler.request();
+    }
     // Put the tile on the GPU right away (a 1x1 off-screen draw): its picking index is then built in the background
     // and nothing is uploaded later in the middle of a rotation.
     const fc = mesh.frustumCulled;
@@ -847,16 +948,92 @@ diffuseColor.a = ${alpha};
       }
     });
   }
-  function evict(name) {
-    const c = cache.get(name);
-    if (!c) return;
+  // Tiles that leave the view are parked: hidden, but still on the GPU and in the picking index while memory allows.
+  // Turning back, or zooming out and in again, then shows them at once instead of downloading and decoding them again.
+  const parked = new Map(); // name -> tile, oldest first
+  let parkedBytes = 0;
+  const parkLimit = () => Math.min(256e6, (manifest.streaming?.max_resident_bytes ?? 512e6) / 2);
+  function destroy(c) {
     root.remove(c.group);
     c.geom.dispose();
     picker.postMessage({ type: "drop", id: c.key });
     workerChunks.delete(c.key);
-    cache.delete(name);
     c.resolveReady(false);
+    stats.destroyed++;
+  }
+  function evict(name, { keep = true } = {}) {
+    const c = cache.get(name);
+    if (!c) return;
+    cache.delete(name);
     stats.evicted++;
+    if (!keep || gpuLost) {
+      destroy(c);
+      return;
+    }
+    c.group.visible = false;
+    parked.set(name, c);
+    parkedBytes += c.info.resident_bytes;
+    for (const [n, p] of parked) {
+      if (parkedBytes <= parkLimit()) break;
+      parked.delete(n);
+      parkedBytes -= p.info.resident_bytes;
+      destroy(p);
+    }
+    stats.parked = parked.size;
+  }
+  function unpark(name) {
+    const c = parked.get(name);
+    if (!c) return false;
+    parked.delete(name);
+    parkedBytes -= c.info.resident_bytes;
+    stats.parked = parked.size;
+    c.group.visible = true;
+    cache.set(name, c);
+    updatePasses(c);
+    invalidate();
+    return true;
+  }
+  function dropParked() {
+    for (const c of parked.values()) destroy(c);
+    parked.clear();
+    parkedBytes = 0;
+    stats.parked = 0;
+  }
+  // Level-of-detail transitions of the base layer. A tile that the new view replaces by a finer or coarser one stays
+  // on screen ("held") until every tile replacing it has arrived, so the ship never shows a hole while it refines.
+  const lodRoots = new Set([prepared.lod.overview, prepared.lod.context].filter(Boolean).flatMap((t) => t.roots.map((r) => r.name)));
+  const isLod = (name) => lodParent.has(name) || lodRoots.has(name);
+  const held = new Set();
+  function coveredByHeld(name) {
+    for (let p = lodParent.get(name); p; p = lodParent.get(p)) if (held.has(p)) return true;
+    return false;
+  }
+  function holdReplacedTiles() {
+    held.clear();
+    if (!lodParent.size) return;
+    const missing = new Set(), aboveMissing = new Set();
+    for (const name of desired) {
+      if (cache.has(name) || !isLod(name)) continue;
+      missing.add(name);
+      for (let p = lodParent.get(name); p; p = lodParent.get(p)) aboveMissing.add(p);
+    }
+    if (missing.size)
+      for (const name of cache.keys()) {
+        if (desired.has(name) || !isLod(name)) continue;
+        let hold = aboveMissing.has(name); // a coarser tile standing in for finer ones that are still loading
+        for (let p = lodParent.get(name); p && !hold; p = lodParent.get(p)) hold = missing.has(p); // or the reverse
+        if (hold) held.add(name);
+      }
+    // A finer tile that has arrived stays hidden while its coarser stand-in is shown (never two surfaces at once).
+    for (const [name, c] of cache) {
+      if (!isLod(name)) continue;
+      const show = !(held.size && desired.has(name) && coveredByHeld(name));
+      if (c.group.visible !== show) {
+        c.group.visible = show;
+        invalidate();
+      }
+    }
+    stats.held = held.size;
   }
   function viewOptions() {
     camera.updateMatrixWorld();
@@ -903,6 +1080,8 @@ diffuseColor.a = ${alpha};
     stats.smallDeferred = plan.smallDeferred || 0;
     if (plan.componentUnavailable) geometryNotice = plan.componentUnavailable;
     stats.coverageComplete = plan.deferred === 0;
+    stats.baseTriangles = plan.baseTriangles || 0;
+    stats.lodError = plan.lodError ?? null;
     desired.clear();
     for (const c of plan.tiles) desired.add(c.name);
     if (focusBox) {
@@ -914,7 +1093,9 @@ diffuseColor.a = ${alpha};
     }
     for (const [name, r] of requests)
       if (!desired.has(name)) r.controller.abort();
-    for (const name of cache.keys()) if (!desired.has(name)) evict(name);
+    for (const name of desired) unpark(name);
+    holdReplacedTiles();
+    for (const name of [...cache.keys()]) if (!desired.has(name) && !held.has(name)) evict(name);
     pump();
     summary();
   }
@@ -940,7 +1121,7 @@ diffuseColor.a = ${alpha};
   function pump() {
     if (!active || gpuLost) return;
     // Tiles are small (tens of KB): keep several requests in flight even from a local disk server.
-    const max = Math.max(manifest.streaming.max_requests || 2, 4);
+    const max = Math.max(manifest.streaming?.max_requests || 2, 6);
     for (const name of desired) {
       if (requests.size >= max) break;
       if (cache.has(name) || requests.has(name) || failed.has(name)) continue;
@@ -1037,7 +1218,7 @@ diffuseColor.a = ${alpha};
     }
     const revision = viewRevision;
     const origin = ray.ray.origin.clone();
-    const targets = [...cache.values()].filter((c) => c.ready),
+    const targets = [...cache.values()].filter((c) => c.ready && c.group.visible),
       rays = targets.map((c) => {
         const inv = c.mesh.matrixWorld.clone().invert();
         return {
@@ -1093,7 +1274,9 @@ diffuseColor.a = ${alpha};
     viewRevision++;
     scheduler.cancel();
     for (const r of requests.values()) r.controller.abort();
-    for (const name of [...cache.keys()]) evict(name);
+    for (const name of [...cache.keys()]) evict(name, { keep: false });
+    dropParked();
+    held.clear();
     desired.clear();
     stats.viewComplete = false;
     geometryNotice = "Recovering 3D graphics";
@@ -1157,7 +1340,9 @@ diffuseColor.a = ${alpha};
         scheduler.cancel();
         for (const r of requests.values()) r.controller.abort();
         if (!keepTiles) {
-          for (const n of [...cache.keys()]) evict(n);
+          for (const n of [...cache.keys()]) evict(n, { keep: false });
+          dropParked();
+          held.clear();
           desired.clear();
         }
       } else schedule();
@@ -1177,6 +1362,12 @@ diffuseColor.a = ${alpha};
       results = r;
       override = null;
       filterDbs = null;
+      partFlags.fill(0);
+      for (const db of idToDb.values()) if (db <= maxDb) partFlags[db] |= 1;
+      for (const db of context) if (db != null && db <= maxDb) partFlags[db] |= 2;
+      syncStatus();
+      syncRule();
+      syncFilter();
       clearSelection();
       active = true;
       const sceneEls = norm.elements.filter((e) => e.geom3d);
@@ -1202,6 +1393,7 @@ diffuseColor.a = ${alpha};
     },
     update(r, ids) {
       results = r;
+      syncStatus(ids);
       recompute(ids);
     },
     paintNeutral() {
@@ -1255,8 +1447,8 @@ diffuseColor.a = ${alpha};
         return;
       }
       if (fly && b) {
-        // Cut the ship open 1 m above the part and look down at it from an angle, in its real surroundings.
-        setCut(b.max.y + 1000);
+        // Cut the ship open just above the part and look down at it from an angle, in its real surroundings.
+        setCut(b.max.y + cutAbove(b));
         const f = sceneFrame(contextBox(b), 1.15);
         framedBox = contextBox(b);
         frameMargin = 1.15;
@@ -1286,7 +1478,7 @@ diffuseColor.a = ${alpha};
       selectedId = null;
       const b = new THREE.Box3();
       for (const c of cache.values()) {
-        if (!c.info.dbIds.includes(db)) continue;
+        if (!tileParts(c).has(db)) continue;
         await c.readyPromise;
         const r = await ask({ type: "box", id: c.key, db });
         if (r.min)
@@ -1325,10 +1517,12 @@ diffuseColor.a = ${alpha};
       filterDbs = set
         ? new Set([...set].map((id) => idToDb.get(id)).filter((d) => d != null))
         : null;
+      syncFilter();
       recompute();
     },
     highlight(status) {
       override = new Map(Object.entries(status));
+      syncRule();
       clearSelection();
       if (!sceneMode) resetCut(); // a component view's cut must not hide parts of the rule
       const b = new THREE.Box3(), points = [];
@@ -1342,6 +1536,7 @@ diffuseColor.a = ${alpha};
     },
     clearHighlight() {
       override = null;
+      syncRule();
       recompute();
     },
     setSimple(on) {
@@ -1397,6 +1592,7 @@ diffuseColor.a = ${alpha};
       return false;
     },
     screenshot() {
+      if (lowRes) setResolution(false);
       renderer.render(scene, camera);
       return Promise.resolve(renderer.domElement.toDataURL("image/png"));
     },
