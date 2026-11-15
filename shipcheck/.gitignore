@@ -42,3 +42,7 @@ deploy.env
 
 # Disk cache of model tiles fetched from object storage (MODEL_SOURCE=vultr)
 .cache/
+
+# Parts catalog and precomputed results of the full RCRV production model (built from the APS property dump; large)
+catalog/ships/rcrv/parts.json
+catalog/ships/rcrv/results-3d.json

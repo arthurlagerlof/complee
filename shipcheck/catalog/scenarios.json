@@ -15,7 +15,7 @@
       "meta": "ships/rcrv/rcrv-3d.meta.json",
       "expected": "tests/expected/rcrv-3d.json",
       "precomputed": "ships/rcrv/results-3d.json",
-      "viewer": "aps",
+      "viewer": "local",
       "fallback_images": [
         "fallback/rcrv-overview.png",
         "fallback/rcrv-finding.png"
@@ -26,7 +26,7 @@
       "name": "RCRV: corridor inside the real ship (example)",
       "model": "ships/rcrv/inside.json",
       "expected": "tests/expected/rcrv-inside.json",
-      "viewer": "aps",
+      "viewer": "local",
       "scene": true
     },
     {

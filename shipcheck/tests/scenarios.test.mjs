@@ -13,9 +13,12 @@ test('all scenarios of the catalog are available, including the simplified model
     assert.equal(production.viewer, 'local', 'the production model uses the server-side model gateway');
     assert.equal(scenarios.find((s) => s.id === 'rcrv-inside').viewer, 'local', 'the in-ship scene uses the same streamed real-model viewer');
   } else {
-    // Bundled catalog: every scenario whose model file is bundled, the general arrangement first.
-    // The scene inside the production model needs the streamed 3D model, so it is not offered either.
-    assert.deepEqual(ids, ['cruise', 'rcrv-layout']);
+    // Bundled catalog: every scenario whose model file is bundled, the general arrangement first. The production
+    // model's parts catalog is not in Git (built from the APS property dump); when it is present, rcrv-3d is offered
+    // too and uses the streamed real-model viewer. The scene inside it is never offered from the bundled catalog.
+    const production = scenarios.find((s) => s.id === 'rcrv-3d');
+    assert.deepEqual(ids, production ? ['cruise', 'rcrv-3d', 'rcrv-layout'] : ['cruise', 'rcrv-layout']);
+    if (production) assert.equal(production.viewer, 'local', 'the production model uses the streamed real-model viewer');
     assert.equal(scenarios[0].id, 'rcrv-layout', 'the bundled general arrangement opens by default');
   }
   const inside = scenarios.find((s) => s.id === 'rcrv-inside');

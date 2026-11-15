@@ -141,7 +141,8 @@ const NOOP_VIEWER = { build() {}, update() {}, paintNeutral() {}, select() {}, f
 function useViewer(sc) {
   const generation = ++viewerGeneration;
   const current = () => generation === viewerGeneration && !scenarioPending;
-  const want = sc.viewer === 'local' ? 'local' : 'three';
+  // "aps" is the legacy name of the real-model viewer (the review no longer contacts APS): same as "local".
+  const want = sc.viewer === 'local' || sc.viewer === 'aps' ? 'local' : 'three';
   // Staying in the real-model viewer (real ship <-> corridor scene): keep its geometry and keep it on screen.
   const stayLocal = want === 'local' && !$('#localView').hidden;
   views.local?.setActive?.(false, { keepTiles: stayLocal });
