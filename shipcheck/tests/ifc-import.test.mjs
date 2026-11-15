@@ -65,3 +65,10 @@ test('ifc: classes map to element types; nothing the rules read is invented', as
 test('ifc: a file without geometry or that is not IFC is rejected with a clear message', () => {
   assert.throws(() => convertIfc(WebIFC, api, new TextEncoder().encode('this is not an ifc file'), 'x.ifc'), /IFC/);
 });
+
+test('ifc: a cut-off file is refused; a byte-order mark is accepted', () => {
+  const bytes = new TextEncoder().encode(source.text);
+  assert.throws(() => convertIfc(WebIFC, api, bytes.subarray(0, Math.floor(bytes.length * 0.9)), 'cut.ifc'), /incomplete/);
+  const bom = new Uint8Array([0xef, 0xbb, 0xbf, ...bytes]);
+  assert.ok(convertIfc(WebIFC, api, bom, 'bom.ifc').model.elements.length > 0);
+});

@@ -55,15 +55,19 @@ test('reader: rejects DWG and binary DXF with a way forward, reads R12 polylines
 });
 
 test('units: stated units are used, a unitless drawing is flagged, an unsupported unit is refused', () => {
-  const room = lw('MD-SPACE', [[0, 0], [10, 0], [10, 8], [0, 8]]);
+  const room = lw('MD-SPACE', [[0, 0], [400, 0], [400, 300], [0, 300]]); // 10 m in inches, 40 cm in mm
   const inches = dxfToModel(wrap(room, dxf([9, '$INSUNITS'], [70, 1])));
   assert.equal(inches.model.units, 'in');
-  assert.equal(normalizeModel(structuredClone(inches.model)).elements[0].geom_mm.lx, 254);
-  const none = dxfToModel(wrap(room));
+  assert.equal(normalizeModel(structuredClone(inches.model)).elements[0].geom_mm.lx, 10160);
+  // Read in mm the same drawing is 400 mm long: not a ship, so the unit must be wrong.
+  assert.throws(() => dxfToModel(wrap(room)), /400 mm long: that is not a ship/);
+  const none = dxfToModel(wrap(lw('MD-SPACE', [[0, 0], [10000, 0], [10000, 8000], [0, 8000]])));
   assert.equal(none.model.units, 'mm');
   assert.equal(none.report.units_stated, false);
   assert.match(none.report.warnings.join(' '), /unit not stated/);
   assert.equal(dxfToModel(wrap(room, dxf([9, '$MEASUREMENT'], [70, 0]))).model.units, 'in', 'an imperial drawing without INSUNITS is read in inches');
+  // A mm drawing whose header says metres: 10 km long, refused.
+  assert.throws(() => dxfToModel(wrap(lw('MD-SPACE', [[0, 0], [10000, 0], [10000, 8000], [0, 8000]]), dxf([9, '$INSUNITS'], [70, 6]))), /not a ship/);
   assert.throws(() => dxfToModel(wrap(room, dxf([9, '$INSUNITS'], [70, 7]))), /unit.*not supported/);
   assert.throws(() => dxfToModel(wrap(lw('WALLS', [[0, 0], [1, 0], [1, 1]]))), /naming convention/);
 });
@@ -143,4 +147,26 @@ test('writer output is stable and re-readable', () => {
   assert.equal(p.entities[1].text, 'x >= 1 line');
   assert.equal(parseDxf(writeDxf({ layers: [], entities: [{ type: 'text', layer: '0', at: [0, 0], height: 1, text: 'Ø 5°' }] })).entities[0].text, 'Ø 5°', 'other characters round-trip as \\U+XXXX');
   assert.deepEqual(p.ignored, {});
+});
+
+test('widths are measured only where the drawn shape has one width; unitless lengths must be plausible; a cut-off file is refused', () => {
+  const outline = lw('MD-OUTLINE', [[0, -10000], [60000, -10000], [60000, 10000], [0, 10000]]);
+  const corridor = (pts) => dxfToModel(wrap(outline + lw('MD-CORRIDOR', pts), dxf([9, '$INSUNITS'], [70, 4])));
+  const width = (r) => r.model.elements.find((e) => e.type === 'corridor').props.clear_width;
+  // Axis-aligned rectangle: the box is the shape.
+  assert.equal(width(corridor([[0, 0], [20000, 0], [20000, 800], [0, 800]])).value, 800);
+  // L-shaped, 800 mm wide: its 15 m box says nothing about the width.
+  const l = corridor([[0, 0], [20000, 0], [20000, 15000], [19200, 15000], [19200, 800], [0, 800]]);
+  assert.equal(width(l), undefined);
+  assert.match(l.report.warnings.join(' '), /not drawn as a rectangle/);
+  // A 700 mm corridor drawn at 45 degrees: its shorter side, not the 10 m box.
+  const s = 700 / Math.SQRT2, d = 10000 / Math.SQRT2;
+  assert.equal(Math.round(width(corridor([[0, 0], [d, d], [d - s, d + s], [-s, s]])).value), 700);
+  // CLEAR_WIDTH=850 without a unit in a metre drawing would be 850 m: kept without a usable unit.
+  const metre = dxfToModel(wrap(lw('MD-OUTLINE', [[0, -10], [60, -10], [60, 10], [0, 10]]) + lw('MD-CORRIDOR', [[0, 0], [20, 0], [20, 1], [0, 1]])
+    + dxf([0, 'TEXT'], [8, 'MD-CORRIDOR'], [10, 5], [20, 0.5], [40, 0.2], [1, 'CLEAR_WIDTH=850']), dxf([9, '$INSUNITS'], [70, 6])));
+  assert.equal(metre.model.elements[0].props.clear_width.unit, 'unknown');
+  assert.match(metre.report.warnings.join(' '), /has no unit/);
+  // The end marker is required.
+  assert.throws(() => dxfToModel(SAMPLE.slice(0, Math.floor(SAMPLE.length * 0.6))), /incomplete/);
 });

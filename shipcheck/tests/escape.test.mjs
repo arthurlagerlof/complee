@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { normalizeModel } from '../src/checker.mjs';
-import { analyzeEscape, buildEscapeGraph, MIN_OPENING_MM } from '../src/escape.mjs';
+import { analyzeEscape, buildEscapeGraph, MIN_OPENING_MM, _disjointPair } from '../src/escape.mjs';
 
 const RAW = JSON.parse(fs.readFileSync(new URL('./fixtures/rcrv-layout.json', import.meta.url), 'utf8'));
 const model = () => normalizeModel(structuredClone(RAW));
@@ -14,7 +14,7 @@ test('escape: every room reaches the muster station; the summary counts rooms on
   assert.equal(a.available, true);
   assert.deepEqual(a.musters, ['MD-MUSTER']);
   assert.equal(a.summary.no_route, 0);
-  assert.equal(a.summary.two_routes + a.summary.single_route + a.summary.direct, rooms(a).length);
+  assert.equal(a.summary.two_routes + a.summary.shared_route + a.summary.single_route + a.summary.direct, rooms(a).length);
   for (const o of rooms(a)) {
     assert.equal(o.primary.muster, 'MD-MUSTER');
     assert.equal(o.primary.via[0], o.id, 'a route starts in its room');
@@ -37,8 +37,25 @@ test('escape: agrees with the planted finding (science berthing has one means of
     assert.equal(a.origins[id].status, 'single_route', id);
     assert.ok(a.origins[id].shared_gates.includes('01-D2'), `${id} depends on the fire door`);
   }
-  for (const id of ['01-CR1', '01-CR8', '02-SR1', '02-SR6', 'LD-ER']) assert.equal(a.origins[id].status, 'two_routes', id);
+  // Crew and officers reach the muster station by two stairs, but both ways meet again in the main deck corridor
+  // MD-C1: a fire there blocks both, so they are not independent (blocking MD-C1 leaves them without a route).
+  for (const id of ['01-CR1', '01-CR8', '02-SR1', '02-SR6']) {
+    assert.equal(a.origins[id].status, 'shared_route', id);
+    assert.ok(a.origins[id].shared.includes('MD-C1'), id + ' shares MD-C1');
+    assert.equal(analyzeEscape(model(), { blocked: new Set(['MD-C1']) }).origins[id].status, 'no_route', id + ' without MD-C1');
+  }
+  // The labs open into MD-C1, which leads two ways out: both routes start there and separate (SOLAS counts the corridor).
+  assert.equal(a.origins['MD-WETLAB'].status, 'two_routes');
+  assert.deepEqual(a.origins['MD-WETLAB'].common_start, ['MD-C1']);
+  assert.equal(a.origins['LD-ER'].status, 'two_routes');
   assert.deepEqual(a.origins['LD-ER'].secondary.verticals, ['LD-ET1'], 'engine room: the alternative uses the escape trunk');
+});
+
+test('escape: rooms rely on openings assumed where no door is modelled, and the result says so', () => {
+  const a = analyzeEscape(model());
+  assert.ok(a.rooms_with_assumed_openings > 0);
+  assert.ok(a.origins['01-CR1'].assumed_openings.length > 0);
+  assert.ok(a.assumptions.some((t) => /assumed/.test(t)));
 });
 
 test('escape: a stair that opens to nothing at its upper end is reported, not silently used', () => {
@@ -98,4 +115,63 @@ test('escape: the analysis is deterministic and does not change the model', () =
   const first = JSON.stringify(analyzeEscape(m));
   assert.equal(JSON.stringify(analyzeEscape(m)), first);
   assert.equal(JSON.stringify(m), before);
+});
+
+// ---------- small arrangements from the review of 15 Nov 2026 ----------
+const deck = (id, elevation = 0) => ({ id, name: id, elevation, height: 2700, outline: [[-20000, -20000], [100000, -20000], [100000, 40000], [-20000, 40000]] });
+const el = (id, type, x, y, lx, ly, extra = {}) => ({ id, type, name: id, deck: extra.deck ?? 'D1', geom: { x, y, lx, ly, h: extra.h ?? 2500 }, props: {} });
+const run = (elements, decks = [deck('D1')]) => analyzeEscape(normalizeModel({ units: 'mm', ship: {}, decks, elements }));
+
+test('escape: two doors into one dead-end corridor are not two independent routes', () => {
+  const a = run([el('R', 'space', 0, 0, 4000, 3000), el('D1', 'door', 500, 3000, 900, 100), el('D2', 'door', 2500, 3000, 900, 100),
+    el('C', 'corridor', 0, 3100, 30000, 1500), el('M', 'muster_station', 30000, 3100, 3000, 1500)]);
+  assert.equal(a.origins.R.status, 'shared_route');
+  assert.deepEqual(a.origins.R.shared, ['C']);
+});
+
+test('escape: a room on a long dead-end corridor is a single route, not "direct"', () => {
+  const a = run([el('R', 'space', 0, 0, 3000, 3000), el('C', 'corridor', 0, 3000, 60000, 1500), el('M', 'muster_station', 60000, 3000, 3000, 1500)]);
+  assert.equal(a.origins.R.status, 'single_route');
+  assert.deepEqual(a.origins.R.shared_gates, ['C']);
+  assert.deepEqual(a.origins.R.assumed_openings, ['R/C'], 'no door is modelled: the opening is assumed and said so');
+});
+
+test('escape: a corridor that leads two ways gives two routes, and the exact search finds separate routes the greedy one misses', () => {
+  // Shortest: R > D1 > A > D5 > L > B > D4 > Mb. Separate pair: R > D1 > A > D3 > Ma and R > D2 > N1 > N2 > B > D4 > Mb.
+  const a = run([
+    el('R', 'space', 20000, 10000, 4000, 4000),
+    el('D1', 'door', 21500, 14000, 900, 100), el('A', 'corridor', -10000, 14100, 50000, 1500),
+    el('D3', 'door', -9500, 15600, 900, 100), el('Ma', 'muster_station', -10000, 15700, 3000, 2000),
+    el('D5', 'door', 30000, 14000, 900, 100), el('L', 'corridor', 30000, 3000, 1500, 11000),
+    el('B', 'corridor', 0, 1500, 40000, 1500), el('D4', 'door', 32000, 1400, 900, 100), el('Mb', 'muster_station', 31500, -600, 3000, 2000),
+    el('D2', 'door', 21500, 9900, 900, 100), el('N1', 'corridor', 5000, 8400, 17500, 1500), el('N2', 'corridor', 5000, 3000, 1500, 5400),
+  ]);
+  const o = a.origins.R;
+  // Both routes leave through D1 into A and go opposite ways (D5 east, D3 west): a corridor with two ways out.
+  assert.equal(o.status, 'two_routes');
+  assert.deepEqual(o.common_start, ['D1', 'A']);
+  assert.notEqual(o.primary.via[o.primary.via.indexOf('A') + 1], o.secondary.via[o.secondary.via.indexOf('A') + 1]);
+  // The exact search alone: two routes that share nothing at all (through D1 and through D2).
+  const m = normalizeModel({ units: 'mm', ship: {}, decks: [deck('D1')], elements: [
+    el('R', 'space', 20000, 10000, 4000, 4000), el('D1', 'door', 21500, 14000, 900, 100), el('A', 'corridor', -10000, 14100, 50000, 1500),
+    el('D3', 'door', -9500, 15600, 900, 100), el('Ma', 'muster_station', -10000, 15700, 3000, 2000), el('D5', 'door', 30000, 14000, 900, 100),
+    el('L', 'corridor', 30000, 3000, 1500, 11000), el('B', 'corridor', 0, 1500, 40000, 1500), el('D4', 'door', 32000, 1400, 900, 100),
+    el('Mb', 'muster_station', 31500, -600, 3000, 2000), el('D2', 'door', 21500, 9900, 900, 100), el('N1', 'corridor', 5000, 8400, 17500, 1500),
+    el('N2', 'corridor', 5000, 3000, 1500, 5400)] });
+  const pair = _disjointPair(buildEscapeGraph(m), 'R');
+  assert.ok(pair, 'two separate routes exist');
+  const [p, q] = pair.map((s) => [...s].filter((e) => !['R', 'Ma', 'Mb'].includes(e)));
+  assert.ok(!p.some((e) => q.includes(e)), JSON.stringify([p, q]));
+  assert.ok([p, q].some((r) => r.includes('D3')) && [p, q].some((r) => r.includes('N1')));
+});
+
+test('escape: a stair through two tween decks serves the deck in between; a narrow door still connects', () => {
+  const a = run([el('S', 'stair', 0, 0, 2000, 4000, { h: 5400 }),
+    el('C2', 'corridor', 2000, 0, 10000, 1500, { deck: 'D2' }), el('R2', 'space', 2000, 1500, 3000, 3000, { deck: 'D2' }),
+    el('C3', 'corridor', 2000, 0, 10000, 1500, { deck: 'D3' }), el('M', 'muster_station', 12000, 0, 3000, 1500, { deck: 'D3' })],
+  [deck('D1', 0), deck('D2', 2700), deck('D3', 5400)]);
+  assert.notEqual(a.origins.R2.status, 'no_route');
+  assert.ok(a.origins.R2.primary.via.includes('S'));
+  const narrow = run([el('R', 'space', 0, 0, 3000, 3000), el('D', 'door', 1000, 2950, 650, 100), el('C', 'corridor', 0, 3100, 10000, 1500), el('M', 'muster_station', 10000, 3100, 3000, 1500)]);
+  assert.ok(narrow.origins.R.primary.via.includes('D'), 'a 650 mm door is a door; its width is the rule check\'s question');
 });

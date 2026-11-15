@@ -36,6 +36,7 @@ export function parseDxf(text) {
   while (i < n && !(code(i) === 0 && lines[i + 1].trim() === 'SECTION')) i += 2;
   if (i >= n) throw new Error('No DXF sections found: this is not an ASCII DXF file.');
 
+  let complete = false;                // the end marker (0 EOF) was reached: the file is not cut off
   let section = null, target = null;   // target: list new entities go to (model space or the current block)
   let current = null, owner = null;    // owner: POLYLINE collecting VERTEX / INSERT collecting ATTRIB
   let headerVar = null, table = null, block = null, layer = null;
@@ -64,7 +65,7 @@ export function parseDxf(text) {
       finish();
       if (v === 'SECTION') { section = (code(i + 2) === 2 ? lines[i + 3].trim() : null); i += 2; target = entities; continue; }
       if (v === 'ENDSEC') { section = null; continue; }
-      if (v === 'EOF') break;
+      if (v === 'EOF') { complete = true; break; }
       if (section === 'HEADER') { headerVar = null; continue; }
       if (section === 'TABLES') {
         if (v === 'TABLE') { table = (code(i + 2) === 2 ? lines[i + 3].trim() : null); i += 2; layer = null; }
@@ -105,7 +106,7 @@ export function parseDxf(text) {
     else if (current.v[c] === undefined) current.v[c] = v;
   }
   finish();
-  return { header, layers, blocks, entities, ignored };
+  return { header, layers, blocks, entities, ignored, complete };
 }
 
 // Raw entity -> the small set of shapes the importer uses. Entities drawn in a mirrored object coordinate system

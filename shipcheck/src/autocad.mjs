@@ -36,6 +36,27 @@ const VERTICAL = new Set(['stair', 'ladder', 'escape_trunk']);
 const INSUNITS = { 1: 'in', 2: 'ft', 4: 'mm', 5: 'cm', 6: 'm' };
 const SHIP_LAYER = /^COMPLEE[-_ ]?SHIP$/i;
 const SHIP_LISTS = new Set(['operating_area']);
+// Written values that are lengths (a value without a unit is checked for plausibility in the drawing unit).
+const LENGTH_KEY = /(width|height|length|sill|depth|thickness|clearance|distance|breadth|beam|draught|draft|elevation)/;
+const MAX_ELEMENT_MM = 200_000; // no corridor, door or sill is longer than 200 m
+// Ship size the deck outlines may describe: anything outside is a unit error (a mm drawing read as metres).
+const SHIP_EXTENT_MM = [3_000, 500_000];
+
+// A closed 4-corner polygon with right angles: its side lengths and whether it is axis-aligned; else null.
+export function rectangleSides(points) {
+  let p = points;
+  if (p.length === 5 && Math.hypot(p[0][0] - p[4][0], p[0][1] - p[4][1]) < 1e-6) p = p.slice(0, 4);
+  if (p.length !== 4) return null;
+  const v = p.map((q, i) => [p[(i + 1) % 4][0] - q[0], p[(i + 1) % 4][1] - q[1]]);
+  const len = v.map(([x, y]) => Math.hypot(x, y));
+  if (len.some((l) => l === 0)) return null;
+  for (let i = 0; i < 4; i++) {
+    const [a, b] = [v[i], v[(i + 1) % 4]];
+    if (Math.abs(a[0] * b[0] + a[1] * b[1]) > 0.01 * len[i] * len[(i + 1) % 4]) return null; // not a right angle
+  }
+  const axisAligned = v.every(([x, y]) => Math.abs(x) < 1e-6 * Math.max(1, Math.abs(y)) || Math.abs(y) < 1e-6 * Math.max(1, Math.abs(x)));
+  return { a: (len[0] + len[2]) / 2, b: (len[1] + len[3]) / 2, axisAligned };
+}
 
 /** "MD-CORRIDOR" -> { deck: 'MD', type: 'corridor' }; null when the layer does not follow the convention. */
 export function layerRole(name) {
@@ -72,6 +93,9 @@ function readText(text) {
 
 export function dxfToModel(text, { filename = 'drawing.dxf' } = {}) {
   const dxf = parseDxf(text);
+  // A drawing cut off in transfer would import as a partial model, and everything in the lost part would simply be
+  // missing (and look like "no deviation"). The DXF end marker is required.
+  if (!dxf.complete) throw new Error('The drawing ends before its end marker (0 EOF): the file is incomplete (cut off while saving or copying). Save or copy it again.');
   const warnings = [];
   // Units: $INSUNITS; a drawing without it says metric or imperial in $MEASUREMENT.
   const ins = Number(dxf.header.$INSUNITS ?? 0);
@@ -140,6 +164,16 @@ export function dxfToModel(text, { filename = 'drawing.dxf' } = {}) {
       source: outline ? src(outline) : `AutoCAD ${filename}: extent of the elements on deck ${d.id}`, cad: { origin: o } } });
   }
   deckList.sort((a, b) => a.entry.elevation - b.entry.elevation || a.entry.id.localeCompare(b.entry.id));
+  // The decks must describe a ship-sized object in the unit the drawing states (or is read in). A mm drawing whose
+  // header says metres would otherwise give 800 m wide corridors that pass every rule.
+  const extent = Math.max(0, ...deckList.map(({ entry }) => {
+    const xs = entry.outline.map((p) => p[0]), ys = entry.outline.map((p) => p[1]);
+    return Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+  })) * UNIT_TO_MM[units];
+  if (extent && (extent < SHIP_EXTENT_MM[0] || extent > SHIP_EXTENT_MM[1])) {
+    const shown = extent >= 1000 ? `${Math.round(extent / 1000).toLocaleString('en')} m` : `${Math.round(extent)} mm`;
+    throw new Error(`Read in ${units}${unitsNote ? ' (no unit stated in the drawing)' : ' (the unit the drawing states)'}, the decks are ${shown} long: that is not a ship. The drawing unit is probably wrong: set it with the UNITS command (INSUNITS) and save again.`);
+  }
 
   // ---- elements ----
   const elements = [], ids = new Set();
@@ -170,12 +204,36 @@ export function dxfToModel(text, { filename = 'drawing.dxf' } = {}) {
       const props = {};
       for (const [k, w] of Object.entries(written)) {
         if (['id', 'name', 'type', 'extrusion', 'note'].includes(k)) continue;
-        props[k] = { ...parseValue(w.text), source: w.from };
+        const v = parseValue(w.text);
+        // A length written without a unit is read in the drawing unit. In a metre drawing "CLEAR_WIDTH=850" would be
+        // 850 m: such a value is kept without a unit (the checker then reports "not enough info") and noted.
+        if (LENGTH_KEY.test(k) && typeof v.value === 'number' && !v.unit) {
+          const mm = v.value * UNIT_TO_MM[units];
+          if (mm > MAX_ELEMENT_MM || (mm > 0 && mm < 1)) {
+            props[k] = { value: v.value, unit: 'unknown', source: w.from };
+            warnings.push(`${k.toUpperCase()}=${w.text} on ${src(e)} has no unit; in the drawing unit (${units}) it would be ${mm >= 1000 ? `${Math.round(mm / 1000)} m` : `${mm} mm`}. Write the unit (e.g. ${k.toUpperCase()}=${w.text}mm).`);
+            continue;
+          }
+          props[k] = { ...v, unit: units, source: `${w.from} (no unit written: read in the drawing unit, ${units})` };
+          continue;
+        }
+        props[k] = { ...v, source: w.from };
       }
       // Widths that the drawing itself shows: stated as measured from the geometry, never as a written clear width.
+      // Only from a shape whose width is known: an axis-aligned rectangle (the box is the shape), a rectangle drawn at
+      // an angle (its shorter side), or a block that is not rotated off the axes. An L-shaped, necked or diagonal
+      // outline has no single width in its bounding box (a 800 mm L-corridor has a 15 m box): then no width is
+      // measured, and the checker reports "not enough info" until CLEAR_WIDTH is written.
       const measured = (what) => `measured from the drawing geometry (${source}): ${what}, not a stated clear width`;
-      if (['corridor', 'stair', 'ramp', 'ladder'].includes(type) && !props.clear_width) props.clear_width = { value: Math.min(lx, ly), unit: units, source: measured('drawn width') };
-      if (type === 'door' && !props.clear_width) props.clear_width = { value: Math.max(lx, ly), unit: units, source: measured('drawn door width') };
+      const rect = e.kind === 'polygon' ? rectangleSides(e.points) : null;
+      const boxIsShape = e.kind === 'polygon' ? !!rect && rect.axisAligned : !(e.rotation % 90);
+      const widthKnown = boxIsShape || !!rect;
+      const across = rect ? Math.min(rect.a, rect.b) : Math.min(lx, ly), along = rect ? Math.max(rect.a, rect.b) : Math.max(lx, ly);
+      if (['corridor', 'stair', 'ramp', 'ladder', 'door'].includes(type) && !props.clear_width && !widthKnown) {
+        warnings.push(`${source}: the ${type} is not drawn as a rectangle, so its width cannot be measured; write CLEAR_WIDTH=… on it.`);
+      }
+      if (['corridor', 'stair', 'ramp', 'ladder'].includes(type) && !props.clear_width && widthKnown) props.clear_width = { value: across, unit: units, source: measured('drawn width') };
+      if (type === 'door' && !props.clear_width && widthKnown) props.clear_width = { value: along, unit: units, source: measured('drawn door width') };
       // Height in the 3D view: the entity's thickness (AutoCAD extrusion), EXTRUSION=…, or a display default.
       let h = e.thickness || null, hNote = null;
       if (!h && written.extrusion) { const v = parseValue(written.extrusion.text); if (typeof v.value === 'number') h = v.unit ? v.value * UNIT_TO_MM[v.unit] / UNIT_TO_MM[units] : v.value; }

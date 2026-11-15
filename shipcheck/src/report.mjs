@@ -158,14 +158,15 @@ export function escapeSection(escape, model) {
   if (!escape?.available) return '';
   const norm = normalizeModel(model);
   const els = new Map(norm.elements.map((e) => [e.id, e]));
-  const label = { two_routes: 'Two independent routes', single_route: 'Single route only', no_route: 'No route', direct: 'Direct access' };
-  const cls = { two_routes: 'ok', direct: 'ok', single_route: 'ni', no_route: 'nc' };
-  const order = { no_route: 0, single_route: 1, two_routes: 2, direct: 3 };
+  const label = { two_routes: 'Two independent routes', shared_route: 'Two routes through a shared corridor or space', single_route: 'Single route only', no_route: 'No route', direct: 'Direct access' };
+  const cls = { two_routes: 'ok', direct: 'ok', shared_route: 'ni', single_route: 'ni', no_route: 'nc' };
+  const order = { no_route: 0, single_route: 1, shared_route: 2, two_routes: 3, direct: 4 };
   const rooms = Object.values(escape.origins).filter((o) => o.room).sort((a, b) => order[a.status] - order[b.status] || (b.primary?.length_mm ?? 0) - (a.primary?.length_mm ?? 0));
   const m = (r) => (r ? `${(r.length_mm / 1000).toFixed(1)} m` : '');
   const s = escape.summary;
   return `<h2>Escape routes (${rooms.length} rooms)</h2>
-<p>${s.two_routes + s.direct} rooms with two independent routes, <b>${s.single_route}</b> with a single route, <b>${s.no_route}</b> without a route to ${escape.musters.map((id) => esc(els.get(id)?.name ?? id)).join(', ')}.
+<p>${s.two_routes + s.direct} rooms with two independent routes, <b>${s.shared_route ?? 0}</b> with two routes through a shared corridor or space, <b>${s.single_route}</b> with a single route, <b>${s.no_route}</b> without a route to ${escape.musters.map((id) => esc(els.get(id)?.name ?? id)).join(', ')}.
+${escape.rooms_with_assumed_openings ? `${escape.rooms_with_assumed_openings} rooms leave through an opening assumed where no door is modelled.` : ''}
 ${escape.blocked.length ? `<b>What-if: ${escape.blocked.map(esc).join(', ')} blocked.</b>` : ''}
 ${escape.disconnected.length ? `Not connected: ${escape.disconnected.map((d) => `${esc(d.id)} (${esc(d.reason)})`).join('; ')}.` : ''}</p>
 <table><tr><th>Room</th><th>Deck</th><th>Result</th><th>Shortest route</th><th>Length</th><th>Narrowest stated clear width</th><th>Independent alternative</th><th>Length</th></tr>

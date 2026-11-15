@@ -25,6 +25,33 @@ function onDeck(el, deck, model) {
 }
 
 const overlap = (a0, a1, b0, b1) => Math.min(a1, b1) - Math.max(a0, b0);
+// What a new passage or door may cross: other circulation (it joins it). Anything else (a cabin, a tank, the engine
+// room) would be cut through, which is not a buildable proposal.
+const PASSABLE = new Set(['corridor', 'stair', 'ladder', 'escape_trunk', 'ramp', 'door', 'muster_station', 'guard_rail', 'liferaft']);
+const passable = (el) => PASSABLE.has(el.type) || el.props?.zone === 'open_deck' || el.props?.zone?.value === 'open_deck';
+function insidePolygon([px, py], poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+// Elements a new box (mm) cuts through on its deck, and whether it leaves the deck outline.
+function collisions(model, units, deck, box, ends) {
+  const hits = [];
+  for (const el of model.elements) {
+    if (ends.includes(el) || passable(el) || el.proposed || el.virtual || el.type === 'escape_zone') continue; // zones are areas, not walls
+    const f = footprint(el, units);
+    if (!f || !onDeck(el, deck, model)) continue;
+    if (overlap(box.x, box.x + box.lx, f.x, f.x + f.lx) > TOUCH_MM && overlap(box.y, box.y + box.ly, f.y, f.y + f.ly) > TOUCH_MM) hits.push(el.id);
+  }
+  const k = { mm: 1, cm: 10, m: 1000 }[units] ?? 1;
+  const outline = model.decks.find((d) => d.id === deck)?.outline?.map(([x, y]) => [x * k, y * k]);
+  const corners = [[box.x, box.y], [box.x + box.lx, box.y], [box.x + box.lx, box.y + box.ly], [box.x, box.y + box.ly]];
+  const outside = outline?.length >= 3 && corners.some((c) => !insidePolygon(c, outline));
+  return { hits, outside };
+}
 
 /** Corridor boxes (one straight piece, or an L of two) joining the facing sides of two footprints. */
 export function passageBoxes(a, b, w) {
@@ -76,7 +103,7 @@ export function applySuggestion(raw, suggestion, tag = 'AI') {
   const k = { mm: 1, cm: 10, m: 1000 }[units] ?? 1;
   const byId = Object.fromEntries(model.elements.map((e) => [e.id, e]));
   const decks = new Set(model.decks.map((d) => d.id));
-  const added = [], problems = [];
+  const added = [], problems = [], conflicts = [], notes = [];
   let n = 0;
   for (const action of suggestion.actions ?? []) {
     const a = byId[action.from_element], b = byId[action.to_element];
@@ -88,6 +115,10 @@ export function applySuggestion(raw, suggestion, tag = 'AI') {
     const boxes = action.type === 'add_door' ? [doorBox(fa, fb, w)].filter(Boolean) : passageBoxes(fa, fb, w);
     if (!boxes.length) { problems.push(`${action.type} ${a.id}–${b.id}: ${action.type === 'add_door' ? 'the elements do not touch' : 'no straight connection'}`); continue; }
     for (const box of boxes) {
+      const { hits, outside } = collisions(model, units, action.deck, box, [a, b]);
+      if (hits.length) conflicts.push(`${action.type} ${a.id}–${b.id} cuts through ${hits.join(', ')}`);
+      // Outside the deck outline: an external walkway (e.g. to an outside stair). Possible, but it needs a structure.
+      if (outside) notes.push(`${action.type} ${a.id}–${b.id} runs partly outside the outline of deck ${action.deck} (an external walkway: check it is supported)`);
       const el = {
         id: `${tag}-${++n}`, type: action.type === 'add_door' ? 'door' : 'corridor',
         name: `${action.type === 'add_door' ? 'Proposed door' : 'Proposed passage'} ${a.id} – ${b.id}`,
@@ -99,15 +130,15 @@ export function applySuggestion(raw, suggestion, tag = 'AI') {
       added.push(el);
     }
   }
-  return { model, added, problems };
+  return { model, added, problems, conflicts, notes: [...new Set(notes)] };
 }
 
-const RANK = { no_route: 0, single_route: 1, two_routes: 2, direct: 2 };
+const RANK = { no_route: 0, single_route: 1, shared_route: 2, two_routes: 3, direct: 3 };
 
 /** Recompute the routes with the suggestion applied and compare room by room. */
 export function verifySuggestion(raw, suggestion, current = analyzeEscape(normalizeModel(structuredClone(raw)))) {
-  const { model, added, problems } = applySuggestion(raw, suggestion);
-  if (!added.length) return { ok: false, improved: [], worse: [], added, problems, model };
+  const { model, added, problems, conflicts, notes } = applySuggestion(raw, suggestion);
+  if (!added.length) return { ok: false, improved: [], worse: [], added, problems, conflicts, notes, model };
   const after = analyzeEscape(normalizeModel(structuredClone(model)));
   const improved = [], worse = [];
   for (const [id, o] of Object.entries(current.origins)) {
@@ -117,5 +148,6 @@ export function verifySuggestion(raw, suggestion, current = analyzeEscape(normal
     if (RANK[now.status] > RANK[o.status]) improved.push(id);
     else if (RANK[now.status] < RANK[o.status]) worse.push(id);
   }
-  return { ok: improved.length > 0 && !worse.length, improved, worse, added, problems, model, after };
+  // Better routes count only for a buildable proposal: nothing cut through, nothing outside the deck.
+  return { ok: improved.length > 0 && !worse.length && !conflicts.length, improved, worse, added, problems, conflicts, notes, model, after };
 }

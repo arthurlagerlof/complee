@@ -457,6 +457,15 @@ function checkMinMax(rule, el, ctx) {
     return result(rule, 'not_enough_info', { required, limit, inputs: [{ name: rule.parameter, value: shown, source: p.source }],
       explanation: `"${rule.parameter}" of ${el.name} is ${shown}, which is below zero: check the design data.` });
   }
+  // A dimension longer than the ship (or than any ship) comes from a unit error (850 "m" for 850 mm), never a design.
+  if (isLength) {
+    const loa = shipDimension(model, 'length_overall');
+    const cap = loa.mm ? Math.max(loa.mm * 1.5, 1000) : PLAUSIBLE_SHIP_MM[1];
+    if (v > cap) {
+      return result(rule, 'not_enough_info', { required, limit, inputs: [{ name: rule.parameter, value: shown, source: p.source }],
+        explanation: `"${rule.parameter}" of ${el.name} is ${shown}, longer than ${loa.mm ? 'the ship' : 'any ship'}: the unit is probably wrong. Check the design data.` });
+    }
+  }
   // A value equal to the limit meets it, also when the limit is stored rounded or converted (1:12 as a ratio,
   // 36 in in mm): differences in the last digits of a floating-point number are not a finding.
   const eps = 1e-9 * Math.max(1, Math.abs(limitVal));

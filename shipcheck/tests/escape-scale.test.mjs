@@ -26,7 +26,10 @@ test('shared and per-room searches agree on a 900-element arrangement, and the a
   const ms = performance.now() - t0;
   assert.ok(ms < 5000, `analysis took ${Math.round(ms)} ms`);
   assert.equal(all.available, true);
-  assert.ok(all.summary.two_routes > 300, 'upper-deck rooms have two stairs');
+  // Rooms open into branch corridors that end blind and all join one spine corridor to the muster station: two
+  // stairs do not make two independent routes here (the spine is shared), so no room may claim them.
+  assert.equal(all.summary.two_routes, 0);
+  assert.equal(all.summary.shared_route + all.summary.single_route, Object.values(all.origins).filter((o) => o.room).length);
   const graph = buildEscapeGraph(norm);
   let compared = 0;
   for (const [id, o] of Object.entries(all.origins)) {
@@ -36,7 +39,7 @@ test('shared and per-room searches agree on a 900-element arrangement, and the a
     assert.equal(single.secondary?.length_mm ?? null, o.secondary?.length_mm ?? null, `${id} alternative`);
     if (o.secondary) {
       compared++;
-      const gates = new Set([...o.primary.verticals, ...o.primary.doors]);
+      const gates = new Set([...o.primary.verticals, ...o.primary.doors].filter((g) => !(o.common_start ?? []).includes(g)));
       assert.ok(!o.secondary.via.some((v) => gates.has(v)), `${id}: the alternative avoids every gate of the shortest route`);
       assert.ok(o.secondary.length_mm >= o.primary.length_mm, `${id}: the alternative is not shorter`);
     }

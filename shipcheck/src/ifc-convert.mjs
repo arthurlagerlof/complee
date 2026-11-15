@@ -55,10 +55,19 @@ function lengthUnitInMetres(WebIFC, api, id) {
  */
 export function convertIfc(WebIFC, api, bytes, fileName = 'model.ifc') {
   // Reject anything that is not an IFC STEP file before it reaches the parser.
-  const head = new TextDecoder('latin1').decode(bytes.subarray(0, 4096));
+  // A UTF-8 byte-order mark may precede the header; long FILE_DESCRIPTIONs push FILE_SCHEMA past the first few KB.
+  const start = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
+  const head = new TextDecoder('latin1').decode(bytes.subarray(start, start + 65536));
   if (!/^\s*ISO-10303-21\s*;/.test(head) || !/FILE_SCHEMA\s*\(\s*\(\s*'IFC/i.test(head)) {
     throw new Error('Not an IFC file (expected an IFC STEP file: ISO-10303-21 with FILE_SCHEMA IFC2X3 or IFC4). IFC-ZIP and ifcXML are not supported.');
   }
+  // A file cut off in transfer would import as a partial model; whatever was lost would just be missing (and look like
+  // "no deviation"). The STEP end marker is required.
+  const tail = new TextDecoder('latin1').decode(bytes.subarray(Math.max(start, bytes.length - 4096)));
+  if (!/END-ISO-10303-21\s*;\s*$/.test(tail)) {
+    throw new Error('The IFC file ends before its end marker (END-ISO-10303-21;): it is incomplete (cut off while exporting or copying). Export or copy it again.');
+  }
+  if (start) bytes = bytes.subarray(start);
   try { api.SetLogLevel?.(WebIFC.LogLevel?.LOG_LEVEL_OFF ?? 6); } catch { /* older web-ifc */ }
   const id = api.OpenModel(bytes, { COORDINATE_TO_ORIGIN: false });
   if (id == null || id < 0) throw new Error('The file could not be read as IFC.');

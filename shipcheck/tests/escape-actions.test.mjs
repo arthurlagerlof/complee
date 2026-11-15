@@ -9,10 +9,19 @@ const RAW = JSON.parse(fs.readFileSync(new URL('./fixtures/rcrv-layout.json', im
 test('escape actions: connecting the unconnected external stair gives the science staterooms a second route', () => {
   const v = verifySuggestion(RAW, { actions: [{ type: 'add_passage', deck: '01', from_element: '01-C2', to_element: '01-EXT1', clear_width_mm: 1000 }] });
   assert.equal(v.ok, true);
-  assert.deepEqual(v.improved.sort(), ['01-SR1', '01-SR2', '01-SR3', '01-SR4', '01-SR5']);
+  for (const id of ['01-SR1', '01-SR2', '01-SR3', '01-SR4', '01-SR5']) assert.ok(v.improved.includes(id), id);
+  assert.deepEqual(v.conflicts, []);
+  assert.match(v.notes.join(' '), /outside the outline of deck 01/, 'the stair stands outside the deckhouse: an external walkway');
   assert.deepEqual(v.worse, []);
   assert.ok(v.added.every((e) => e.proposed && e.source.startsWith('AI suggestion')), 'proposals are marked as not in the design');
   assert.equal(RAW.elements.some((e) => e.proposed), false, 'the original model is not changed');
+});
+
+test('escape actions: a passage that cuts through a cabin is not offered, even when it would help', () => {
+  const v = verifySuggestion(RAW, { actions: [{ type: 'add_passage', deck: '01', from_element: '01-SR1', to_element: '01-C1', clear_width_mm: 1000 }] });
+  assert.ok(v.improved.length > 0);
+  assert.equal(v.ok, false);
+  assert.match(v.conflicts.join(' '), /cuts through 01-SR4/);
 });
 
 test('escape actions: unknown ids, wrong decks and elements that do not touch are reported, not applied', () => {

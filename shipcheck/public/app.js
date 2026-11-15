@@ -750,8 +750,8 @@ function renderDetail(id) {
 
 // ---------- escape plan (route analysis from the model geometry; never a rule result) ----------
 
-const ESCAPE_CLASS = { two_routes: 'compliant', direct: 'compliant', single_route: 'not_enough_info', no_route: 'non_compliant' };
-const ESCAPE_ORDER = { no_route: 0, single_route: 1, two_routes: 2, direct: 3 };
+const ESCAPE_CLASS = { two_routes: 'compliant', direct: 'compliant', shared_route: 'not_enough_info', single_route: 'not_enough_info', no_route: 'non_compliant' };
+const ESCAPE_ORDER = { no_route: 0, single_route: 1, shared_route: 2, two_routes: 3, direct: 4 };
 const metres = (mm) => `${(mm / 1000).toFixed(1)} m`;
 const escapeRooms = () => Object.values(S.escape?.origins ?? {}).filter((o) => o.room);
 
@@ -831,13 +831,15 @@ function renderEscape() {
     <h2>Escape plan</h2>
     <div class="pills">
       <div class="pill st-non_compliant">${s.no_route}<small>no route</small></div>
-      <div class="pill st-not_enough_info">${s.single_route}<small>single route</small></div>
-      <div class="pill st-compliant">${s.two_routes + s.direct}<small>two routes</small></div>
+      <div class="pill st-not_enough_info" title="Single route, or two routes that meet in the same corridor or space">${s.single_route + s.shared_route}<small>single / shared</small></div>
+      <div class="pill st-compliant" title="Two routes that share nothing but the room, the muster station and open deck">${s.two_routes + s.direct}<small>two independent</small></div>
     </div>
     <div class="muted">Walking routes from every room to ${a.musters.map((m) => `<a href="#" class="via" data-id="${esc(m)}">${esc(elById(m)?.name ?? m)}</a>`).join(', ')}.
       ${longest ? `Longest: <b>${metres(longest.primary.length_mm)}</b> from ${esc(longest.id)}.` : ''}
       Derived from the model geometry; rule results come only from the checker.</div>
     ${a.blocked.length ? `<div class="note"><b>What-if, blocked:</b> ${a.blocked.map((id) => `<code>${esc(id)}</code>`).join(' ')} <button class="tiny" id="escReset">clear</button></div>` : ''}
+    ${a.rooms_with_assumed_openings ? `<div class="note"><b>${a.rooms_with_assumed_openings} room${a.rooms_with_assumed_openings === 1 ? '' : 's'}</b> leave${a.rooms_with_assumed_openings === 1 ? 's' : ''} through an opening that is not a modelled door (the room touches a corridor or deck area, so an opening is assumed). Model the doors to make the routes definite.</div>` : ''}
+    ${a.unplaced?.length ? `<div class="note"><b>Not placed:</b> ${a.unplaced.slice(0, 8).map((id) => `<code>${esc(id)}</code>`).join(' ')}${a.unplaced.length > 8 ? ` and ${a.unplaced.length - 8} more` : ''}: no usable geometry, left out of the routes.</div>` : ''}
     ${a.disconnected.length ? `<div class="note"><b>Not connected:</b> ${a.disconnected.map((d) => `<a href="#" class="via" data-id="${esc(d.id)}">${esc(d.id)}</a>: ${esc(d.reason)}`).join('; ')}.</div>` : ''}
     <div class="esc-legend"><span><i class="swatch primary"></i>Shortest route</span><span><i class="swatch secondary"></i>Independent alternative</span></div>
     <div id="escList">${rooms.map((o) => {
@@ -847,7 +849,7 @@ function renderEscape() {
         <span><b>${esc(o.id)}</b> ${esc(el?.name ?? '')} <span class="deckTag">· ${esc(el?.deck ?? '')}</span><span class="len">${o.primary ? metres(o.primary.length_mm) : '–'}</span></span>
       </div>`;
     }).join('')}</div>
-    <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button id="escAiBtn" class="ai-btn" ${s.single_route + s.no_route ? '' : 'disabled'} title="AI proposes design changes; Complee recomputes every proposal and shows only those that give rooms a second independent route">✦ Suggest improvements</button><button id="escCsv">Export routes (CSV)</button></div>
+    <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap"><button id="escAiBtn" class="ai-btn" ${s.single_route + s.shared_route + s.no_route ? '' : 'disabled'} title="AI proposes design changes; Complee recomputes every proposal and shows only those that give rooms a second independent route">✦ Suggest improvements</button><button id="escCsv">Export routes (CSV)</button></div>
     <div id="escAi" class="escAiSlot">${escAiHTML()}</div>
     <details class="assume"><summary>How the routes are derived</summary><ul>${a.assumptions.map((t) => `<li>${esc(t)}</li>`).join('')}</ul></details>`;
   box.querySelectorAll('.item.esc').forEach((n) => (n.onclick = () => select(n.dataset.id)));
@@ -888,14 +890,17 @@ function renderEscapeDetail(id) {
   if (o) {
     html += `<span class="badge st-${ESCAPE_CLASS[o.status]}">${esc(ESCAPE_LABEL[o.status])}</span>`;
     if (o.primary) html += routeHTML('Shortest route to the muster station', o.primary, 'primary');
-    if (o.secondary) html += routeHTML('Independent alternative', o.secondary, 'secondary');
+    if (o.secondary) html += routeHTML(o.status === 'shared_route' ? 'Second route (not independent)' : 'Independent alternative', o.secondary, 'secondary');
+    if (o.status === 'two_routes' && o.common_start?.length) html += `<div class="muted">Both routes leave the room into ${o.common_start.map((g) => `<code>${esc(g)}</code>`).join(', ')} and separate there: the corridor leads two ways.</div>`;
+    if (o.status === 'shared_route') html += `<div class="na">Both routes pass ${o.shared.map((g) => `<code>${esc(g)}</code>`).join(', ')}: a fire there blocks both. Block ${o.shared.length > 1 ? 'one of them' : 'it'} to see what remains.</div>`;
     if (o.status === 'single_route') html += `<div class="na">Every route found passes ${o.shared_gates.map((g) => `<code>${esc(g)}</code>`).join(', ')}. No route avoids all of them.</div>`;
+    if (o.assumed_openings?.length) html += `<div class="muted">Through ${o.assumed_openings.length === 1 ? 'an opening' : 'openings'} assumed where no door is modelled: ${o.assumed_openings.map((g) => `<code>${esc(g)}</code>`).join(', ')}.</div>`;
     if (o.status === 'no_route') html += '<div class="na">The model contains no connected way from here to a muster station.</div>';
   }
   for (const d of broken) html += `<div class="note"><b>Not connected:</b> ${esc(d.reason)}.</div>`;
   if (canBlock) html += `<button id="blockBtn" class="tiny" style="margin-top:6px" title="What-if: fire or obstruction. The model is not changed.">${isBlocked ? 'Unblock' : `Block this ${esc(el.type.replace('_', ' '))} (what-if)`}</button>`;
   if (!S.escapeOn) html += ' <button id="showEscape" class="tiny" style="margin-top:6px">Show in the model</button>';
-  if (o?.room && (o.status === 'single_route' || o.status === 'no_route')) {
+  if (o?.room && (o.status === 'single_route' || o.status === 'shared_route' || o.status === 'no_route')) {
     const busy = S.escAi?.loading;
     html += `<div style="margin-top:8px"><button id="escAiRoomBtn" class="ai-btn" ${busy ? 'disabled' : ''} title="AI proposes design changes for this room; Complee recomputes every proposal and keeps only those that give it a second independent route">✦ ${S.escAi && !busy ? 'Ask the AI again for this room' : 'Find a second route with AI'}</button></div>
       <div class="escAiSlot" data-room="${esc(id)}">${escAiHTML(id)}</div>`;
@@ -910,15 +915,21 @@ function renderEscapeDetail(id) {
 
 function exportEscapeCSV() {
   const q = csvCell; // quotes, and neutralises text Excel would run as a formula
-  const rows = [['room', 'name', 'deck', 'status', 'shortest_m', 'shortest_via', 'narrowest_clear_width_mm', 'narrowest_at', 'alternative_m', 'alternative_via']];
+  // What-if blockings, the assumed openings and what both routes share are part of every row: the file must not read
+  // as the design's result when it is a what-if, nor hide what the status rests on.
+  const blocked = S.escape.blocked.join(' ');
+  const rows = [['room', 'name', 'deck', 'status', 'shortest_m', 'shortest_via', 'muster_station', 'narrowest_clear_width_mm', 'narrowest_at', 'alternative_m', 'alternative_via',
+    'both_routes_pass', 'assumed_openings', 'what_if_blocked', 'note']];
   for (const o of escapeRooms()) {
     const el = elById(o.id);
     rows.push([o.id, el?.name, el?.deck, ESCAPE_LABEL[o.status],
-      o.primary ? (o.primary.length_mm / 1000).toFixed(1) : '', o.primary?.via.join(' > '), o.primary?.narrowest?.width_mm, o.primary?.narrowest?.id,
-      o.secondary ? (o.secondary.length_mm / 1000).toFixed(1) : '', o.secondary?.via.join(' > ')]);
+      o.primary ? (o.primary.length_mm / 1000).toFixed(1) : '', o.primary?.via.join(' > '), o.primary?.muster, o.primary?.narrowest?.width_mm, o.primary?.narrowest?.id,
+      o.secondary ? (o.secondary.length_mm / 1000).toFixed(1) : '', o.secondary?.via.join(' > '),
+      (o.status === 'shared_route' ? o.shared : o.status === 'single_route' ? o.shared_gates : [])?.join(' '), (o.assumed_openings ?? []).join(' '), blocked,
+      'analysis aid derived from the model geometry; not a rule result']);
   }
   // BOM and CRLF like the other CSV exports, so Excel reads names with special characters correctly.
-  download(`${S.sc.id}-escape-routes.csv`, '﻿' + rows.map((r) => r.map(q).join(',')).join('\r\n'), 'text/csv');
+  download(`${S.sc.id}-escape-routes${blocked ? '-what-if' : ''}.csv`, '﻿' + rows.map((r) => r.map(q).join(',')).join('\r\n'), 'text/csv');
 }
 
 // ---------- rest part (full model, not checked by any rule) ----------
@@ -1581,7 +1592,7 @@ function escAiHTML(room = null) {
   if (st.loading) {
     const done = st.items ?? [], writing = st.writing;
     return `<div class="ai-box"><div class="ai-tag">✦ AI proposals · checked by Complee</div>
-      ${done.map((i) => `<div class="esc-sug"><b>${esc(i.s.title)}</b><div class="${i.check.ok ? 'ok-line' : 'muted'}">${i.check.ok ? `✓ Recomputed: ${i.check.improved.length === 1 ? '1 room gets' : `${i.check.improved.length} rooms get`} a second route` : '✗ Recomputed: no improvement, will be dropped'}</div></div>`).join('')}
+      ${done.map((i) => `<div class="esc-sug"><b>${esc(i.s.title)}</b><div class="${i.check.ok ? 'ok-line' : 'muted'}">${i.check.ok ? `✓ Recomputed: ${i.check.improved.length === 1 ? '1 room gets' : `${i.check.improved.length} rooms get`} a better route` : i.check.conflicts?.length ? `✗ ${esc(i.check.conflicts[0])}: will be dropped` : '✗ Recomputed: no improvement, will be dropped'}</div></div>`).join('')}
       ${writing ? `<div class="esc-sug writing"><b>${esc(writing.title || '…')}</b><div class="muted">${esc(writing.rationale || '')}<span class="caret"></span></div></div>` : ''}
       <div class="ai-wait"><span class="spin"></span>${st.model ? `${esc(modelLabel(st.model))} ${writing || done.length ? 'is writing' : 'is thinking'}…` : 'Asking the AI…'} Complee recomputes each proposal as soon as it is complete.${st.switched ? ` <span class="muted">(${esc(st.switched)})</span>` : ''}</div>
     </div>`;
@@ -1595,12 +1606,13 @@ function escAiHTML(room = null) {
     ${good.length ? good.map((i, n) => `<div class="esc-sug ${st.shown === i ? 'on' : ''}">
       <b>${esc(i.s.title)}</b>
       <div class="muted">${esc(i.s.rationale || '')}</div>
-      <div class="ok-line">✓ Recomputed: ${i.check.improved.length === 1 ? '1 room gets' : `${i.check.improved.length} rooms get`} a second independent route (${i.check.improved.map((r) => `<a href="#" class="via" data-id="${esc(r)}">${esc(r)}</a>`).join(', ')})</div>
+      <div class="ok-line">✓ Recomputed: ${i.check.improved.length === 1 ? '1 room gets' : `${i.check.improved.length} rooms get`} a better route, nothing cut through (${i.check.improved.map((r) => `<a href="#" class="via" data-id="${esc(r)}">${esc(r)}</a>`).join(', ')})</div>
+      ${i.check.notes?.length ? `<div class="disp-warn">⚠ ${i.check.notes.map(esc).join('; ')}.</div>` : ''}
       ${i.ruleIssues.length ? `<div class="disp-warn">⚠ The rule check finds ${i.ruleIssues.length} issue${i.ruleIssues.length === 1 ? '' : 's'} in the proposed elements: ${i.ruleIssues.map((f) => `${esc(f.rule_id)} ${esc(f.measured ?? 'missing')} (required ${esc(f.required)})`).join('; ')}. Adjust before adopting it.</div>` : '<div class="ok-line">✓ The proposed elements pass the rule check.</div>'}
       <div class="esc-sug-actions"><button class="tiny escShow" data-n="${st.items.indexOf(i)}">${st.shown === i ? 'Hide' : 'Show in 3D'}</button><button class="tiny escOpen" data-n="${st.items.indexOf(i)}" title="Open the model with this change as a new revision (compare and register carry over)">Open as revision</button></div>
     </div>`).join('') : `<p class="muted">${room ? `None of the proposals gives ${esc(room)} a second independent route.` : 'None of the proposals gave a room a second independent route.'}</p>`}
     ${room && others ? `<p class="muted">${others} more proposal${others === 1 ? '' : 's'} for other rooms in the escape plan list.</p>` : ''}
-    ${dropped.length ? `<details class="assume"><summary>${dropped.length} proposal${dropped.length === 1 ? '' : 's'} dropped after recomputing</summary><ul>${dropped.map((i) => `<li><b>${esc(i.s.title)}</b>: ${esc(i.check.problems.join('; ') || (i.check.worse.length ? `makes ${i.check.worse.join(', ')} worse` : 'no room gains a second route'))}</li>`).join('')}</ul></details>` : ''}
+    ${dropped.length ? `<details class="assume"><summary>${dropped.length} proposal${dropped.length === 1 ? '' : 's'} dropped after recomputing</summary><ul>${dropped.map((i) => `<li><b>${esc(i.s.title)}</b>: ${esc([...(i.check.conflicts ?? []), ...i.check.problems].join('; ') || (i.check.worse.length ? `makes ${i.check.worse.join(', ')} worse` : 'no room gains a second route'))}</li>`).join('')}</ul></details>` : ''}
     ${aiFooter(st.data)}
   </div>`;
 }
@@ -1638,7 +1650,7 @@ async function suggestEscapeImprovements(focusRoom = null) {
     // First: the prompt shortens long input from the end.
     ...(focusRoom ? { focus_room: focusRoom, focus_note: `The engineer asked about ${focusRoom}: at least one proposal must give this room a second independent route.` } : {}),
     muster_stations: a.musters,
-    rooms_needing_a_second_route: rooms.map((o) => ({ room: o.id, status: o.status, every_route_passes: o.shared_gates ?? [], shortest_route: o.primary?.via ?? [] })),
+    rooms_needing_a_second_route: rooms.map((o) => ({ room: o.id, status: o.status, every_route_passes: (o.status === 'shared_route' ? o.shared : o.shared_gates) ?? [], shortest_route: o.primary?.via ?? [] })),
     not_connected: a.disconnected,
     blocked_what_if: a.blocked,
     method: 'Two routes are independent when the second uses no stair, ladder, escape trunk or door of the first.',
