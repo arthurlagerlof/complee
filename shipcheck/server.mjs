@@ -327,6 +327,7 @@ const TYPES = {
   '.html': 'text/html; charset=utf-8', '.json': 'application/json', '.js': 'text/javascript',
   '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.csv': 'text/csv', '.png': 'image/png',
   '.glb': 'model/gltf-binary', '.dxf': 'application/dxf', '.gltf': 'model/gltf+json', '.wasm': 'application/wasm',
+  '.pfb': 'application/octet-stream', '.ttf': 'font/ttf', // pdf.js standard fonts (drawing import)
 };
 // URL prefix -> folder on disk. Anything else is 404.
 const STATIC = [
@@ -335,13 +336,18 @@ const STATIC = [
   ['/node_modules/three/', 'node_modules/three'],
   ['/node_modules/three-mesh-bvh/', 'node_modules/three-mesh-bvh'],
   ['/node_modules/web-ifc/', 'node_modules/web-ifc'], // IFC import in the browser (wasm)
+  ['/node_modules/pdfjs-dist/', 'node_modules/pdfjs-dist'], // PDF drawing import in the browser
   // Local 3D viewer model chunks (exported with tools/export; not in Git, deployed with deploy.sh / deploy.ps1)
   ['/model/', process.env.MODEL_DIR || 'model'],
   ['/', 'public'],
 ];
 // File types served below a prefix (others: 404). The model folder can hold the source model (.nwd, .rvt, IFC) next
 // to the exported tiles; only what the viewer loads is served, as in model-server.mjs.
-const STATIC_TYPES = { '/model/': new Set(['.glb', '.json']) };
+const STATIC_TYPES = {
+  '/model/': new Set(['.glb', '.json']),
+  // pdf.js: the modules, its worker and the standard fonts; not its source maps, docs or package files.
+  '/node_modules/pdfjs-dist/': new Set(['.mjs', '.pfb', '.ttf']),
+};
 const MODEL_CATALOG_BY_FILE = {
   'ships/rcrv/parts.json': 'model-rcrv-parts',
   'ships/rcrv/rcrv-3d.meta.json': 'model-rcrv-meta',

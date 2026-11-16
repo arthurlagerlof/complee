@@ -46,3 +46,7 @@ deploy.env
 # Parts catalog and precomputed results of the full RCRV production model (built from the APS property dump; large)
 catalog/ships/rcrv/parts.json
 catalog/ships/rcrv/results-3d.json
+
+
+# Synthetic GA test drawings (tools/drawing/synthetic-ga.mjs)
+tools/drawing/out/

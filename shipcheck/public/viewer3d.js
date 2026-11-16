@@ -84,6 +84,12 @@ export function createViewer(container, { onPick } = {}) {
   const fill = new THREE.DirectionalLight(0xffffff, 0.35);
   fill.position.set(50, 30, -60);
   scene.add(fill);
+  // Drawing models are looked at from port and forward (DRAWING_ISO), where the sun does not reach: a second light
+  // from that side keeps the walls light. Off for every other model.
+  const drawingSun = new THREE.DirectionalLight(0xffffff, 1.7);
+  drawingSun.position.set(45, 70, -55);
+  drawingSun.visible = false;
+  scene.add(drawingSun);
 
   const persp = new THREE.PerspectiveCamera(38, 1, 0.1, 4000);
   const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 4000);
@@ -201,10 +207,74 @@ export function createViewer(container, { onPick } = {}) {
   // Elements that can carry a rule result are drawn one by one from their own triangles. All other elements
   // (beams, columns, walls, slabs ...) are merged into one mesh per deck: thousands of parts, a handful of draw calls.
   // A table of triangle ranges still tells which element a click hit.
+  // A hull (type 'hull', from a drawing) is neither: merged or opaque it would hide the whole interior, so it is drawn
+  // as the see-through shell (buildSourceHull).
   let source = null;
   const batchMeshes = [], batchBox = {}; // batchBox: id -> { deck, min: [x, y, z], max } relative to the deck group
-  const INDIVIDUAL = new Set(['door', 'stair', 'ramp', 'guard_rail', 'space', 'corridor', 'machinery_space']);
+  const INDIVIDUAL = new Set(['door', 'stair', 'ladder', 'ramp', 'guard_rail', 'space', 'corridor', 'machinery_space']);
   function setSource(next) { source = next ?? null; }
+
+  // A model converted from a technical drawing (src/drawing: its source says so) with its own geometry gets a look
+  // of its own: opaque floors tinted by zone, warm walls with dark tops, a steel-blue hull with its sheer and keel
+  // lines. It reads like the coloured general arrangement it came from. IFC and layout models keep their look.
+  let drawingLook = false;
+  const isDrawingModel = (m) => !!source && /^(technical )?drawing\b/i.test(String(m?.source ?? ''));
+  const ROOM_LIKE = new Set(['space', 'corridor', 'machinery_space']);
+  const DRAWING_ISO = [0.55, 0.95, -1]; // from port, forward and well above: the decks read like plans in perspective
+  // Zone tints for drawing floors: stronger than ZONE_HEX (which tints a whole room box), so the floors read like a
+  // coloured general arrangement. Pastels away from the status hues (red, amber, green): a floor coloured by its
+  // zone must not be read as a rule result.
+  const DRAWING_ZONE_HEX = {
+    accommodation: 0x8fb4e3, passenger: 0x9fb8f0, lab: 0x7fcfc4, working: 0xc2cf92, service: 0xbcaee3,
+    machinery: 0xc9a99a, tank: 0x7aa6d6, control: 0xf0b8c8, circulation: 0xdde1e6, open_deck: 0xc8d0d8,
+  };
+  const viewDirection = (name) => (drawingLook && name === 'iso' ? DRAWING_ISO : VIEWS[name] ?? VIEWS.iso);
+  const srgb = (c) => new THREE.Color().setRGB(c[0], c[1], c[2], THREE.SRGBColorSpace);
+
+  // The hull's own geometry (absolute scene coordinates) as a see-through shell in place of the one lofted from the
+  // deck outlines: it follows the shell toggle and the deck modes like that one, and no rule applies to it, so it is
+  // not pickable and keeps its colour. Returns whether one was drawn.
+  function buildSourceHull() {
+    let drawn = false;
+    for (const el of model.elements) {
+      if (el.type !== 'hull' || !source?.elements.has(el.id)) continue;
+      const g = source.elements.get(el.id);
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(g.positions, 3));
+      geo.setAttribute('normal', new THREE.BufferAttribute(g.normals, 3));
+      geo.setIndex(new THREE.BufferAttribute(g.indices, 1));
+      const color = g.color ? srgb(g.color) : 0x2f4a6b;
+      if (!drawingLook) { root.add(shellMesh(geo, color, 0.2)); drawn = true; continue; }
+      // Steel-blue glass: dense enough to show the hull form, thin enough to see the decks inside. The open top
+      // edge (sheer line), the keel and the stem/transom creases are drawn as crisp lines.
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false, roughness: 0.45, metalness: 0.15 }));
+      const lines = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 30), new THREE.LineBasicMaterial({ color: 0x1f3550, transparent: true, opacity: 0.75 }));
+      lines.raycast = () => {};
+      mesh.add(lines);
+      mesh.userData.shell = true;
+      mesh.renderOrder = 3;
+      root.add(mesh);
+      drawn = true;
+    }
+    return drawn;
+  }
+
+  // Floors of a drawing lie in one plane per deck and may overlap (a space drawn inside a larger one): the smaller
+  // floor is drawn in front (polygon offset by size rank), so overlaps never flicker.
+  const floorRank = new Map();
+  function rankFloors() {
+    floorRank.clear();
+    const perDeck = new Map();
+    for (const el of model.elements) {
+      if (!ROOM_LIKE.has(el.type) || !el.geom_mm || !source?.elements.has(el.id)) continue;
+      if (!perDeck.has(el.deck)) perDeck.set(el.deck, []);
+      perDeck.get(el.deck).push(el);
+    }
+    for (const list of perDeck.values()) {
+      list.sort((a, b) => b.geom_mm.lx * b.geom_mm.ly - a.geom_mm.lx * a.geom_mm.ly);
+      list.forEach((el, i) => floorRank.set(el.id, Math.min(i, 60)));
+    }
+  }
 
   function sourceGeometry(el, centre) {
     const g = source.elements.get(el.id);
@@ -220,13 +290,17 @@ export function createViewer(container, { onPick } = {}) {
   function buildBatches() {
     const perDeck = new Map();
     for (const el of model.elements) {
-      if (!el.geom_mm || !deckGroups[el.deck] || INDIVIDUAL.has(el.type) || !source.elements.has(el.id)) continue;
-      let list = perDeck.get(el.deck);
-      if (!list) perDeck.set(el.deck, (list = []));
+      if (!el.geom_mm || !deckGroups[el.deck] || INDIVIDUAL.has(el.type) || el.type === 'hull' || !source.elements.has(el.id)) continue;
+      // Drawing models: the outer (shell) walls form a batch of their own, drawn see-through, so each deck's
+      // arrangement stays visible from the side as in a cutaway.
+      const key = drawingLook && source.elements.get(el.id).role === 'shell' ? `${el.deck}\u0000shell` : el.deck;
+      let list = perDeck.get(key);
+      if (!list) perDeck.set(key, (list = []));
       list.push(el);
     }
     const tint = new THREE.Color();
-    for (const [deckId, list] of perDeck) {
+    for (const [key, list] of perDeck) {
+      const deckId = list[0].deck, shellBatch = key !== deckId;
       const elevation = model.decks[deckIndex[deckId]].elevation_mm * M;
       let vertices = 0, indices = 0;
       for (const el of list) { const g = source.elements.get(el.id); vertices += g.positions.length / 3; indices += g.indices.length; }
@@ -237,9 +311,19 @@ export function createViewer(container, { onPick } = {}) {
         const g = source.elements.get(el.id), n = g.positions.length / 3;
         for (let i = 0; i < n; i++) { pos[(vo + i) * 3] = g.positions[i * 3]; pos[(vo + i) * 3 + 1] = g.positions[i * 3 + 1] - elevation; pos[(vo + i) * 3 + 2] = g.positions[i * 3 + 2]; }
         nor.set(g.normals, vo * 3);
-        // The file's own colour, pulled towards a light steel grey so the checked elements stand out.
-        tint.setRGB(g.color[0], g.color[1], g.color[2]).lerp(new THREE.Color(0xb9c2cc), 0.45);
-        for (let i = 0; i < n; i++) { col[(vo + i) * 3] = tint.r; col[(vo + i) * 3 + 1] = tint.g; col[(vo + i) * 3 + 2] = tint.b; }
+        if (drawingLook) {
+          // A drawing's colours are chosen for this view (sRGB); walls carry their own per-vertex colours (dark top).
+          if (g.colors?.length === n * 3) {
+            for (let i = 0; i < n; i++) { tint.setRGB(g.colors[i * 3], g.colors[i * 3 + 1], g.colors[i * 3 + 2], THREE.SRGBColorSpace); col[(vo + i) * 3] = tint.r; col[(vo + i) * 3 + 1] = tint.g; col[(vo + i) * 3 + 2] = tint.b; }
+          } else {
+            tint.setRGB(g.color[0], g.color[1], g.color[2], THREE.SRGBColorSpace);
+            for (let i = 0; i < n; i++) { col[(vo + i) * 3] = tint.r; col[(vo + i) * 3 + 1] = tint.g; col[(vo + i) * 3 + 2] = tint.b; }
+          }
+        } else {
+          // The file's own colour, pulled towards a light steel grey so the checked elements stand out.
+          tint.setRGB(g.color[0], g.color[1], g.color[2]).lerp(new THREE.Color(0xb9c2cc), 0.45);
+          for (let i = 0; i < n; i++) { col[(vo + i) * 3] = tint.r; col[(vo + i) * 3 + 1] = tint.g; col[(vo + i) * 3 + 2] = tint.b; }
+        }
         for (let k = 0; k < g.indices.length; k++) idx[io + k] = g.indices[k] + vo;
         ranges.push({ id: el.id, start: io / 3, end: (io + g.indices.length) / 3 });
         const gm = el.geom_mm;
@@ -253,6 +337,12 @@ export function createViewer(container, { onPick } = {}) {
       geo.setIndex(new THREE.BufferAttribute(idx, 1));
       const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.05, side: THREE.DoubleSide }));
       mesh.userData.batch = ranges;
+      mesh.userData.base = 1;
+      if (shellBatch) {
+        Object.assign(mesh.material, { transparent: true, opacity: 0.38, depthWrite: false });
+        mesh.userData.base = 0.38;
+        mesh.renderOrder = 2;
+      }
       deckGroups[deckId].add(mesh);
       batchMeshes.push(mesh);
     }
@@ -292,10 +382,16 @@ export function createViewer(container, { onPick } = {}) {
     let obj;
     if (source?.elements.has(el.id) && !el.virtual) {
       const centre = new THREE.Vector3((gm.x + gm.lx / 2) * M, model.decks[deckIndex[el.deck]].elevation_mm * M + (gm.z + gm.h / 2) * M, -(gm.y + gm.ly / 2) * M);
-      const space = el.type === 'space';
+      const space = el.type === 'space' && !drawingLook;
       obj = new THREE.Mesh(sourceGeometry(el, centre), new THREE.MeshStandardMaterial({ color: 0x9aa3ad, transparent: space, opacity: space ? 0.22 : 1, depthWrite: !space, roughness: 0.8, side: THREE.DoubleSide }));
       obj.userData.mats = [{ m: obj.material, base: space ? 0.22 : 1 }];
       obj.userData.volume = space;
+      if (drawingLook && ROOM_LIKE.has(el.type)) {
+        // An opaque floor tinted by zone or status. It is a solid surface for picking too: a click on it selects the
+        // room, not something on the deck below it (doors and walls in front of it are hit first anyway).
+        const rank = floorRank.get(el.id) ?? 0;
+        Object.assign(obj.material, { roughness: 0.9, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 - 2 * rank });
+      }
     } else if (el.virtual) {
       obj = new THREE.LineSegments(new THREE.EdgesGeometry(box), new THREE.LineDashedMaterial({ color: 0x9aa3ad, dashSize: 0.4, gapSize: 0.25 }));
       obj.computeLineDistances();
@@ -357,8 +453,12 @@ export function createViewer(container, { onPick } = {}) {
     clearMeasure();
     ghosts = [];
     model.decks.forEach((d, i) => (deckIndex[d.id] = i));
+    drawingLook = isDrawingModel(model);
+    drawingSun.visible = drawingLook;
+    if (drawingLook) rankFloors();
 
-    buildShell();
+    // A drawn hull replaces the shell lofted from the deck outlines (two shells would overlap).
+    if (!buildSourceHull()) buildShell();
 
     for (const d of model.decks) {
       const g = new THREE.Group();
@@ -367,12 +467,15 @@ export function createViewer(container, { onPick } = {}) {
       if (d.outline_mm.length > 2) {
         const geo = new THREE.ShapeGeometry(shapeOf(d.outline_mm));
         geo.rotateX(-Math.PI / 2);
-        const plate = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xdfe4ea, transparent: true, opacity: 0.9, side: THREE.DoubleSide, roughness: 0.95 }));
+        // Drawing models: an opaque steel-grey plate (the tinted floors lie on it) with a crisp dark deck edge.
+        const plate = new THREE.Mesh(geo, drawingLook
+          ? new THREE.MeshStandardMaterial({ color: 0xc9d0d8, side: THREE.DoubleSide, roughness: 0.95 })
+          : new THREE.MeshStandardMaterial({ color: 0xdfe4ea, transparent: true, opacity: 0.9, side: THREE.DoubleSide, roughness: 0.95 }));
         plate.position.y = -0.03;
         g.add(plate);
         plate.userData.deckPlate = true;
-        const pts = [...d.outline_mm, d.outline_mm[0]].map(([x, y]) => new THREE.Vector3(x * M, 0, -y * M));
-        g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: 0x334155 })));
+        const pts = [...d.outline_mm, d.outline_mm[0]].map(([x, y]) => new THREE.Vector3(x * M, drawingLook ? 0.056 : 0, -y * M)); // drawing: just above the 50 mm floors
+        g.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: drawingLook ? 0x1e2a38 : 0x334155 })));
       }
       deckGroups[d.id] = g;
       root.add(g);
@@ -383,6 +486,8 @@ export function createViewer(container, { onPick } = {}) {
     for (const el of model.elements) {
       elById[el.id] = el;
       if (!el.geom_mm || !deckGroups[el.deck]) continue;
+      // The hull is the shell (buildSourceHull); without its geometry, its bounding box would only hide the interior.
+      if (el.type === 'hull') continue;
       if (source?.elements.has(el.id) && !INDIVIDUAL.has(el.type)) continue; // merged per deck (buildBatches)
       const obj = elementObject(el);
       deckGroups[el.deck].add(obj);
@@ -395,17 +500,21 @@ export function createViewer(container, { onPick } = {}) {
     roomLabels = [];
     for (const el of model.elements) {
       if (!meshes[el.id] || el.virtual || !LABELLED.has(el.type)) continue;
+      if (drawingLook && /^unnamed\b/i.test(el.name ?? '')) continue; // a room without a name on the drawing: no label
       const node = document.createElement('div');
       node.className = `room-label${el.type === 'muster_station' ? ' muster' : ''}`;
       node.textContent = el.type === 'muster_station' ? `▲ ${el.name}` : el.name;
       labelLayer.appendChild(node);
-      roomLabels.push({ id: el.id, node, chars: node.textContent.length, always: el.type === 'muster_station' });
+      roomLabels.push({ id: el.id, node, chars: node.textContent.length, always: el.type === 'muster_station', area: (el.geom_mm.lx * el.geom_mm.ly) || 0 });
     }
+    // Drawing models: where names would overlap, the larger room keeps its name (updateRoomLabels places in order).
+    if (drawingLook) roomLabels.sort((a, b) => Number(b.always) - Number(a.always) || b.area - a.area);
     applyMode();
     update(r);
-    overview(0, plan ? null : new THREE.Vector3(...VIEWS.iso));
+    overview(0, plan ? null : new THREE.Vector3(...viewDirection('iso')));
   }
 
+  const DRAWING_ROOM_HEX = 0xe4e7eb; // a drawing's room without a zone: a light floor, not the "no rule" grey
   function colorFor(id) {
     if (blocked.has(id)) return BLOCKED_HEX;
     // Escape plan: rooms by route status, everything else neutral (rule colours would mix two meanings).
@@ -413,7 +522,10 @@ export function createViewer(container, { onPick } = {}) {
     const st = escape?.plan ? null : results?.elements[id]?.worst ?? null;
     if (st) return STATUS_HEX[st];
     const el = elById[id];
-    return TYPE_HEX[el?.type] ?? ZONE_HEX[el?.props?.zone] ?? STATUS_HEX.null;
+    // A zone may be written as a value with its source ({ value, source }, as the drawing converter does).
+    const z = el?.props?.zone, zone = z && typeof z === 'object' ? z.value : z;
+    if (drawingLook && ROOM_LIKE.has(el?.type)) return DRAWING_ZONE_HEX[zone] ?? (el.type === 'corridor' ? DRAWING_ZONE_HEX.circulation : DRAWING_ROOM_HEX);
+    return TYPE_HEX[el?.type] ?? ZONE_HEX[zone] ?? STATUS_HEX.null;
   }
 
   function paint(o, hex) {
@@ -436,7 +548,12 @@ export function createViewer(container, { onPick } = {}) {
   }
 
   function applyFilter() {
-    for (const b of batchMeshes) { b.material.transparent = !!filterIds; b.material.opacity = filterIds ? 0.18 : 1; b.material.depthWrite = !filterIds; b.material.needsUpdate = true; }
+    for (const b of batchMeshes) {
+      // Drawing models: a batch whose parts are all in the filter (the deck filter of the list) stays solid.
+      const dim = !!filterIds && !(drawingLook && b.userData.batch.every((r) => filterIds.has(r.id)));
+      const base = b.userData.base ?? 1;
+      b.material.transparent = dim || base < 1; b.material.opacity = dim ? Math.min(0.18, base) : base; b.material.depthWrite = !dim && base >= 1; b.material.needsUpdate = true;
+    }
     for (const [id, o] of Object.entries(meshes)) {
       if (o.userData.virtual) continue;
       const dim = filterIds && !filterIds.has(id);
@@ -612,7 +729,7 @@ export function createViewer(container, { onPick } = {}) {
 
   function setView(name) {
     if (plan) setPlan(false);
-    return overview(700, new THREE.Vector3(...(VIEWS[name] ?? VIEWS.iso)));
+    return overview(700, new THREE.Vector3(...viewDirection(name)));
   }
 
   function setFilter(ids) { filterIds = ids; applyFilter(); }
@@ -972,6 +1089,7 @@ export function createViewer(container, { onPick } = {}) {
 
   function updateRoomLabels() {
     const w = container.clientWidth, h = container.clientHeight;
+    const placed = []; // drawing models: screen boxes of the names shown so far
     for (const L of roomLabels) {
       const o = meshes[L.id];
       let show = labelsOn && o?.parent.visible && !(filterIds && !filterIds.has(L.id));
@@ -985,9 +1103,16 @@ export function createViewer(container, { onPick } = {}) {
         const px = Math.abs(corner.x - projected.x) * w; // full room length on screen
         show = projected.z > -1 && projected.z < 1 && Math.abs(projected.x) < 1.02 && Math.abs(projected.y) < 1.02 && (L.always || px > L.chars * 5.2 + 10);
         if (show && !L.always) show = !labelHidden(L.id);
+        const sx = ((projected.x + 1) / 2) * w, sy = ((1 - projected.y) / 2) * h;
+        if (show && drawingLook) {
+          // Estimated label box (centred, 11 px text): skip a name that would overlap one already placed.
+          const hw = L.chars * 3.3 + 6, hh = 9;
+          if (placed.some((p) => Math.abs(p.x - sx) < p.hw + hw && Math.abs(p.y - sy) < p.hh + hh)) show = false;
+          else placed.push({ x: sx, y: sy, hw, hh });
+        }
         if (show) {
-          L.node.style.left = `${((projected.x + 1) / 2) * w}px`;
-          L.node.style.top = `${((1 - projected.y) / 2) * h}px`;
+          L.node.style.left = `${sx}px`;
+          L.node.style.top = `${sy}px`;
         }
       }
       L.node.style.display = show ? 'block' : 'none';

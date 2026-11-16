@@ -23,10 +23,71 @@ export function plainText(s) {
     .replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
 }
 
-export function parseDxf(text) {
+// The checks every reader makes before splitting the file into lines.
+function assertAsciiDxf(text) {
   if (typeof text !== 'string' || !text.length) throw new Error('The file is empty.');
   if (text.startsWith('AutoCAD Binary DXF')) throw new Error('This is a binary DXF. Save it as ASCII DXF (SAVEAS > AutoCAD DXF, format ASCII).');
   if (text.startsWith('AC10') || text.charCodeAt(0) === 0) throw new Error('This is a DWG (binary) file. Save it as DXF in AutoCAD (SAVEAS > AutoCAD DXF) and open that file.');
+}
+
+/**
+ * Lossless structural read for readers that need every group code (src/drawing/read-dxf.mjs): repeated codes, their
+ * order (LWPOLYLINE bulges, HATCH boundary paths, SPLINE knots) and all table records. Nothing is interpreted.
+ *   { header: { $VAR: [[code, value], ...] }, tables: { LAYER: [rec], LTYPE: [rec], ... },
+ *     blocks: [{ name, base: [x, y], flags, layer, entities: [rec] }], entities: [rec], complete }
+ * rec = { type, c: [codes], v: [values] }: values are trimmed strings, except text codes 1 and 3, whose leading
+ * spaces are kept (they are part of the text).
+ */
+export function readDxfGroups(text) {
+  assertAsciiDxf(text);
+  const lines = text.split(/\r\n|\r|\n/);
+  const n = lines.length - (lines.length % 2);
+  const header = {}, tables = {}, blocks = [], entities = [];
+  let i = 0;
+  while (i < n && !(parseInt(lines[i], 10) === 0 && lines[i + 1].trim() === 'SECTION')) i += 2;
+  if (i >= n) throw new Error('No DXF sections found: this is not an ASCII DXF file.');
+  let complete = false, section = null, table = null, block = null, rec = null, headerVar = null;
+  let target = entities;
+  for (; i < n; i += 2) {
+    const c = parseInt(lines[i], 10);
+    const raw = lines[i + 1];
+    if (c === 0) {
+      const v = raw.trim();
+      rec = null;
+      if (v === 'SECTION') { section = parseInt(lines[i + 2], 10) === 2 ? lines[i + 3].trim() : null; i += 2; target = entities; continue; }
+      if (v === 'ENDSEC') { section = null; continue; }
+      if (v === 'EOF') { complete = true; break; }
+      if (section === 'HEADER') continue;
+      if (section === 'TABLES') {
+        if (v === 'TABLE') { table = parseInt(lines[i + 2], 10) === 2 ? lines[i + 3].trim() : null; i += 2; if (table) tables[table] ||= []; }
+        else if (v === 'ENDTAB') table = null;
+        else if (table) { rec = { type: v, c: [], v: [] }; tables[table].push(rec); }
+        continue;
+      }
+      if (section === 'BLOCKS') {
+        if (v === 'BLOCK') { block = { name: null, base: [0, 0], flags: 0, layer: '0', entities: [], head: { type: 'BLOCK', c: [], v: [] } }; rec = block.head; target = block.entities; continue; }
+        if (v === 'ENDBLK') { if (block?.name) blocks.push(block); block = null; target = entities; continue; }
+      }
+      if (section === 'BLOCKS' || section === 'ENTITIES') { rec = { type: v, c: [], v: [] }; target.push(rec); }
+      continue;
+    }
+    if (section === 'HEADER') {
+      if (c === 9) { headerVar = raw.trim(); header[headerVar] ||= []; } else if (headerVar) header[headerVar].push([c, raw.trim()]);
+      continue;
+    }
+    if (!rec) continue;
+    rec.c.push(c);
+    rec.v.push(c === 1 || c === 3 ? raw.replace(/\s+$/, '') : raw.trim());
+    if (rec === block?.head) {
+      if (c === 2) block.name = raw.trim(); else if (c === 10) block.base[0] = num(raw); else if (c === 20) block.base[1] = num(raw);
+      else if (c === 70) block.flags = num(raw); else if (c === 8) block.layer = raw.trim();
+    }
+  }
+  return { header, tables, blocks, entities, complete };
+}
+
+export function parseDxf(text) {
+  assertAsciiDxf(text);
   const lines = text.split(/\r\n|\r|\n/);
   const n = lines.length - (lines.length % 2);
   const header = {}, layers = {}, blocks = {}, entities = [], ignored = {};

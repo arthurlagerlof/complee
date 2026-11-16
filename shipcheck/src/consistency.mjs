@@ -16,6 +16,9 @@ export function modelledWidth(el) {
 }
 
 export function widthCheck(el, model) {
+  // A width measured from the same drawing geometry (drawing → 3D import) cannot be a typing error, and on a short
+  // stair flight the tread length is longer than the run, so "short side = width" would flag it wrongly.
+  if (el.props?.clear_width?.basis === 'measured') return null;
   const modelled = modelledWidth(el);
   const v = readValue(el.props?.clear_width, model.units, el.source);
   if (modelled == null || !v || typeof v.value !== 'number') return null;

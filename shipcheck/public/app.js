@@ -1305,9 +1305,13 @@ function download(name, text, type) {
 const TRACE_PAGE = 300;
 let traceState = { findingsOnly: null, limit: TRACE_PAGE };
 
+// The drawing panel (Drawing → 3D) lies over the 3D view like the other panels: one at a time.
+function closeDrawingPanel() { $('#drawingPanel').hidden = true; $('#drawingBtn').classList.remove('on'); document.body.classList.remove('dw-open'); }
+
 function openTrace() {
   closeRegister();
   closeAiPanel();
+  closeDrawingPanel();
   const panel = $('#tracePanel');
   if (traceState.findingsOnly == null) traceState.findingsOnly = S.norm.elements.length > 2000;
   const m = traceMatrix(S.results, allRules(), { findingsOnly: traceState.findingsOnly });
@@ -1520,7 +1524,7 @@ function renderAiPill() {
 }
 
 function openAiPanel() {
-  closeTrace(); closeRegister();
+  closeTrace(); closeRegister(); closeDrawingPanel();
   const st = aiState.status;
   const total = aiState.log.reduce((sum, e) => sum + (e.cost ?? 0), 0);
   const panel = $('#aiPanel');
@@ -1890,6 +1894,7 @@ function wireRegisterTabs(panel) {
 function openRegister() {
   closeTrace();
   closeAiPanel();
+  closeDrawingPanel();
   if (registerTab === 'comments') return openComments();
   const panel = $('#registerPanel');
   const all = registerRows(S.results, S.register), s = registerSummary(all);
@@ -2217,21 +2222,9 @@ async function openModelFile(file) {
         try { json = JSON.parse(text); } catch { throw new Error('The file is not valid JSON (expected a ship/1 JSON model, an AutoCAD .dxf or an .ifc file).'); }
       }
     }
-    if (!json || typeof json !== 'object' || !Array.isArray(json.elements)) throw new Error('A ship model needs an "elements" list (ship/1 format; "Download model (JSON)" in the left panel gives an example).');
-    if (!Array.isArray(json.decks) && !json.deck) throw new Error('A ship model needs "decks" (or a single "deck").');
-    const norm = normalizeModel(structuredClone(json)); // throws on an unsupported unit
-    const ids = new Set();
-    for (const e of norm.elements) {
-      if (!e.id || !e.type) throw new Error('Every element needs an "id" and a "type".');
-      if (ids.has(e.id)) throw new Error(`Element id "${e.id}" is used twice.`);
-      ids.add(e.id);
-    }
-    if (!norm.elements.length) throw new Error('The model contains no elements, so there is nothing to check.');
-    const id = `file-${++fileCounter}-${file.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40)}`;
-    if (geometry) json.provenance_note = json.provenance_note.replace(/^Imported from /, `Imported from ${original.name !== file.name ? `${original.name} (converted to IFC by Autodesk) → ` : ''}`);
-    S.scenarios.push({ id, name: `File: ${file.name}`, viewer: 'three', modelData: json, geometry });
-    $('#scenario').insertAdjacentHTML('beforeend', `<option value="${esc(id)}">${esc(`File: ${file.name}`)}</option>`);
-    if (await loadScenario(id)) {
+    // addScenario checks the model (checkModelJson) before it is listed.
+    if (geometry && typeof json?.provenance_note === 'string') json.provenance_note =json.provenance_note.replace(/^Imported from /, `Imported from ${original.name !== file.name ? `${original.name} (converted to IFC by Autodesk) → ` : ''}`);
+    if (await addScenario({ name: `File: ${file.name}`, idHint: file.name, json, geometry })) {
       if (cad) $('#detail').innerHTML = cadReportHTML(cad);
       else if (geometry) $('#detail').innerHTML = ifcReportHTML(original.name, file.name);
     }
@@ -2240,6 +2233,41 @@ async function openModelFile(file) {
       <p class="muted">AutoCAD drawings are read as DXF with the layer convention &lt;DECK&gt;-&lt;TYPE&gt;:
       <a href="autocad.html" target="_blank" rel="noopener">AutoCAD guide</a> · <a href="demo/autocad-sample.dxf" download>sample drawing</a>.</p>`);
   }
+}
+
+// A model from outside (a file, a converted drawing) must be a ship/1 model the checker can use: throws with a message
+// for the engineer otherwise.
+function checkModelJson(json) {
+  if (!json || typeof json !== 'object' || !Array.isArray(json.elements)) throw new Error('A ship model needs an "elements" list (ship/1 format; "Download model (JSON)" in the left panel gives an example).');
+  if (!Array.isArray(json.decks) && !json.deck) throw new Error('A ship model needs "decks" (or a single "deck").');
+  const norm = normalizeModel(structuredClone(json)); // throws on an unsupported unit
+  const ids = new Set();
+  for (const e of norm.elements) {
+    if (!e.id || !e.type) throw new Error('Every element needs an "id" and a "type".');
+    if (ids.has(e.id)) throw new Error(`Element id "${e.id}" is used twice.`);
+    ids.add(e.id);
+  }
+  if (!norm.elements.length) throw new Error('The model contains no elements, so there is nothing to check.');
+}
+
+// Adds a checked model to the model list and loads it: shared by "Open…" and "Drawing → 3D". `replace` names a
+// scenario to update in place (a drawing converted again after a correction keeps its one entry in the list).
+// geometry: { elements: Map(id -> mesh) } for the 3D viewer, or null for boxes. Returns the scenario id, or null when
+// another model was chosen while this one loaded.
+async function addScenario({ name, idHint = name, json, geometry = null, replace = null }) {
+  checkModelJson(json);
+  const existing = replace ? S.scenarios.find((s) => s.id === replace) : null;
+  const id = existing?.id ?? `file-${++fileCounter}-${idHint.replace(/[^a-z0-9]+/gi, '-').toLowerCase().slice(0, 40)}`;
+  const sc = { id, name, viewer: 'three', modelData: json, geometry };
+  if (existing) {
+    S.scenarios[S.scenarios.indexOf(existing)] = sc;
+    const option = [...$('#scenario').options].find((o) => o.value === id);
+    if (option) option.textContent = name;
+  } else {
+    S.scenarios.push(sc);
+    $('#scenario').insertAdjacentHTML('beforeend', `<option value="${esc(id)}">${esc(name)}</option>`);
+  }
+  return (await loadScenario(id)) ? id : null;
 }
 
 // What an IFC import gave: elements by type, which of them the rules cover, and what data the checks still need.
@@ -2649,6 +2677,30 @@ loadAiStatus();
 $('#manageLink').onclick = (e) => { e.preventDefault(); openRegister(); };
 $('#openBtn').onclick = () => $('#openFile').click();
 $('#openFile').onchange = (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) openModelFile(f); };
+// Drawing → 3D (drawing-import.js, loaded on first use). The module gets what it needs through this host object.
+const drawingHost = {
+  addScenario: (args) => addScenario(args),
+  results: () => S.results,
+  hasElement: (id) => !!S.results?.elements[id] && !!elById(id),
+  select: (id) => select(id),
+  download,
+  closeOtherPanels: () => { closeRegister(); closeTrace(); closeAiPanel(); },
+};
+let drawingModule = null;
+const drawingImport = () => (drawingModule ??= import('./drawing-import.js').catch((e) => { drawingModule = null; throw e; }));
+const drawingFailed = (e) => { $('#detail').innerHTML = `<p class="check-bad"><b>Drawing → 3D could not start.</b> ${esc(e.message)}</p>`; console.error(e); };
+$('#drawingBtn').onclick = () => {
+  // The file dialog must open within the click (browsers allow it only then), so on the first click before the module
+  // has loaded; later the module opens it itself when no drawing is loaded yet.
+  const first = !drawingModule;
+  if (first) $('#drawingFile').click();
+  drawingImport().then((m) => m.openDrawingImport(drawingHost, { pick: !first })).catch(drawingFailed);
+};
+$('#drawingFile').onchange = (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (f) drawingImport().then((m) => m.openDrawingImport(drawingHost, { file: f })).catch(drawingFailed);
+};
 $('#viewTools').onclick = (e) => {
   const b = e.target.closest('button');
   if (!b || viewer !== views.three) return;

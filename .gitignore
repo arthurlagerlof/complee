@@ -19,3 +19,6 @@ backend/.cache/
 
 # Local Claude Code session settings
 .claude/
+
+# Public sample drawings used as local test input (third-party; RCRV GA is marked confidential)
+shipcheck/tools/drawing-samples/

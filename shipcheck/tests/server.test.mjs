@@ -25,6 +25,15 @@ test('server serves the app and API but never .env, keys or files outside the wh
   assert.equal(await code('/server.mjs'), 404);
   assert.equal(await code('/scripts/check.mjs'), 404);
   assert.equal(await code('/node_modules/.package-lock.json'), 404);
+  // pdf.js for the drawing import: modules, worker and standard fonts only.
+  assert.equal(await code('/node_modules/pdfjs-dist/build/pdf.mjs'), 200);
+  assert.equal(await code('/node_modules/pdfjs-dist/build/pdf.worker.mjs'), 200);
+  const font = await fetch(`${base}/node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf`);
+  assert.equal(font.status, 200); assert.equal(font.headers.get('content-type'), 'font/ttf');
+  assert.equal(await code('/node_modules/pdfjs-dist/standard_fonts/FoxitSerif.pfb'), 200);
+  assert.equal(await code('/node_modules/pdfjs-dist/package.json'), 404);
+  assert.equal(await code('/node_modules/pdfjs-dist/build/pdf.mjs.map'), 404);
+  assert.equal(await code('/node_modules/pdfjs-dist/../../.env'), 404);
 
   // APS: keys are never served; the status only says whether they exist.
   assert.equal(await code('/3D_Since_AI/.env'), 404);

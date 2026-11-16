@@ -33,6 +33,7 @@
   <span class="top-break"></span>
   <label>Model <select id="scenario"></select></label>
   <button id="openBtn" title="Open a model: Revit (.rvt), IFC (.ifc, IFC2x3 or IFC4), an AutoCAD drawing (.dxf, layer convention: see the AutoCAD guide) or a ship/1 JSON model">Open…</button><input id="openFile" type="file" accept=".rvt,.ifc,.dxf,.dwg,.json,application/json,application/dxf,image/vnd.dxf" hidden>
+  <button id="drawingBtn" title="Drawing → 3D: a general arrangement drawing (profile and deck plans) as PDF, DXF or SVG becomes a 3D model that is checked like any other. Drop the file on the panel or choose it.">Drawing → 3D…</button><input id="drawingFile" type="file" accept=".pdf,.dxf,.svg,.dwg,application/pdf,image/svg+xml,application/dxf,image/vnd.dxf,image/png,image/jpeg,image/tiff,.png,.jpg,.jpeg,.tif,.tiff" hidden>
   <label>Decks <select id="deck"></select></label>
   <button id="planBtn" title="Top-down plan view">Plan view</button>
   <button id="escapeBtn" hidden title="Escape routes from every room to the muster station">Escape plan</button>
@@ -77,6 +78,7 @@
     <div id="tracePanel" class="viewpane" hidden></div>
     <div id="registerPanel" class="viewpane" hidden></div>
     <div id="aiPanel" class="viewpane" hidden></div>
+    <div id="drawingPanel" class="viewpane" hidden aria-label="Drawing to 3D"></div>
     <div id="viewTools" class="view-tools" hidden>
       <button data-view="iso" title="Perspective from the port quarter">3D</button>
       <button data-view="top" title="Look straight down">Top</button>

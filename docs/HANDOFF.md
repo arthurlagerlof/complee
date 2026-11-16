@@ -51,6 +51,21 @@ rule-verification tables are empty (catalog not imported yet: the user should do
   `fire_rating`, `Pset_RailingCommon.Height` as the railing height, door/window outer size as `overall_width` /
   `overall_height`, never as a clear width), Revit `.rvt` via Autodesk (server side, local only), DXF with layer
   convention `<DECK>-<TYPE>` (complete-file check) and DXF markup export, ship/1 JSON.
+- **Drawing → 3D** (`shipcheck/src/drawing/`, contracts in `CONTRACT.md`; UI `public/drawing-import.js`): a general
+  arrangement as vector PDF (pdf.js), any DXF or SVG becomes a ship/1 model plus real 3D geometry, in the browser,
+  without AI. Views (profiles, deck plans, sections, title block) are found and classified; the scale comes from
+  several sources that must agree within 5 % (text "1:n", frame numbers × frame spacing, dimensions); deck levels from
+  the profile; walls, rooms (free space inside walls, holes, open decks not covered by the deck above), doors (only
+  with a drawn swing and leaf), stairs, ladders, fittings and the hull (lofted from profile and deck outlines; the bilge
+  below the lowest deck is assumed). Every value carries `basis` (measured / read / typed / assumed), `range` and
+  evidence ids; an independent `referee.mjs` checks the geometry. The engineer sees the views on the sheet, corrects
+  view kind, deck, elevation, scale and bow direction, converts again, and checks the result overlaid on the drawing.
+  Scans (raster images) are refused with a message. Test drawing: AURORA, 28 m research vessel (public PDF, local only
+  in `tools/drawing-samples/`, gitignored): 31/31 doors, 48/49 labels as rooms, 7/7 printed cabin areas within 2 % (2
+  from the walls alone, 5 joined using the printed area as evidence), scale 1:100 confirmed twice, 0 referee issues,
+  about 4 s. Scorecard: `node tools/drawing/eval-aurora.mjs`; browser checks: `node tools/drawing/drawing-smoke.mjs`
+  and `tools/drawing/shot-3d.mjs` (Playwright with the installed Chrome). Not read yet: stroked text without fonts (the
+  RCRV GA), sections (bilge shape), sliding doors, windows in plans.
 - **Checker:** min/max/in_set/table_lookup/distance/count/adjacency/requires/data_quality/manual; applicability by
   type, element properties, ship type/size/area/class and keel laying date; rule hierarchy (`relations`), conflicts,
   same requirement; missing data = "not enough info". Results are compact (`checkModel(raw, rules, { details:
