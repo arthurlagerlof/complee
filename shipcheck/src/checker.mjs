@@ -112,7 +112,7 @@ export function normalizeModel(raw) {
   // an id was kept). Such elements are checked under a new id and listed in `issues`, so nothing is hidden.
   const issues = [];
   const used = new Set();
-  const elements = [];
+  const elements = [], sources = [];
   (raw.elements || []).forEach((el, i) => {
     if (!isObj(el)) {
       issues.push({ kind: 'invalid_element', index: i, text: `Element ${i + 1} of the model is not an element (${JSON.stringify(el)}) and was not checked.` });
@@ -132,6 +132,7 @@ export function normalizeModel(raw) {
     }
     used.add(String(id));
     elements.push(normalizeElement(id === el.id ? el : { ...el, id }, k, decks[0]?.id));
+    sources.push(el);
   });
 
   return {
@@ -144,6 +145,8 @@ export function normalizeModel(raw) {
     decks,
     elements,
     issues,
+    // The raw element of each normalised one (same order), so a result's details can be computed again on demand.
+    sources,
     hull: raw.hull,
     demo: raw.demo,
   };
@@ -894,6 +897,129 @@ function limitAnalysis(results) {
 
 // ---------- main entry ----------
 
+// ---------- compact results ----------
+// A full result carries an explanation and its inputs with their sources: text that is different for every element.
+// On a large model that text is most of the memory (a 360 m cruise-ship model with 415,000 checked parts: 778 of
+// 804 MB). The list, the counts, the register and the 3D colours need only the status, the measured and the required
+// value. So checkModel keeps those, and computes the explanation and the inputs of an element again when something
+// reads them (one element's check takes well under a millisecond; the last few hundred are cached). Rule fields
+// (source, clause, text, ...) are read from the rule itself. Reading, spreading into a finding or JSON.stringify give the
+// same values as before.
+// Empty lists are shared by all compact elements (most parts have no superseded rule, conflict or manual check);
+// frozen, so a change by mistake fails loudly instead of reaching every element.
+const NONE = Object.freeze([]), NO_LIMITS = Object.freeze({});
+const shared = (v) => (Array.isArray(v) ? (v.length ? v : NONE) : v && typeof v === 'object' && !Object.keys(v).length ? NO_LIMITS : v);
+const RULE_FIELDS = {
+  source: (r) => r.source, clause: (r) => r.clause, rule_text: (r) => r.text, text_status: (r) => r.text_status || 'paraphrase',
+  basis: (r) => r.basis || 'explicit', verified: (r) => r.verified === true, review_status: (r) => r.review_status || null,
+  reference_url: (r) => r.reference_url || null, related: (r) => r.related || [], check: (r) => r.check, parameter: (r) => r.parameter ?? null,
+};
+const JSON_FIELDS = ['rule_id', 'source', 'clause', 'rule_text', 'text_status', 'basis', 'verified', 'review_status', 'reference_url', 'related', 'check',
+  'parameter', 'status', 'measured', 'required', 'explanation', 'inputs', 'limit', 'applicability', 'same_requirement_as'];
+const JSON_KEYS = new Set(JSON_FIELDS);
+class CompactResult {
+  // Private: never copied, compared or written out. A finding inherits from its result (Object.create), so the
+  // getters look the links up on the result itself.
+  #rule;
+  #element;
+  constructor(full, rule, element) {
+    this.rule_id = full.rule_id;
+    this.status = full.status;
+    this.measured = full.measured;
+    this.required = full.required;
+    if (full.applicability !== undefined) this.applicability = full.applicability;
+    if (full.same_requirement_as !== undefined) this.same_requirement_as = full.same_requirement_as;
+    this.#rule = rule;
+    this.#element = element;
+  }
+  static #base(o) { while (o && !(#rule in o)) o = Object.getPrototypeOf(o); return o; }
+  static ruleOf(o) { return CompactResult.#base(o)?.#rule; }
+  static elementOf(o) { return CompactResult.#base(o)?.#element; }
+  get explanation() { return detailOf(CompactResult.elementOf(this))?.get(this.rule_id)?.explanation ?? ''; }
+  get inputs() { return detailOf(CompactResult.elementOf(this))?.get(this.rule_id)?.inputs ?? []; }
+  get limit() { return detailOf(CompactResult.elementOf(this))?.get(this.rule_id)?.limit ?? null; }
+  toJSON() {
+    const out = {};
+    for (const k of Object.keys(this)) if (!JSON_KEYS.has(k)) out[k] = this[k]; // a finding's element, name and deck first
+    for (const k of JSON_FIELDS) { const v = this[k]; if (v !== undefined) out[k] = v; } // then as a full result
+    return out;
+  }
+}
+for (const [k, read] of Object.entries(RULE_FIELDS)) Object.defineProperty(CompactResult.prototype, k, { get() { return read(CompactResult.ruleOf(this)); }, enumerable: false });
+
+// Context to compute details again: the raw model, the rules, and (for small models, or rules that look at other
+// elements) the whole normalised model, built only when needed.
+const KEEP_FULL_MODEL = 20000;
+function detailContext(rawModel, model, rules, ctx) {
+  const header = { ...model, elements: [] };
+  const dctx = {
+    rules, shipTypes: ctx.shipTypes, header, k: UNIT_TO_MM[model.units], defaultDeck: model.decks[0]?.id,
+    deckById: ctx.deckById, cache: new Map(),
+    full: model.elements.length <= KEEP_FULL_MODEL ? ctx : null,
+    fullModel() {
+      if (!this.full) {
+        const m = normalizeModel(rawModel);
+        this.full = { model: m, byId: Object.fromEntries(m.elements.map((e) => [e.id, e])), deckById: Object.fromEntries(m.decks.map((d) => [d.id, d])), shipTypes: this.shipTypes };
+      }
+      return this.full;
+    },
+  };
+  return dctx;
+}
+const DETAIL_CACHE = 256;
+function detailOf(e) {
+  const src = e instanceof CompactElement ? CompactElement.sourceOf(e) : null;
+  if (!src) return null;
+  const dctx = src.ctx;
+  const hit = dctx.cache.get(e.id);
+  if (hit) return hit.byRule;
+  const local = e.results.every((r) => LOCAL_CHECKS.has(r.check));
+  let el, c;
+  if (local) {
+    const raw = src.raw;
+    el = normalizeElement(raw.id === e.id ? raw : { ...raw, id: e.id }, dctx.k, dctx.defaultDeck);
+    c = { model: { ...dctx.header, elements: [el] }, byId: { [el.id]: el }, deckById: dctx.deckById, shipTypes: dctx.shipTypes };
+  } else {
+    c = dctx.fullModel();
+    el = c.byId[e.id];
+  }
+  const full = el ? checkElement(el, dctx.rules, c) : { results: [], governing: {} };
+  const entry = { full, byRule: new Map(full.results.map((r) => [r.rule_id, r])) };
+  dctx.cache.set(e.id, entry);
+  if (dctx.cache.size > DETAIL_CACHE) dctx.cache.delete(dctx.cache.keys().next().value);
+  return entry.byRule;
+}
+const fullDetailOf = (e) => (detailOf(e), CompactElement.sourceOf(e).ctx.cache.get(e.id)?.full ?? null);
+// Full element result -> compact one (the element's own lists stay: superseded rules, limits, manual checks; empty
+// ones are shared). The raw element and the detail context are private: never copied, compared or written out.
+class CompactElement {
+  #raw;
+  #ctx;
+  constructor(full, raw, ctx, ruleById) {
+    this.id = full.id;
+    this.name = full.name;
+    this.type = full.type;
+    this.deck = full.deck;
+    this.worst = full.worst;
+    this.results = NONE;
+    this.not_applicable = shared(full.not_applicable);
+    this.superseded = shared(full.superseded);
+    this.conflicts = shared(full.conflicts);
+    this.manual = shared(full.manual);
+    this.#raw = raw;
+    this.#ctx = ctx;
+    if (full.results.length) this.results = full.results.map((r) => new CompactResult(r, ruleById.get(r.rule_id), this));
+  }
+  static sourceOf(e) { return { raw: e.#raw, ctx: e.#ctx }; }
+  // Strictest limits per parameter (the element's detail view): from the element's details, computed when read.
+  get governing() { return fullDetailOf(this)?.governing ?? {}; }
+  toJSON() {
+    return { id: this.id, name: this.name, type: this.type, deck: this.deck, worst: this.worst, results: this.results, not_applicable: this.not_applicable,
+      superseded: this.superseded, governing: this.governing, conflicts: this.conflicts, manual: this.manual };
+  }
+}
+const compactElement = (full, raw, dctx, ruleById) => new CompactElement(full, raw, dctx, ruleById);
+
 // Checks that read only the element itself (plus the ship particulars): an edit to one element can be re-checked
 // alone. The others look at neighbours, zones or counts and need the whole model again.
 const LOCAL_CHECKS = new Set(['in_set', 'table_lookup', 'data_quality', 'min', 'max', 'manual']);
@@ -970,18 +1096,24 @@ function checkContext(rawModel, allRules) {
   return { model, drafts, rules, invalid, ctx: { model, byId, deckById, shipTypes } };
 }
 
-export function checkModel(rawModel, allRules) {
+// details: 'lazy' (default) keeps compact results and computes explanations and inputs when they are read;
+// 'eager' builds every full result at once (server responses, the command line, files written to disk).
+export function checkModel(rawModel, allRules, { details = 'lazy' } = {}) {
   const { model, drafts, rules, invalid, ctx } = checkContext(rawModel, allRules);
   const elements = {};
   const summary = { compliant: 0, non_compliant: 0, not_enough_info: 0 };
   const elementSummary = { compliant: 0, non_compliant: 0, not_enough_info: 0, no_rule: 0 };
+  const lazy = details !== 'eager';
+  const dctx = lazy ? detailContext(rawModel, model, rules, ctx) : null;
+  const ruleById = new Map(rules.map((r) => [r.id, r]));
 
-  for (const el of model.elements) {
-    const e = checkElement(el, rules, ctx);
+  model.elements.forEach((el, i) => {
+    const full = checkElement(el, rules, ctx);
+    const e = lazy ? compactElement(full, model.sources?.[i] ?? el, dctx, ruleById) : full;
     e.results.forEach((r) => summary[r.status]++);
     elementSummary[e.worst ?? 'no_rule']++;
     elements[el.id] = e;
-  }
+  });
 
   return {
     model: model.name,
@@ -1032,11 +1164,17 @@ export function recheckElements(previous, rawModel, allRules, ids, { inPlace = f
   const summary = { ...previous.summary };
   const elementSummary = { ...previous.element_summary };
   const elements = inPlace ? previous.elements : { ...previous.elements };
+  // Same form as the previous results: compact when they were compact.
+  let lazy = false;
+  for (const id in previous.elements) { lazy = previous.elements[id] instanceof CompactElement; break; }
+  const dctx = lazy ? detailContext(rawModel, model, rules, ctx) : null;
+  const ruleById = new Map(rules.map((r) => [r.id, r]));
   for (const el of edited) {
     const before = elements[el.id];
     before.results.forEach((r) => summary[r.status]--);
     elementSummary[before.worst ?? 'no_rule']--;
-    const after = checkElement(el, rules, ctx);
+    const full = checkElement(el, rules, ctx);
+    const after = lazy ? compactElement(full, byRaw.get(el.id), dctx, ruleById) : full;
     after.results.forEach((r) => summary[r.status]++);
     elementSummary[after.worst ?? 'no_rule']++;
     elements[el.id] = after;
@@ -1088,7 +1226,11 @@ export function coverageOf(results, rules) {
 export function findingsOf(results) {
   const out = [];
   for (const e of Object.values(results.elements)) {
-    for (const r of e.results) if (r.status !== 'compliant') out.push({ element: e.id, name: e.name, deck: e.deck, ...r });
+    for (const r of e.results) {
+      if (r.status === 'compliant') continue;
+      // A compact result is not copied: the finding inherits from it, so its explanation is computed only if read.
+      out.push(r instanceof CompactResult ? Object.assign(Object.create(r), { element: e.id, name: e.name, deck: e.deck }) : { element: e.id, name: e.name, deck: e.deck, ...r });
+    }
   }
   return out.sort((a, b) => STATUS_RANK[b.status] - STATUS_RANK[a.status]);
 }

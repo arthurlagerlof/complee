@@ -37,7 +37,7 @@ export async function runCheck(target) {
     loadRules(),
     sc.expected ? fetchCatalog(CATALOG_KEY_BY_MODEL[sc.expected]) : null,
   ]);
-  const out = { generated: new Date().toISOString(), scenario: sc.id, ...checkModel(model, rules) };
+  const out = { generated: new Date().toISOString(), scenario: sc.id, ...checkModel(model, rules, { details: 'eager' }) };
   if (expected) out.score = scoreResults(out, expected);
   return out;
 }

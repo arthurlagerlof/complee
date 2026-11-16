@@ -480,7 +480,7 @@ async function runDatabaseCheck(scenarioId) {
   const result = {
     generated: new Date().toISOString(),
     scenario: scenario.id,
-    ...checkModel(model, catalog.rules),
+    ...checkModel(model, catalog.rules, { details: 'eager' }), // sent as JSON: every explanation is needed
   };
   if (expected) result.score = scoreResults(result, expected);
   return result;
