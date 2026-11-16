@@ -25,7 +25,7 @@ for every part, which rules apply, whether it passes, **why**, and where every v
 
 | Feature | Where | Code |
 | --- | --- | --- |
-| Open IFC (IFC2x3/IFC4, with `FireRating` from the `Pset_*Common` property sets), Revit `.rvt` (converted to IFC by Autodesk Platform Services, needs `APS_CLIENT_ID`/`APS_CLIENT_SECRET`) and DXF; an import report says what was read and which values the rules still need | **Open…** | `src/ifc-convert.mjs`, `src/rvt-convert.mjs`, `src/autocad.mjs` |
+| Open IFC (IFC2x3/IFC4, with the `Pset_*Common` property sets of elements and their types: `FireRating`, railing height, door outer size), Revit `.rvt` (converted to IFC by Autodesk Platform Services, needs `APS_CLIENT_ID`/`APS_CLIENT_SECRET`) and DXF; an import report says what was read and which values the rules still need | **Open…** | `src/ifc-convert.mjs`, `src/rvt-convert.mjs`, `src/autocad.mjs` |
 | Escape routes from every room to the muster stations, independent second routes, what-if blocking | **Escape plan**, room panel | `src/escape.mjs` |
 | AI: explain a finding, propose a second escape route (recomputed by the checker), draft a reply to a class comment; answers stream in; model, time and cost shown | ✦ buttons, **✦ AI** pill | `public/app.js`, backend `app/services/ai_assist.py` |
 | Findings register per project, shared by all revisions; dispositions flagged when the value changed | **Findings register** | `src/dispositions.mjs` |
@@ -232,7 +232,7 @@ src/                       checker and data code (pure modules run in the browse
   catalog-local.mjs        bundled catalog in catalog/ (used when SHIPCHECK_DATA_API_URL is not set)
   escape.mjs               escape-route graph: routes, independent second routes, what-if blocking
   escape-actions.mjs       applies and recomputes AI escape-route proposals
-  ifc-convert.mjs          IFC -> ship/1 model with geometry (web-ifc), fire ratings from property sets
+  ifc-convert.mjs          IFC -> ship/1 model with geometry (web-ifc), common property sets (element and type)
   rvt-convert.mjs          Revit -> IFC through Autodesk Platform Services (server side)
   autocad.mjs, dxf.mjs     DXF drawing -> model, results -> DXF markup
   dispositions.mjs         findings register, manual-check confirmations, project key

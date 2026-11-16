@@ -17,6 +17,9 @@ COPY src ./src
 COPY public ./public
 COPY integrations ./integrations
 COPY demo ./demo
+# Rule catalog, scenarios and ship models: without it (and without SHIPCHECK_DATA_API_URL) nothing can be checked.
+# With SHIPCHECK_DATA_API_URL set, the database API is the source and this copy is not read.
+COPY catalog ./catalog
 
 RUN mkdir -p /app/model /app/.cache && chown -R node:node /app
 USER node

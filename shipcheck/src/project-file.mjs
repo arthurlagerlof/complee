@@ -61,7 +61,7 @@ export function readProjectFile(raw, currentProject) {
     register[key] = e;
   }
   if (data.register !== undefined && !isObj(data.register)) problems.push('the register is not a list of entries');
-  if (badEntries) problems.push(`${badEntries} register entr${badEntries === 1 ? 'y' : 'ies'} that are not readable`);
+  if (badEntries) problems.push(`${badEntries} register entr${badEntries === 1 ? 'y that is' : 'ies that are'} not readable`);
   if (unconfirmed) problems.push(`${unconfirmed} manual check${unconfirmed === 1 ? '' : 's'} marked done without the name of who checked (left unconfirmed)`);
   const comments = [], seen = new Set();
   let badComments = 0, duplicates = 0;
@@ -72,7 +72,7 @@ export function readProjectFile(raw, currentProject) {
     seen.add(clean.id);
     comments.push(clean);
   }
-  if (badComments) problems.push(`${badComments} class comment${badComments === 1 ? '' : 's'} that are not readable`);
+  if (badComments) problems.push(`${badComments} class comment${badComments === 1 ? ' that is' : 's that are'} not readable`);
   if (duplicates) problems.push(`${duplicates} class comment${duplicates === 1 ? '' : 's'} with an id that occurs twice`);
   return {
     register, comments, problems,

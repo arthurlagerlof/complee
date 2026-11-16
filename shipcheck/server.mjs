@@ -395,6 +395,32 @@ function bodyError(req, res, e) {
   if (e.status === 413) res.on('finish', () => req.destroy());
 }
 
+// Content-Security-Policy of the pages: scripts only from this site (an injected <script> or onclick= does not run),
+// the inline import map by its hash, wasm for the IFC import, and the Autodesk viewer's hosts for the APS view.
+// Styles may be inline (the UI sets style attributes); nothing may frame the pages. Hashes are computed per file
+// version, so editing a page needs no change here.
+const APS_HOSTS = 'https://developer.api.autodesk.com https://cdn.derivative.autodesk.com';
+const cspCache = new Map(); // file -> { etag, csp }
+async function pageCsp(file, etag) {
+  const hit = cspCache.get(file);
+  if (hit?.etag === etag) return hit.csp;
+  const html = await fs.promises.readFile(file, 'utf8');
+  const hashes = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)]
+    .map((m) => `'sha256-${crypto.createHash('sha256').update(m[1], 'utf8').digest('base64')}'`);
+  const csp = [
+    "default-src 'self'",
+    `script-src 'self' 'wasm-unsafe-eval' ${hashes.join(' ')} ${APS_HOSTS}`.replace(/\s+/g, ' '),
+    `style-src 'self' 'unsafe-inline' ${APS_HOSTS}`,
+    `img-src 'self' data: blob: ${APS_HOSTS}`,
+    `font-src 'self' data: ${APS_HOSTS}`,
+    "connect-src 'self' https://*.autodesk.com wss://*.autodesk.com",
+    "worker-src 'self' blob:",
+    "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'self'",
+  ].join('; ');
+  cspCache.set(file, { etag, csp });
+  return csp;
+}
+
 // Static files: content-addressed model tiles are immutable (cached for a year); everything else is revalidated with
 // an ETag (weak, from size and mtime), so the browser keeps the JS modules, the 1.4 MB tile manifest and the CSS in
 // its cache and the server answers 304 instead of sending them again. All file-system calls are asynchronous: a
@@ -427,9 +453,11 @@ async function serveStatic(p, res, req) {
     'Accept-Ranges': 'bytes',
     ETag: etag,
   };
+  if (ext === '.html') headers['Content-Security-Policy'] = await pageCsp(file, etag);
   const rangeHeader = String(req?.headers?.range || '');
   if (!rangeHeader && req?.headers?.['if-none-match'] && req.headers['if-none-match'].split(',').map((v) => v.trim()).includes(etag)) {
-    res.writeHead(304, { 'Cache-Control': headers['Cache-Control'], ETag: etag });
+    // The CSP goes with the 304 too: the browser updates the cached page's headers from it.
+    res.writeHead(304, { 'Cache-Control': headers['Cache-Control'], ETag: etag, ...(headers['Content-Security-Policy'] ? { 'Content-Security-Policy': headers['Content-Security-Policy'] } : {}) });
     return res.end();
   }
   // HTTP Range (single range), e.g. for resuming large model chunks.

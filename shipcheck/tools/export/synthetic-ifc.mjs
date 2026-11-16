@@ -71,6 +71,20 @@ export function syntheticIfc({ storeys = 6, nx = 12, ny = 7, bay = 6000, height 
     }
     put('IFCSTAIR', `Stair L${s + 1}`, [W - 4500, cy + 1100, z, 4000, 1200, height], '$,.STRAIGHT_RUN_STAIR.');
     put('IFCRAILING', `Railing L${s + 1}`, [W - 4500, cy + 2300, z, 4000, 50, 1100], '$,.GUARDRAIL.');
+    // Its height as BIM tools write it: Pset_RailingCommon.Height (a length in the project unit, mm here).
+    {
+      const prop = add('IFCPROPERTYSINGLEVALUE(\'Height\',$,IFCPOSITIVELENGTHMEASURE(1100.),$)');
+      const pset = add(`IFCPROPERTYSET(${guid()},$,'Pset_RailingCommon',$,(${prop}))`);
+      add(`IFCRELDEFINESBYPROPERTIES(${guid()},$,$,$,(${members[members.length - 1]}),${pset})`);
+    }
+    // Every door of the storey is of one door type whose Pset_DoorCommon says it is self-closing (a type property).
+    {
+      const doors = members.filter((ref) => lines[Number(ref.slice(1)) - 1].includes('IFCDOOR('));
+      const prop = add('IFCPROPERTYSINGLEVALUE(\'SelfClosing\',$,IFCBOOLEAN(.T.),$)');
+      const pset = add(`IFCPROPERTYSET(${guid()},$,'Pset_DoorCommon',$,(${prop}))`);
+      const type = add(`IFCDOORTYPE(${guid()},$,'Single swing door',$,$,(${pset}),$,$,$,.DOOR.,.SINGLE_SWING_LEFT.,$,$)`);
+      add(`IFCRELDEFINESBYTYPE(${guid()},$,$,$,(${doors.join(',')}),${type})`);
+    }
     add(`IFCRELCONTAINEDINSPATIALSTRUCTURE(${guid()},$,$,$,(${members.join(',')}),${storey})`);
   }
   add(`IFCRELAGGREGATES(${guid()},$,$,$,${building},(${storeyRefs.join(',')}))`);

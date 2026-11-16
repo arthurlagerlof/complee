@@ -20,6 +20,50 @@ export const SEMANTIC_TYPES = new Set(['door', 'stair', 'ramp', 'guard_rail', 's
 
 const text = (v) => (v && typeof v === 'object' && 'value' in v ? v.value : v) ?? '';
 
+const LENGTH_VALUE = /^IFC(POSITIVE|NONNEGATIVE)?LENGTHMEASURE$/;
+// One IfcPropertySingleValue as model properties. Kept under "<Pset>.<Name>" with its IFC type: lengths in mm (from
+// the project unit), booleans as true / false (an IfcLogical UNKNOWN is left out), text as text. A rule's own name is
+// given only where the IFC definition is that quantity:
+//   FireRating (any Pset_*Common)  -> fire_rating
+//   Pset_RailingCommon.Height      -> height ("the height of the railing", the guard rail rules' parameter)
+// Nothing else is mapped to a rule: an IfcDoor's overall width, for example, is not its clear width.
+function psetProps(pset, name, nominal, unitMetres) {
+  if (!name || !nominal || nominal.value == null) return {};
+  const type = String(nominal.name ?? '').toUpperCase();
+  const source = `IFC ${pset}.${name}`;
+  let entry;
+  if (LENGTH_VALUE.test(type)) {
+    const mm = Number(nominal.value) * unitMetres * 1000;
+    if (!Number.isFinite(mm)) return {};
+    entry = { value: Math.round(mm * 10) / 10, unit: 'mm', ...(unitMetres !== 0.001 ? { original: `${nominal.value} (file unit)` } : {}), source };
+  } else if (type === 'IFCBOOLEAN' || type === 'IFCLOGICAL') {
+    const v = nominal.value;
+    const b = v === true || v === 1 || v === 'T' || v === '.T.' ? true : v === false || v === 0 || v === 'F' || v === '.F.' ? false : null;
+    if (b == null) return {}; // UNKNOWN: not a statement
+    entry = { value: b, source };
+  } else {
+    const s = String(nominal.value).trim();
+    if (!s) return {};
+    entry = { value: typeof nominal.value === 'number' ? nominal.value : s, source };
+  }
+  const out = { [`${pset}.${name}`]: entry };
+  if (name === 'FireRating' && typeof entry.value === 'string') out.fire_rating = { value: entry.value, source };
+  if (pset === 'Pset_RailingCommon' && name === 'Height' && entry.unit === 'mm') out.height = { ...entry, source: `${source} (height of the railing)` };
+  return out;
+}
+
+// Outer size of doors and windows (IfcDoor / IfcWindow OverallWidth and OverallHeight). This is the size of the
+// lining, not the clear opening: it is kept as overall_width / overall_height and no rule reads it as a clear width.
+function outerSize(cls, line, unitMetres) {
+  if (!line || !/^IFC(DOOR|WINDOW)/.test(cls)) return {};
+  const out = {};
+  for (const [attr, key] of [['OverallWidth', 'overall_width'], ['OverallHeight', 'overall_height']]) {
+    const v = Number(text(line[attr]));
+    if (Number.isFinite(v) && v > 0) out[key] = { value: Math.round(v * unitMetres * 1000 * 10) / 10, unit: 'mm', source: `IFC ${cls}.${attr} (outer size, not the clear opening)` };
+  }
+  return out;
+}
+
 // The project's own length unit: the one listed in IfcProject.UnitsInContext. A file can also contain other length
 // units (Revit writes IfcSIUnit METRE as the base of its FOOT conversion unit), so the first unit found is not enough.
 function lengthUnitInMetres(WebIFC, api, id) {
@@ -150,24 +194,42 @@ export function convertIfc(WebIFC, api, bytes, fileName = 'model.ifc') {
       decks.splice(i, 1);
     }
 
-    // ---- properties the rules read: FireRating from the common property sets (Pset_DoorCommon, Pset_WallCommon, ...)
-    const fireRating = new Map(); // expressID -> { value, source }
+    // ---- properties from the common property sets (Pset_DoorCommon, Pset_RailingCommon, ...), of the element type
+    // (IfcRelDefinesByType) and of the element itself, which wins. Every single value is kept under its IFC name;
+    // only where the IFC definition is the quantity a rule reads is it also given the rule's name (see psetProps).
+    const typeProps = new Map(), ownProps = new Map(); // expressID -> props
+    const readPset = (ref) => {
+      const pset = ref && api.GetLine(id, ref.value);
+      const psetName = String(text(pset?.Name) ?? '');
+      if (!/^Pset_\w+Common$/.test(psetName) || !Array.isArray(pset.HasProperties)) return null;
+      const out = {};
+      for (const pref of pset.HasProperties) {
+        let p = null;
+        try { p = api.GetLine(id, pref.value); } catch { continue; }
+        Object.assign(out, psetProps(psetName, String(text(p?.Name) ?? ''), p?.NominalValue, unit));
+      }
+      return out;
+    };
+    const merge = (map, objects, props) => {
+      if (!props) return;
+      for (const o of objects ?? []) map.set(o.value, { ...(map.get(o.value) ?? {}), ...props });
+    };
+    try {
+      const rels = api.GetLineIDsWithType(id, WebIFC.IFCRELDEFINESBYTYPE);
+      for (let i = 0; i < rels.size(); i++) {
+        const r = api.GetLine(id, rels.get(i));
+        const type = r.RelatingType && api.GetLine(id, r.RelatingType.value);
+        for (const ref of type?.HasPropertySets ?? []) merge(typeProps, r.RelatedObjects, readPset(ref));
+      }
+    } catch { /* no element types */ }
     try {
       const rels = api.GetLineIDsWithType(id, WebIFC.IFCRELDEFINESBYPROPERTIES);
       for (let i = 0; i < rels.size(); i++) {
         const r = api.GetLine(id, rels.get(i));
-        const pset = r.RelatingPropertyDefinition && api.GetLine(id, r.RelatingPropertyDefinition.value);
-        const psetName = String(text(pset?.Name) ?? '');
-        if (!/^Pset_\w+Common$/.test(psetName) || !Array.isArray(pset.HasProperties)) continue;
-        for (const ref of pset.HasProperties) {
-          const p = api.GetLine(id, ref.value);
-          if (String(text(p?.Name) ?? '') !== 'FireRating') continue;
-          const v = text(p.NominalValue);
-          if (v == null || !String(v).trim()) continue;
-          for (const o of r.RelatedObjects ?? []) fireRating.set(o.value, { value: String(v).trim(), source: `IFC ${psetName}.FireRating` });
-        }
+        merge(ownProps, r.RelatedObjects, readPset(r.RelatingPropertyDefinition));
       }
     } catch { /* no property sets */ }
+    const propsOf = (expressID) => ({ ...(typeProps.get(expressID) ?? {}), ...(ownProps.get(expressID) ?? {}) });
 
     // ---- elements ----
     const elements = [], geometry = new Map();
@@ -197,7 +259,10 @@ export function convertIfc(WebIFC, api, bytes, fileName = 'model.ifc') {
       elements.push({
         id: elId, type, name: String(text(line?.Name) || text(line?.ObjectType) || cls.replace(/^IFC/, '')),
         source: `IFC ${cls} #${expressID}`,
-        props: { ifc_class: cls, ...(text(line?.ObjectType) ? { object_type: String(text(line.ObjectType)) } : {}), ...(text(line?.Tag) ? { tag: String(text(line.Tag)) } : {}), ...(fireRating.has(expressID) ? { fire_rating: fireRating.get(expressID) } : {}) },
+        props: {
+          ifc_class: cls, ...(text(line?.ObjectType) ? { object_type: String(text(line.ObjectType)) } : {}), ...(text(line?.Tag) ? { tag: String(text(line.Tag)) } : {}),
+          ...outerSize(cls, line, unit), ...propsOf(expressID),
+        },
         _box: { min, max },
         _express: expressID,
       });
@@ -236,7 +301,7 @@ export function convertIfc(WebIFC, api, bytes, fileName = 'model.ifc') {
     for (const el of elements) counts[el.type] = (counts[el.type] || 0) + 1;
     const model = {
       name: fileName.replace(/\.ifc$/i, ''), units: 'mm', source: `IFC import (${schema})`,
-      provenance_note: `Imported from ${fileName} (${schema}): ${elements.length.toLocaleString('en')} elements with geometry on ${kept.length} storey${kept.length === 1 ? '' : 's'}. Geometry, names and classes are as in the file. Properties the rules read (clear widths, sill heights, zones, ship particulars) are not part of a plain IFC export: such checks show "not enough info" until the values are added.`,
+      provenance_note: `Imported from ${fileName} (${schema}): ${elements.length.toLocaleString('en')} elements with geometry on ${kept.length} storey${kept.length === 1 ? '' : 's'}. Geometry, names and classes are as in the file; the common property sets (Pset_*Common, of the element and its type) are kept under their IFC names, FireRating as fire_rating and Pset_RailingCommon.Height as the railing height. Other properties the rules read (clear widths, sill heights, zones, ship particulars) are not part of a plain IFC export: such checks show "not enough info" until the values are added.`,
       ship: {}, decks: kept, elements,
     };
     return { model, geometry: { elements: geometry }, stats: { schema, elements: elements.length, decks: kept.length, counts, triangles: [...geometry.values()].reduce((s, g) => s + g.indices.length / 3, 0) } };

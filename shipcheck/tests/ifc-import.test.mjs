@@ -47,19 +47,45 @@ test('ifc: classes map to element types; nothing the rules read is invented', as
   for (const e of model.elements) byType[e.type] = (byType[e.type] || 0) + 1;
   for (const t of ['door', 'stair', 'guard_rail', 'space', 'column', 'beam', 'slab', 'wall']) assert.ok(byType[t] > 0, `${t} present`);
   for (const t of ['door', 'stair', 'guard_rail', 'space']) assert.ok(SEMANTIC_TYPES.has(t));
-  // Only what the file states: a door without a FireRating in the file gets nothing besides its class.
+  // Only what the file states: a door without a FireRating gets its class, its outer size and its type's properties;
+  // no clear width, sill height or zone is made up (the outer size is not a clear width).
   const door = model.elements.find((e) => e.type === 'door' && !e.props.fire_rating);
-  assert.deepEqual(Object.keys(door.props), ['ifc_class'], 'no clear width, sill height or zone is made up');
+  assert.deepEqual(Object.keys(door.props).sort(), ['Pset_DoorCommon.SelfClosing', 'ifc_class', 'overall_height', 'overall_width']);
+  assert.equal(door.props.overall_width.value, 900);
+  assert.match(door.props.overall_width.source, /not the clear opening/);
   assert.equal(door.geom.lx, 900);
 
   const rules = (await fetchCatalog('rules')).rules;
   const out = checkModel(structuredClone(model), rules);
-  assert.equal(out.summary.compliant, 0, 'nothing can pass without the values the rules read');
+  const rail = model.elements.find((e) => e.type === 'guard_rail');
+  const passing = Object.values(out.elements).flatMap((e) => e.results.filter((r) => r.status === 'compliant').map((r) => r.parameter ?? r.rule_id));
+  // The only values that can pass are the railing heights the file states (Pset_RailingCommon.Height).
+  for (const id of Object.keys(out.elements)) for (const r of out.elements[id].results) if (r.status === 'compliant') assert.equal(model.elements.find((e) => e.id === id).type, 'guard_rail', `${id} ${r.rule_id}`);
+  assert.ok(passing.length <= out.summary.compliant);
+  assert.equal(rail.props.height.value, 1100);
   assert.equal(out.summary.non_compliant, 0);
+  void passing;
   // Stairs have a clear-width rule without conditions: the missing value is reported, not guessed.
   const stair = model.elements.find((e) => e.type === 'stair');
   assert.equal(out.elements[stair.id].worst, 'not_enough_info');
   assert.equal(analyzeEscape(normalizeModel(structuredClone(model))).available, false, 'no muster station in the file: no escape analysis');
+});
+
+test('ifc: common property sets of the element and of its type are read; the element wins', () => {
+  const { model } = convert();
+  const fire = model.elements.find((e) => e.type === 'door' && e.props.fire_rating);
+  assert.deepEqual(fire.props['Pset_DoorCommon.SelfClosing'], { value: true, source: 'IFC Pset_DoorCommon.SelfClosing' }, 'from the door type');
+  assert.equal(fire.props['Pset_DoorCommon.FireRating'].value, 'A-60');
+  const rail = model.elements.find((e) => e.type === 'guard_rail');
+  assert.deepEqual(rail.props.height, { value: 1100, unit: 'mm', source: 'IFC Pset_RailingCommon.Height (height of the railing)' });
+  // An element's own value overrides its type's (a door type says "not self-closing", one door says it is).
+  // Here: the types say false, and the fire door's own Pset_DoorCommon says true.
+  const text = source.text
+    .replaceAll("IFCPROPERTYSINGLEVALUE('SelfClosing',$,IFCBOOLEAN(.T.),$)", "IFCPROPERTYSINGLEVALUE('SelfClosing',$,IFCBOOLEAN(.F.),$)")
+    .replaceAll("IFCPROPERTYSINGLEVALUE('FireRating',$,IFCLABEL('A-60'),$)", "IFCPROPERTYSINGLEVALUE('SelfClosing',$,IFCBOOLEAN(.T.),$)");
+  const doors = convertIfc(WebIFC, api, new TextEncoder().encode(text), 'f.ifc').model.elements.filter((e) => e.type === 'door');
+  assert.equal(doors.filter((d) => d.props['Pset_DoorCommon.SelfClosing'].value === true).length, 3, 'one per storey, its own value');
+  assert.ok(doors.filter((d) => d.props['Pset_DoorCommon.SelfClosing'].value === false).length > 3);
 });
 
 test('ifc: a file without geometry or that is not IFC is rejected with a clear message', () => {

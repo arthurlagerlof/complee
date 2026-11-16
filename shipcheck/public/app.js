@@ -60,7 +60,12 @@ const fetchCatalog = (file, opt) => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const LABEL = { compliant: 'No deviation found', non_compliant: 'Non-compliant', not_enough_info: 'Not enough info', null: 'No rule' };
+const LABEL = { compliant: 'No deviation found', non_compliant: 'Non-compliant', not_enough_info: 'Not enough info', scope_open: 'Applicability open', null: 'No rule' };
+// A "not enough info" result that is undecided only because the model does not say whether the rule applies. The
+// list filters it on its own: on a real model it is thousands of checks that one answer per rule settles.
+const scopeOpen = (r) => r.status === 'not_enough_info' && r.applicability === 'unknown';
+const filterKey = (r) => (scopeOpen(r) ? 'scope_open' : r.status);
+const STATUS_CHIPS = ['non_compliant', 'not_enough_info', 'scope_open', 'compliant', 'null'];
 const ORDER = { non_compliant: 0, not_enough_info: 1, compliant: 2, null: 3 };
 const EDIT_SOURCE = 'what-if, not in model';
 
@@ -325,7 +330,7 @@ async function loadScenario(id) {
     closeTrace();
     listLimit = LIST_PAGE;
     // Start at the full overview; filtering by status hides the rest geometry.
-    S.filter.status = new Set(['non_compliant', 'not_enough_info', 'compliant', 'null']);
+    S.filter.status = new Set(STATUS_CHIPS);
     // Ground-truth score is computed on the unedited design with the core rule set only.
     // The model is unedited here, so this one check is also the ground-truth run (no second pass over the model).
     runCheck();
@@ -601,8 +606,17 @@ function goReadiness(item) {
     case 'manual': { const id = firstWith((e) => manualRows({ elements: { [e.id]: e } }, S.register).some((m) => !m.done)); if (id) select(id); break; }
     case 'edits': $('#edits')?.scrollIntoView({ block: 'center', behavior: 'smooth' }); break;
     case 'rules': $('#rulesBox')?.scrollIntoView({ block: 'start', behavior: 'smooth' }); break;
+    // Applicability open: the list shows only those checks, and the first one is opened (its explanation says what
+    // the rule's scope depends on).
+    case 'scope': {
+      S.filter.status = new Set(['scope_open']);
+      renderFilters(); renderList();
+      const id = firstWith((e) => e.results.some(scopeOpen));
+      if (id) select(id);
+      break;
+    }
     default: {
-      const id = item.id === 'conflicts' ? firstWith((e) => e.conflicts?.length) : firstWith((e) => e.results.some((r) => r.status === 'not_enough_info'));
+      const id = item.id === 'conflicts' ? firstWith((e) => e.conflicts?.length) : firstWith((e) => e.results.some((r) => r.status === 'not_enough_info' && !scopeOpen(r)));
       if (id) select(id);
     }
   }
@@ -616,12 +630,23 @@ function dataIssuesHTML() {
   return `<div class="note">${m.length ? `<b>${m.length} model data error${m.length === 1 ? '' : 's'}</b>${list(m.map((i) => i.text))}` : ''}${bad.length ? `<b>${bad.length} rule${bad.length === 1 ? '' : 's'} not run (invalid)</b>${list(bad.map((r) => `${r.id}: ${r.errors.join('; ')}`))}` : ''}</div>`;
 }
 
+// Number of applicability-open results, counted once per check (results are re-checked in place: the stamp is the
+// time of the last check).
+let scopeMemo = { results: null, stamp: null, n: 0 };
+function scopeCount() {
+  if (scopeMemo.results === S.results && scopeMemo.stamp === S.lastCheckMs) return scopeMemo.n;
+  let n = 0;
+  for (const id in S.results.elements) for (const r of S.results.elements[id].results) if (scopeOpen(r)) n++;
+  scopeMemo = { results: S.results, stamp: S.lastCheckMs, n };
+  return n;
+}
+
 function renderSummary() {
   const s = S.results.summary, e = S.results.element_summary;
   $('#summary').innerHTML = `
     <div class="pills" id="pills">
       <div class="pill st-non_compliant">${s.non_compliant}<small>non-compliant</small></div>
-      <div class="pill st-not_enough_info">${s.not_enough_info}<small>missing info</small></div>
+      <div class="pill st-not_enough_info" title="${scopeCount() ? `${scopeCount().toLocaleString('en')} of them only because the model does not say whether the rule applies` : ''}">${s.not_enough_info}<small>missing info${scopeCount() ? `, ${scopeCount().toLocaleString('en')} of them applicability open` : ''}</small></div>
       <div class="pill st-compliant" title="No deviation in the rules checked automatically. This is not a statement of full compliance: see the manual checks.">${s.compliant}<small>no deviation</small></div>
     </div>
     <div class="muted">Rule checks per element. Elements: ${e.non_compliant} red, ${e.not_enough_info} amber, ${e.compliant} green, ${e.no_rule} without a rule. Checked in ${S.lastCheckMs.toFixed(1)} ms.</div>
@@ -650,8 +675,8 @@ function renderEdits() {
 
 function renderFilters() {
   const fams = [...new Set(allRules().map((r) => family(r.source)))].sort();
-  const chips = ['non_compliant', 'not_enough_info', 'compliant', 'null']
-    .map((st) => `<span class="chip ${S.filter.status.has(st) ? 'on' : ''}" data-st="${st}">${LABEL[st]}</span>`).join('');
+  const chips = STATUS_CHIPS
+    .map((st) => `<span class="chip ${S.filter.status.has(st) ? 'on' : ''}" data-st="${st}"${st === 'scope_open' ? ' title="Not enough info only because the model does not say whether the rule applies"' : ''}>${LABEL[st]}</span>`).join('');
   $('#filters').innerHTML = `<div class="chips">${chips}</div>
     <div class="filters-row">
       <select id="fFam"><option value="">All rule sources</option>${fams.map((f) => `<option ${S.filter.family === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>
@@ -677,7 +702,7 @@ function visibleElements() {
     const rs = f.family ? e.results.filter((r) => family(r.source) === f.family) : e.results;
     if (f.family && !rs.length) return false;
     if (!rs.length) return f.status.has('null');
-    return rs.some((r) => f.status.has(r.status));
+    return rs.some((r) => f.status.has(filterKey(r)));
   });
 }
 
@@ -697,7 +722,7 @@ function renderList() {
   if (!items.length) $('#list').innerHTML = '<p class="muted">No element matches the filters.</p>';
   if ($('#moreBtn')) $('#moreBtn').onclick = () => { listLimit += LIST_PAGE; renderList(); };
   document.querySelectorAll('#list .item').forEach((n) => (n.onclick = () => select(n.dataset.id)));
-  const all = S.filter.status.size === 4 && !S.filter.family && !S.filter.deck && !(S.filter.text ?? '').trim();
+  const all = S.filter.status.size === STATUS_CHIPS.length && !S.filter.family && !S.filter.deck && !(S.filter.text ?? '').trim();
   viewer.setFilter(all ? null : new Set(items.map((e) => e.id)));
 }
 
@@ -2663,7 +2688,8 @@ const loadingScreen = {
   fail(message) {
     if (!this.el) return;
     this.el.classList.add('is-error');
-    $('#loadingDetail').innerHTML = `Could not load: ${esc(message)} <button type="button" onclick="location.reload()">Reload</button>`;
+    $('#loadingDetail').innerHTML = `Could not load: ${esc(message)} <button type="button" id="loadingReload">Reload</button>`;
+    $('#loadingReload').onclick = () => location.reload(); // no inline handler: the page's CSP would block it
   },
 };
 

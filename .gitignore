@@ -16,3 +16,6 @@ __pycache__/
 
 # Backend catalog response cache (content-addressed, regenerated on demand)
 backend/.cache/
+
+# Local Claude Code session settings
+.claude/

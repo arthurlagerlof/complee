@@ -37,13 +37,16 @@ function computeReadiness({ results, register, comments, rules, edits }) {
   add('model_issues', 'blocker', results.model_issues?.length ?? 0, 'model data errors: elements without a usable or unique id, or not elements at all (checked under a new id or skipped)', 'list');
   add('invalid_rules', 'blocker', results.invalid_rules?.length ?? 0, 'rules not run because they are incomplete or invalid', 'rules');
   // One pass over all elements: how many checks ran, which rules applied, how many rule conflicts there are.
-  let checked = 0, conflicts = 0;
-  const applied = new Set();
+  let checked = 0, conflicts = 0, scopeOpen = 0;
+  const applied = new Set(), scopeRules = new Set();
   for (const id in results.elements || {}) {
     const e = results.elements[id];
     checked += e.results?.length ?? 0;
     conflicts += e.conflicts?.length ?? 0;
-    for (const r of e.results ?? []) applied.add(r.rule_id);
+    for (const r of e.results ?? []) {
+      applied.add(r.rule_id);
+      if (r.status === 'not_enough_info' && r.applicability === 'unknown') { scopeOpen++; scopeRules.add(r.rule_id); }
+    }
   }
   add('nothing_checked', 'blocker', checked ? 0 : 1, 'no rule could be checked on this model', 'list');
   add('what_if', 'blocker', edits, `${edits} what-if value${edits === 1 ? ' is' : 's are'} not in the model: the results are not those of the design`, 'edits');
@@ -63,7 +66,10 @@ function computeReadiness({ results, register, comments, rules, edits }) {
   add('fix_planned', 'blocker', nc.filter((r) => r.disposition === 'fix').length, 'non-compliant findings whose design change is planned but not yet in the model', 'register');
   // Every current finding is a register row (resolved rows are stored entries without a finding now).
   const undecided = rows.filter((r) => r.status === 'not_enough_info').length;
-  add('missing_info', 'warning', undecided, 'rule checks without the data they need ("not enough info")', 'list');
+  // Undecided only because the model does not say whether the rule applies (ship particulars, element data the
+  // rule's scope depends on): one answer per rule settles them all, so they are counted apart, with their rules.
+  add('missing_info', 'warning', Math.max(0, undecided - scopeOpen), 'rule checks without the data they need ("not enough info")', 'list');
+  add('scope_open', 'warning', scopeOpen, `rule checks undecided because the model does not say whether the rule applies (${scopeRules.size} rule${scopeRules.size === 1 ? '' : 's'}: ${[...scopeRules].slice(0, 4).join(', ')}${scopeRules.size > 4 ? ', …' : ''}); the data each rule's scope depends on settles all of its checks`, 'scope');
   add('manual_unknown', 'warning', man.filter((m) => !m.done && m.applicability === 'unknown').length, 'manual checks whose applicability the model cannot decide', 'manual');
   add('unverified', 'warning', rules.filter((r) => applied.has(r.id) && r.verified !== true).length, 'applied rules whose values are not verified against the official text', 'rules');
 

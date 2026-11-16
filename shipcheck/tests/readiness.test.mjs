@@ -63,6 +63,23 @@ test('open work is counted as blockers and warnings; cleared work disappears', (
   assert.doesNotMatch(html, /✓ Ready to submit/);
 });
 
+test('checks undecided only because it is open whether the rule applies are counted apart, with their rules', () => {
+  const ruleIf = { id: 'P', source: 'Code', clause: '4', text: 'accommodation corridors only', check: 'min', parameter: 'clear_width', value: 900, unit: 'mm', verified: false, applies_to: { types: ['corridor'], where: { zone: 'accommodation' } } };
+  const m = model(950);
+  // The corridor has no zone: whether P applies is open.
+  const results = checkModel(m, [ruleIf]);
+  const r = readiness({ results, rules: [ruleIf] });
+  const scope = r.items.find((i) => i.id === 'scope_open');
+  // 950 mm meets the limit either way: nothing undecided. With 850 mm it is open whether the deviation counts.
+  assert.equal(scope, undefined);
+  const narrow = checkModel(model(850), [ruleIf]);
+  const r2 = readiness({ results: narrow, rules: [ruleIf] });
+  assert.equal(ids(r2).scope_open, 1);
+  assert.equal(ids(r2).missing_info, undefined, 'not also counted as missing data');
+  assert.match(r2.items.find((i) => i.id === 'scope_open').text, /1 rule: P/);
+  assert.equal(r2.complete, false, 'still undecided: never plainly "ready"');
+});
+
 test('an empty or broken check is never ready: no results, model data errors, invalid rules', () => {
   const empty = readiness({ results: { elements: {} }, rules: RULES });
   assert.equal(empty.ready, false);

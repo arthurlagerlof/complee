@@ -13,7 +13,9 @@ export function createFallbackViewer(container) {
       ${selected ? `<br>${selected}` : ''}`;
   }
   function renderGallery() {
-    gallery.innerHTML = images.map((src) => `<figure><img src="${src}" alt="RCRV model screenshot" onerror="this.closest('figure').remove()"><figcaption>${esc(src.split('/').pop())}</figcaption></figure>`).join('');
+    gallery.innerHTML = images.map((src) => `<figure><img src="${src}" alt="RCRV model screenshot"><figcaption>${esc(src.split('/').pop())}</figcaption></figure>`).join('');
+    // A missing screenshot is removed (an inline onerror= would be blocked by the page's CSP).
+    gallery.querySelectorAll('img').forEach((img) => img.addEventListener('error', () => img.closest('figure')?.remove(), { once: true }));
   }
   const noop = () => {};
   return {

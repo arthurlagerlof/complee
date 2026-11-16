@@ -40,7 +40,7 @@ function raw(method, p, headers = {}, body = '') {
     const req = http.request({ host: '127.0.0.1', port, method, path: p, headers: { Host: `localhost:${port}`, ...headers } }, (res) => {
       let text = '';
       res.on('data', (c) => (text += c));
-      res.on('end', () => resolve({ status: res.statusCode, text }));
+      res.on('end', () => resolve({ status: res.statusCode, text, headers: res.headers }));
     });
     req.on('error', reject);
     req.end(body);
@@ -140,4 +140,25 @@ test('CSV cells never start a formula; plain negative numbers stay as written', 
   assert.equal(csvCell('=HYPERLINK("http://x","y")'), `"'=HYPERLINK(""http://x"",""y"")"`);
   for (const v of ['+cmd', '@SUM(A1)', '-2+3', '\tx']) assert.match(csvCell(v), /^"'/, v);
   for (const v of ['-5 mm', '-12.5', -3, 'Corridor']) assert.doesNotMatch(csvCell(v), /^"'/, String(v));
+});
+
+test('pages carry a CSP: only own scripts and the inline import map by its hash, nothing may frame them', async () => {
+  const page = await raw('GET', '/index.html');
+  const csp = page.headers['content-security-policy'];
+  assert.ok(csp, 'index.html has a CSP');
+  const scriptSrc = csp.split(';').map((s) => s.trim()).find((s) => s.startsWith('script-src'));
+  assert.doesNotMatch(scriptSrc, /'unsafe-inline'|'unsafe-eval'(?!.)/);
+  assert.match(scriptSrc, /'sha256-[A-Za-z0-9+/=]+'/, 'the import map is allowed by its hash');
+  assert.match(csp, /frame-ancestors 'self'/);
+  assert.match(csp, /object-src 'none'/);
+  // A revalidated page keeps its CSP (the browser takes the headers of the 304).
+  const etag = page.headers.etag;
+  const again = await raw('GET', '/index.html', { 'If-None-Match': etag });
+  assert.equal(again.status, 304);
+  assert.equal(again.headers['content-security-policy'], csp);
+  // No page or script relies on inline event handlers, which the CSP blocks.
+  for (const f of fs.readdirSync(new URL('../public/', import.meta.url))) {
+    if (!/\.(html|js)$/.test(f)) continue;
+    assert.doesNotMatch(fs.readFileSync(new URL(`../public/${f}`, import.meta.url), 'utf8'), /\son(click|error|load|change|input|submit)=["']/, f);
+  }
 });

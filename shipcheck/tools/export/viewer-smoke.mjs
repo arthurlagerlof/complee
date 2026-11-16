@@ -22,8 +22,13 @@ const catalog = synthetic.catalog;
 
 // Stub of the database API: catalog documents with a content ETag (as the real API answers).
 const stubHits = { requests: 0, notModified: 0 };
+// The backend's status routes answer as a backend without AI keys and with an empty verification database does
+// (a 404 here would be a browser console error, which the test counts).
+const STATUS = { '/api/v1/assist/status': { available: false, profile: 'budget', chain: [], prices_usd_per_million: [] }, '/api/v1/rule-verification/status': {} };
 const stub = http.createServer((req, res) => {
-  const m = /^\/api\/v1\/shipcheck\/catalog\/([a-z0-9-]+)$/.exec(req.url || '');
+  const path0 = (req.url || '').split('?')[0];
+  if (STATUS[path0]) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify(STATUS[path0])); }
+  const m =/^\/api\/v1\/shipcheck\/catalog\/([a-z0-9-]+)$/.exec(req.url || '');
   const doc = m && catalog[m[1]];
   if (!doc) { res.writeHead(404, { 'Content-Type': 'application/json' }); return res.end('{"error":{"message":"not imported"}}'); }
   const body = Buffer.from(JSON.stringify(doc));
@@ -62,7 +67,10 @@ async function withPage(fn) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 860 } });
   const page = await context.newPage(), errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  page.on('console', (m) => { if (m.type() === 'error' && !/favicon/.test(m.text())) errors.push(`console: ${m.text()}`); });
+  // A failed request is reported with its URL (the console line "Failed to load resource" does not name it).
+  page.on('console', (m) => { if (m.type() === 'error' && !/favicon|Failed to load resource/.test(m.text())) errors.push(`console: ${m.text()}`); });
+  page.on('dialog', (d) => { errors.push(`dialog: ${d.message()}`); void d.dismiss(); });
+  page.on('response', (r) => { if (r.status() >= 400 && !/favicon/.test(r.url())) errors.push(`http ${r.status()}: ${r.url().replace(BASE, '')}`); });
   try { await fn(page, errors); assert.deepEqual(errors, [], 'no browser errors'); } finally { await context.close(); }
 }
 const settled = (page, ms = 60000) => page.waitForFunction(() => { const s = window.localViewer?.stats; return s && !s.pending && s.residentTiles > 0 && [...window.localViewer.tiles.values()].every((c) => c.ready); }, null, { timeout: ms, polling: 200 });
@@ -187,7 +195,11 @@ test('first picture, streaming, state texture, picking, re-check, eviction, reva
   });
   await page.evaluate(() => { window.__shipcheck.selected = null; window.__shipcheckViewer.clearSelection(); });
   await page.mouse.click(target.x, target.y);
-  await page.waitForFunction((id) => window.__shipcheck.selected === id, `P${synthetic.hatches[1]}`, { timeout: 15000 });
+  await page.waitForFunction((id) => window.__shipcheck.selected === id, `P${synthetic.hatches[1]}`, { timeout: 15000 })
+    .catch(async (e) => {
+      const state = await page.evaluate((t) => ({ selected: window.__shipcheck.selected, at: document.elementFromPoint(t.x, t.y)?.outerHTML.slice(0, 120) }), target);
+      throw new Error(`${e.message} | ${JSON.stringify(state)}`);
+    });
 
   // Screenshot API works without a preserved drawing buffer.
   const shot = await page.evaluate(() => window.__shipcheckViewer.screenshot());
