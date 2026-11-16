@@ -214,7 +214,7 @@ export function mergeCollinear(segs, { angTol = 0.5, offTol = 2, gapTol = 2 } = 
       const key = ((kk % nBins) + nBins) % nBins;
       if (used.has(key) || !byAng.has(key)) continue;
       if (kk !== k && Math.abs(kk - k) === 1 && byAng.has(key)) { /* neighbours join */ }
-      group.push(...byAng.get(key)); used.add(key);
+      append(group, byAng.get(key)); used.add(key);
     }
     // common direction: length-weighted mean (handling wrap)
     let sx = 0, sy = 0;
@@ -474,4 +474,10 @@ export function groupSegments(segs, gap) {
   const out = new Int32Array(segs.length);
   for (let i = 0; i < segs.length; i++) out[i] = uf.find(i);
   return out;
+}
+
+/** a.push(...b) without spreading b into arguments (that overflows the call stack for very large drawings). */
+export function append(a, b) {
+  for (let i = 0; i < b.length; i++) a.push(b[i]);
+  return a;
 }

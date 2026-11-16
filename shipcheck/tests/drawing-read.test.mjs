@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readDxf } from '../src/drawing/read-dxf.mjs';
 import { readPdf, plausibleWidth } from '../src/drawing/read-pdf.mjs';
 import { readSvg } from '../src/drawing/read-svg.mjs';
-import { circleFit, polylineArc, gridIndex, makeSheet, addPath, tessellateArc, arcSweep } from '../src/drawing/sheet.mjs';
+import { PathBuilder, circleFit, polylineArc, polylineArcRuns, gridIndex, makeSheet, addPath, tessellateArc, arcSweep } from '../src/drawing/sheet.mjs';
 
 const near = (a, b, tol = 1e-6, msg) => assert.ok(Math.abs(a - b) <= tol, `${msg || ''} expected ${b}, got ${a}`);
 const nearPt = (p, q, tol = 1e-6, msg) => { near(p[0], q[0], tol, msg); near(p[1], q[1], tol, msg); };
@@ -287,4 +287,43 @@ test('sheet: circleFit accepts arcs and rejects other curves; grid index finds p
   near(plausibleWidth(27.57, 'CABIN 3', 7.09), 27.57, 1e-12);
   near(plausibleWidth(94, '0', 7), 0.6 * 7, 1e-12, 'a "0" cannot be 94 pt wide at 7 pt');
   near(plausibleWidth(0, 'DECK', 10), 24, 1e-12, 'unknown width');
+});
+
+test('a door swing written as one polyline with its leaf: the arc run is cut out as an arc, the leaf stays a line', () => {
+  // 90 chords on a quarter circle of radius 900 around (0, 0), then the leaf back to the hinge, as some IFC exporters
+  // write a door into a PDF
+  const arc = Array.from({ length: 91 }, (_, i) => { const a = (i / 90) * (Math.PI / 2); return [900 * Math.cos(a), 900 * Math.sin(a)]; });
+  const runs = polylineArcRuns([...arc, [0, 0]]);
+  assert.ok(runs, 'found');
+  const arcs = runs.filter((r) => r.arc);
+  assert.equal(arcs.length, 1);
+  assert.ok(Math.abs(arcs[0].arc.r - 900) < 1 && Math.hypot(arcs[0].arc.c[0], arcs[0].arc.c[1]) < 1, 'radius and centre');
+  assert.equal(Math.round(arcSweep(arcs[0].arc)), 90);
+  assert.deepEqual(runs.find((r) => !r.arc).pts, [arc[90], [0, 0]], 'the leaf is a line from the arc end to the hinge');
+  // no arc: a straight run of equal pieces, and a zigzag of equal pieces
+  assert.equal(polylineArcRuns(Array.from({ length: 20 }, (_, i) => [i * 10, 0])), null);
+  assert.equal(polylineArcRuns(Array.from({ length: 20 }, (_, i) => [i * 10, (i % 2) * 10])), null);
+});
+
+test('arcs in chains of Bézier curves: a circle of four quarters is one arc; a long spline is read in linear time', () => {
+  const K = 0.5522847498; // control-point factor of a quarter circle
+  const s = makeSheet({ format: 'pdf' });
+  const b = new PathBuilder(s);
+  const r = 100;
+  b.moveTo(r, 0);
+  b.curveTo(r, K * r, K * r, r, 0, r); b.curveTo(-K * r, r, -r, K * r, -r, 0);
+  b.curveTo(-r, -K * r, -K * r, -r, 0, -r); b.curveTo(K * r, -r, r, -K * r, r, 0);
+  b.closePath();
+  b.paint({ width: 1, stroke: true, fill: false });
+  assert.equal(s.paths.length, 1);
+  assert.ok(Math.abs(s.paths[0].arc?.r - r) < 1 && arcSweep(s.paths[0].arc) === 360, 'one full circle');
+  // a wavy spline of 3000 curves (text outlines and splines come like this): no arc, and no cubic search
+  const s2 = makeSheet({ format: 'pdf' });
+  const b2 = new PathBuilder(s2);
+  b2.moveTo(0, 0);
+  for (let i = 0; i < 3000; i++) b2.curveTo(i * 10 + 3, 4 + (i % 3), i * 10 + 7, -4 - (i % 2), i * 10 + 10, 0);
+  const t0 = Date.now();
+  b2.paint({ width: 1, stroke: true, fill: false });
+  assert.ok(Date.now() - t0 < 2000, `read in ${Date.now() - t0} ms`);
+  assert.ok(!s2.paths.some((p) => p.arc && p.arc.r > 1000), 'the spline is no big arc');
 });

@@ -9,6 +9,7 @@ import { interpret } from '../src/drawing/interpret.mjs';
 import { normalizeModel, checkModel } from '../src/checker.mjs';
 import { area as ringArea, pointInRing, ringBox } from '../src/drawing/plan-graph.mjs';
 import { deckOf, roomOf, scaleOf, elevationOf, principalOf, frameSpacingOf, normText, areaOf } from '../src/drawing/vocab.mjs';
+import { makeSheet, addPath, addText, finishSheet } from '../src/drawing/sheet.mjs';
 
 const RULES = JSON.parse(fs.readFileSync(new URL('../catalog/rules.json', import.meta.url), 'utf8')).rules;
 const PT_MM = 25.4 / 72;
@@ -326,3 +327,32 @@ test('accuracy summary', () => {
 
 // keep helpers referenced (used while debugging single cases)
 void pointInRing; void ringBox;
+
+test('views: a sheet frame drawn as separate thin strips does not join the views; a title between two views goes to the one without a title', () => {
+  const s = makeSheet({ format: 'pdf', unit: 'pt', paper: true });
+  const thin = (x0, y0, x1, y1) => addPath(s, [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], { stroke: true, fill: true, width: 0 }, true);
+  // the frame: four strips 1.5 pt wide, broken at the top right like a frame around a title block
+  thin(10, 10, 990, 11.5); thin(10, 688.5, 700, 690); thin(10, 10, 11.5, 690); thin(988.5, 10, 990, 450);
+  // profile (elongated, not symmetric): hull, two decks, a deckhouse
+  addPath(s, [[100, 470], [120, 455], [860, 455], [900, 520], [100, 520]], { stroke: true, width: 0.5 }, true);
+  for (const y of [490, 505]) addPath(s, [[100, y], [880, y]], { stroke: true, width: 0.3 });
+  addPath(s, [[300, 520], [300, 600], [600, 600], [640, 520]], { stroke: true, width: 0.5 });
+  for (let x = 140; x <= 860; x += 40) addPath(s, [[x, 455], [x, 462]], { stroke: true, width: 0.2 });
+  // plan (symmetric about y = 275): outline pointed at the bow, bulkheads, a centre line
+  addPath(s, [[100, 180], [800, 180], [900, 275], [800, 370], [100, 370]], { stroke: true, width: 0.5 }, true);
+  for (let x = 160; x <= 760; x += 60) addPath(s, [[x, 180], [x, 370]], { stroke: true, width: 0.3 });
+  for (const y of [220, 330]) addPath(s, [[100, y], [800, y]], { stroke: true, width: 0.3 });
+  addPath(s, [[90, 275], [910, 275]], { stroke: true, width: 0.2, dash: [8, 2, 2, 2] });
+  for (const [t, x, y] of [['Cabin', 300, 250], ['Mess', 500, 250], ['Store', 300, 300], ['Galley', 500, 300]]) addText(s, { text: t, at: [x, y], height: 5 });
+  // titles: PROFILE between the views, nearer to the plan; the plan's own title inside its box
+  addText(s, { text: 'PROFILE', at: [750, 405], height: 12 });
+  addText(s, { text: 'MAIN DECK PLAN', at: [600, 190], height: 12 }); // in the plan's box, at its edge
+  finishSheet(s);
+  const views = findViews(s);
+  const prof = views.find((v) => v.title === 'PROFILE'), plan = views.find((v) => v.title === 'MAIN DECK PLAN');
+  assert.ok(prof && plan && prof !== plan, `two titled views: ${views.map((v) => `${v.kind}:${v.title}[${v.box.map(Math.round)}]`).join(' ')}`);
+  assert.equal(prof.kind, 'profile');
+  assert.equal(plan.kind, 'plan');
+  assert.ok(prof.box[1] > 400 && plan.box[3] < 400, 'the views stay apart (the frame did not join them)');
+  assert.ok(!views.some((v) => v.box[2] - v.box[0] > 900), 'no view spans the frame');
+});

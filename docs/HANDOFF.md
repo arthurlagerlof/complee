@@ -72,7 +72,16 @@ rule-verification tables are empty (catalog not imported yet: the user should do
   (SpaceLens 32/65), mean miss 1.4 (1.3). Scale read on 65/65; median 0.36 s per plan (SpaceLens 0.2 s). Floor plans
   without ship cues are found by their door swings and labels (`views.mjs` `floorPlans`); legend symbols, scale bars and
   border strips are not decks (`dropSymbolPlans`); symmetry counts only for drawings with line work. Remaining misses:
-  balconies read as open deck (5–6 % small), apartment names ("App. A") joined to the room name below. Scorecards: `node tools/drawing/eval-aurora.mjs`, `node tools/drawing/eval-swiss.mjs [--dir … --questions
+  balconies read as open deck (5–6 % small), apartment names ("App. A") joined to the room name below.
+  Tests on data never tuned for (local only, `tools/drawing-samples/stoa-preview/`, `blind/`): the 65 Swiss plans as
+  DXF 89.5 % of 550 areas within 2 %; IFC-rendered plans 54/60 (PDF) and 58/60 (SVG) room areas against the IFC model,
+  12/14 (Molio); an attic plan fails (35 rooms instead of 1); 56 real architecture PDFs run without crash or timeout
+  (fixed: argument spreads over 248,000 segments, a cubic arc search), but sheets with 65,000+ paths take 15–45 s per
+  page. Blind test on an unseen ship GA (67' pilot boat, expectations written first in `blind/EXPECTED.md`): failed at
+  first (views joined by a frame drawn as strips, a title taken by the wrong view); after the fixes views, 2 decks,
+  scale 1:50 and beam are right, but its labels are drawn as outlines (no text), so no room has a name, planking hatch
+  gives 7 false stairs, doors 3 instead of 1. Not a blind result any more; a second unseen vector ship GA is still
+  needed (the two found were a text specification and a picture handout: nothing invented from either). Scorecards: `node tools/drawing/eval-aurora.mjs`, `node tools/drawing/eval-swiss.mjs [--dir … --questions
   … --one-click]`; browser checks: `node tools/drawing/drawing-smoke.mjs`
   and `tools/drawing/shot-3d.mjs` (Playwright with the installed Chrome). Not read yet: stroked text without fonts (the
   RCRV GA), sections (bilge shape), sliding doors, windows in plans.

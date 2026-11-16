@@ -5,7 +5,7 @@
 // (linear in the number of segments) or works on per-view summaries.
 
 import { viewTitleOf, deckOf, isTitleBlockWord, endWord, frameOf, numericText, principalOf, scaleOf } from './vocab.mjs';
-import { groupSegments, mergeCollinear, boxContains, boxesOverlap, boxUnion, PointGrid } from './plan-graph.mjs';
+import { groupSegments, mergeCollinear, boxContains, boxesOverlap, boxUnion, PointGrid, append } from './plan-graph.mjs';
 
 // ---------- segments ----------
 
@@ -115,9 +115,15 @@ export function findViews(sheet) {
   const why0 = [];
   // 1. sheet border, frame lines and the full-width title strip lines
   const border = new Set();
+  // a frame side drawn as a path of its own (a thin rectangle or a line, often broken at the title block): thin, at
+  // least half the sheet long and close to the sheet edge
+  const edge = 0.05 * Math.min(W, H);
   sheet.paths.forEach((p, i) => {
     const b = pathBox(p);
-    if (b[2] - b[0] >= 0.9 * W && b[3] - b[1] >= 0.9 * H) border.add(i);
+    const w = b[2] - b[0], h = b[3] - b[1];
+    if (w >= 0.9 * W && h >= 0.9 * H) { border.add(i); return; }
+    const nearX = b[0] - bbox[0] < edge || bbox[2] - b[2] < edge, nearY = b[1] - bbox[1] < edge || bbox[3] - b[3] < edge;
+    if ((w >= 0.5 * W && h <= 0.01 * H && nearY) || (h >= 0.5 * H && w <= 0.01 * W && nearX)) border.add(i);
   });
   const keep = [];
   for (const s of segs) {
@@ -197,7 +203,7 @@ function mergeOverlapping(list, gap) {
     for (const c of list) {
       // overlapping boxes, or one inside the other: one drawing
       const hit = out.find((o) => boxesOverlap(o.box, c.box, -gap * 0.1) && overlapShare(o.box, c.box) > 0.02);
-      if (hit) { hit.segs.push(...c.segs); hit.box = boxUnion(hit.box, c.box); changed = true; } else out.push(c);
+      if (hit) { append(hit.segs, c.segs); hit.box = boxUnion(hit.box, c.box); changed = true; } else out.push(c);
     }
     list = out;
   }
@@ -217,7 +223,7 @@ function absorbSmall(list, diag, gap) {
   const rest = [];
   for (const c of small) {
     const host = big.find((b) => boxesOverlap(b.box, c.box, 2 * gap));
-    if (host) { host.segs.push(...c.segs); host.box = boxUnion(host.box, c.box); } else rest.push(c);
+    if (host) { append(host.segs, c.segs); host.box = boxUnion(host.box, c.box); } else rest.push(c);
   }
   return [...big, ...rest];
 }
@@ -228,31 +234,38 @@ function assignTexts(texts, clusters, gap) {
   const hs = texts.map((t) => t.height || 0).filter((h) => h > 0).sort((a, b) => a - b);
   const medianH = hs.length ? hs[Math.floor(hs.length / 2)] : 0;
   const area = (b) => (b[2] - b[0]) * (b[3] - b[1]);
+  const asText = (t, p, inside) => {
+    if (inside) { out.get(inside).inside.push(t); return; }
+    const near = clusters.find((c) => boxesOverlap(c.box, [p[0], p[1], p[0], p[1]], gap));
+    if (near) out.get(near).inside.push(t);
+  };
+  // view titles compete for views: every (title, view) pair within reach, then the closest pairs first, one title per
+  // view (a title between two views goes to the other one when the nearer one has its own, closer title)
+  const pairs = [], titles = new Map();
   for (const t of texts) {
     const p = textCentre(t);
     const inside = clusters.filter((c) => boxContains(c.box, p)).sort((a, b) => area(a.box) - area(b.box))[0];
     const h = t.height || (t.box[3] - t.box[1]);
     const isTitle = !!(viewTitleOf(t.text) || deckOf(t.text)) && h >= 1.25 * medianH;
     if (inside && !(isTitle && h > 0 && onEdge(inside.box, p, h))) { out.get(inside).inside.push(t); continue; }
-    if (isTitle) {
-      // the view just above or below the title, overlapping it in x (titles are mostly under their view)
-      let best = null, bestD = Infinity;
-      for (const c of clusters) {
-        if (p[0] < c.box[0] - 4 * gap || p[0] > c.box[2] + 4 * gap) continue;
-        const below = c.box[1] - p[1], above = p[1] - c.box[3];
-        const d = boxContains(c.box, p) ? 0 : below >= -h ? Math.max(0, below) * 1.2 : above >= -h ? Math.max(0, above) : Infinity;
-        if (d < bestD && d <= Math.max(6 * gap, 8 * h)) { best = c; bestD = d; }
-      }
-      if (best) {
-        const o = out.get(best);
-        if (bestD < o.titleDist || (o.title && h > (o.title.height || 0) * 1.2 && bestD < o.titleDist + 2 * h)) { if (o.title) o.inside.push(o.title); o.title = t; o.titleDist = bestD; } else o.inside.push(t);
-        continue;
-      }
+    if (!isTitle) { asText(t, p, inside); continue; }
+    titles.set(t, { p, inside });
+    // the views just above or below the title, overlapping it in x (titles are mostly under their view)
+    for (const c of clusters) {
+      if (p[0] < c.box[0] - 4 * gap || p[0] > c.box[2] + 4 * gap) continue;
+      const below = c.box[1] - p[1], above = p[1] - c.box[3];
+      const d = boxContains(c.box, p) ? 0 : below >= -h ? Math.max(0, below) * 1.2 : above >= -h ? Math.max(0, above) : Infinity;
+      if (d <= Math.max(6 * gap, 8 * h)) pairs.push({ t, c, d, h });
     }
-    if (inside) { out.get(inside).inside.push(t); continue; }
-    const near = clusters.find((c) => boxesOverlap(c.box, [p[0], p[1], p[0], p[1]], gap));
-    if (near) out.get(near).inside.push(t);
   }
+  pairs.sort((a, b) => a.d - b.d || b.h - a.h);
+  const placed = new Set();
+  for (const { t, c, d } of pairs) {
+    const o = out.get(c);
+    if (placed.has(t) || o.title) continue;
+    o.title = t; o.titleDist = d; placed.add(t);
+  }
+  for (const [t, { p, inside }] of titles) if (!placed.has(t)) asText(t, p, inside);
   return out;
 }
 // A title text inside a view's box but in its outer band (a box that took in the title of a neighbour)
@@ -418,7 +431,8 @@ function linkShipViews(views) {
     const g = v._g;
     if (!g) continue;
     const host = profiles.find((p) => v.box[0] >= p.box[0] - 0.05 * (p.box[2] - p.box[0]) && v.box[2] <= p.box[2] + 0.05 * (p.box[2] - p.box[0]));
-    if (host && g.symH >= 0.45 && (v.box[2] - v.box[0]) >= 1.2 * (v.box[3] - v.box[1])) {
+    // (an empty box under the profile, such as a revision table frame, is symmetric too: line work needed)
+    if (host && v._c.segs.length >= 20 && g.symH >= 0.45 && (v.box[2] - v.box[0]) >= 1.2 * (v.box[3] - v.box[1])) {
       v.kind = 'plan'; v.confidence = 0.55;
       v.why.push(`below/above the profile within its length and symmetric about a horizontal axis: a deck plan (no deck name found)`);
     }

@@ -127,7 +127,7 @@ function readPlanAt({ segs, arcs = [], texts = [], strokeMM = () => 0, halfPlan 
   for (const o of openings) for (const v of o.closers) virtual.push([...v, `opening:${o.index}`]);
   if (halfPlan) {
     const xs = work.map((s) => [s[0], s[2]]).flat();
-    virtual.push([Math.min(...xs) - 1, 0, Math.max(...xs) + 1, 0, 'centreline']);
+    virtual.push([xs.reduce((m, v) => Math.min(m, v), Infinity) - 1, 0, xs.reduce((m, v) => Math.max(m, v), -Infinity) + 1, 0, 'centreline']);
   }
   // 7. planar graph and faces
   const graph = planarGraph(work.concat(virtual, bridges, marked), { tol: PLAN.snap });
@@ -223,7 +223,7 @@ function isDashPattern(iv) {
   if (gaps.length < 5) return null;
   const cv = (v) => { const m = v.reduce((x, y) => x + y, 0) / v.length; return Math.sqrt(v.reduce((x, y) => x + (y - m) ** 2, 0) / v.length) / (m || 1); };
   if (cv(gaps) > 0.35) return null;
-  const max = Math.max(...pieces);
+  const max = pieces.reduce((m, v) => Math.max(m, v), 0);
   // dots are tiny next to the dashes (a dash-dot line); equal short dashes are a hidden line
   const dots = pieces.filter((p) => p < 0.12 * max && p < 400).length;
   return dots >= 0.25 * pieces.length || (max <= 1000 && cv(pieces) < 0.25) ? { gaps: at } : null;

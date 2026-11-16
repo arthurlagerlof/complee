@@ -212,6 +212,39 @@ export function polylineArc(pts, closed = false) {
   return fit;
 }
 
+/**
+ * Arcs written as runs of short, equal chords inside a longer open polyline (exporters tessellate a door swing and
+ * append its leaf in one path). Returns the polyline cut at the ends of each run that fits a circle, or null when
+ * there is none: [{ pts, arc|null }], neighbouring pieces sharing their end point.
+ */
+export function polylineArcRuns(pts) {
+  const n = pts.length;
+  const len = (i) => Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]);
+  const cuts = [];
+  let i = 0;
+  while (i < n - 1) {
+    // a run of chords of (nearly) one length
+    const l0 = len(i);
+    let j = i;
+    while (j + 1 < n - 1 && l0 > 0 && Math.abs(len(j + 1) - l0) <= 0.15 * l0) j++;
+    // a run that is no circular arc as a whole is skipped as a whole (testing every start inside it would be
+    // quadratic on long hatch or dash polylines)
+    const arc = j + 2 - i >= 8 ? polylineArc(pts.slice(i, j + 2)) : null;
+    if (arc) cuts.push({ i0: i, i1: j + 1, arc });
+    i = j + 1;
+  }
+  if (!cuts.length) return null;
+  const out = [];
+  let at = 0;
+  for (const c of cuts) {
+    if (c.i0 > at) out.push({ pts: pts.slice(at, c.i0 + 1), arc: null });
+    out.push({ pts: pts.slice(c.i0, c.i1 + 1), arc: c.arc });
+    at = c.i1;
+  }
+  if (at < n - 1) out.push({ pts: pts.slice(at), arc: null });
+  return out;
+}
+
 // ---------- Bézier curves ----------
 
 /**
@@ -321,7 +354,15 @@ export class PathBuilder {
       if (a[0] === b[0] && a[1] === b[1]) pts = pts.slice(0, -1);
     }
     this.segments += Math.max(1, pts.length - (s.closed ? 0 : 1));
-    if (!s.curves) { addPath(sheet, pts, style, s.closed, pts.length >= 6 ? polylineArc(pts, s.closed) : null); return; }
+    if (!s.curves) {
+      const whole = pts.length >= 6 ? polylineArc(pts, s.closed) : null;
+      // a stroked line run that carries a pre-tessellated arc inside it (a door swing and its leaf written as one
+      // polyline): the arc becomes a path of its own, the straight parts stay lines
+      const runs = !whole && !s.closed && style.stroke !== false && pts.length >= 10 ? polylineArcRuns(pts) : null;
+      if (!runs) { addPath(sheet, pts, style, s.closed, whole); return; }
+      for (const r of runs) if (r.pts.length >= 2) addPath(sheet, r.pts, style, false, r.arc);
+      return;
+    }
     const curves = s.curves;
     const last = pts.length - 1;
     // Whole subpath is one run of curves (a circle, a lone swing arc)?
@@ -334,13 +375,19 @@ export class PathBuilder {
     const full = s.closed ? [...pts, pts[0]] : pts;
     const pieces = [];
     let from = 0; // start index of the pending polyline piece
+    // Each curve on its own first (one small fit each); only neighbours on the same circle can form one arc. Trying
+    // every sub-run of a long chain of curves (a spline, text drawn as outlines) would be cubic in its length.
+    const single = curves.map((c, i) => runArc(curves, i, i, full));
+    const sameCircle = (a, b) => a && b && Math.abs(a.r - b.r) <= 0.02 * Math.max(a.r, b.r)
+      && Math.hypot(a.c[0] - b.c[0], a.c[1] - b.c[1]) <= 0.02 * Math.max(a.r, b.r);
     for (let k = 0; k < curves.length;) {
-      // Longest run starting at k that is one circular arc (runs are short: try longest first).
+      if (!single[k]) { k++; continue; }
+      // Longest run starting at k of contiguous curves on k's circle, then the longest part of it that fits as one arc.
       let end = k;
-      while (end + 1 < curves.length && curves[end + 1].i0 === curves[end].i1) end++;
+      while (end + 1 < curves.length && curves[end + 1].i0 === curves[end].i1 && sameCircle(single[end + 1], single[k])) end++;
       let found = null, foundEnd = -1;
-      for (let e = end; e >= k; e--) {
-        const arc = runArc(curves, k, e, full);
+      for (let e = end; e >= Math.max(k, end - 16); e--) {
+        const arc = e === k ? single[k] : runArc(curves, k, e, full);
         if (arc) { found = arc; foundEnd = e; break; }
       }
       if (!found) { k++; continue; }
