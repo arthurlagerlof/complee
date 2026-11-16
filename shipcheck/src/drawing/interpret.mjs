@@ -21,6 +21,9 @@ const ASSUMED = { deckHeight: 2800, doorHeight: 2000, plate: 10, equipment: 2000
 const AGREE = 0.05; // sources within 5 % confirm each other
 const round = (v, d = 0) => Math.round(v * 10 ** d) / 10 ** d;
 const fmt = (mm) => (Math.abs(mm) >= 1000 ? `${round(mm / 1000, 2)} m` : `${round(mm)} mm`);
+// notes from several steps as one text: each a sentence, starting upper case and ending with a full stop
+const sentences = (notes) => notes.map((n) => String(n).trim()).filter(Boolean)
+  .map((n) => `${n[0].toUpperCase()}${n.slice(1)}${/[.!?)]$/.test(n) ? '' : '.'}`).join(' ');
 
 /** interpret(sheet, views, overrides, { onProgress }) -> { model, recon, report } */
 export function interpret(sheet, views, overrides = {}, { onProgress } = {}) {
@@ -577,7 +580,7 @@ function buildElements(plans, decks, profile, ctx) {
       const unnamed = !r.label;
       const el = { id: null, type, name: r.label ?? (type === 'corridor' ? 'Corridor' : 'Unnamed space'), deck: d.id, geom: { x: round(b[0]), y: round(b[1]), z: 0, lx: round(b[2] - b[0]), ly: round(b[3] - b[1]), h: round(roomH) },
         props, source: `drawing ${ctx.sheet.source?.file ?? ''} view ${vname}: room recognised from its walls${r.label ? ` and its label "${r.label}"` : ''}`.replace('  ', ' '), basis: 'measured', confidence, evidence: ev,
-        ...(unnamed || (r.label && ocrLabels.length) ? { check: true } : {}), ...(r.openDeck ? { open_deck: true } : {}), ...(notes.length ? { note: notes.join(' ') } : {}) };
+        ...(unnamed || (r.label && ocrLabels.length) ? { check: true } : {}), ...(r.openDeck ? { open_deck: true } : {}), ...(notes.length ? { note: sentences(notes) } : {}) };
       push(el, { kind: 'rooms', item: { deck: d.id, polygon: r.ring.map((p) => p.map((v) => round(v))), holes: r.holes.map((h) => h.map((p) => p.map((v) => round(v)))), z0, z1: z0 + roomH, ...(r.openDeck ? { open: true } : {}), basis: 'measured', evidence: ev } });
       if (confidence < 0.6) ctx.check.push(`${d.name}: ${r.label ? `room "${r.label}"` : 'an unnamed closed area'} of ${round(r.area / 1e6, 1)} m² at x ${fmt(centroid(r.ring)[0])}: check what it is.`);
       el._room = r;
@@ -802,7 +805,7 @@ function stairElement(d, s, room, decks, ctx, vname, deckAbove, deckBelow) {
   if (!(up ? above : below)) notes.push(`no deck ${up ? 'above' : 'below'} in the drawing: the stair height is the deck height.`);
   if (s && !s.upText) notes.push('no UP/DN text at the stair: assumed to lead up.');
   const el = { id: null, type: 'stair', name: room?.label ?? 'Stair', deck: d.id, geom: { x: round(b[0]), y: round(b[1]), z: round(z0 - d.elevation), lx: round(b[2] - b[0]), ly: round(b[3] - b[1]), h: round(z1 - z0) },
-    props, source: `drawing view ${vname}: ${s ? `${s.treads} treads` : 'stair label'}`, basis: 'measured', confidence: s ? 0.85 : 0.5, evidence: ev, ...(notes.length ? { note: notes.join(' ') } : {}) };
+    props, source: `drawing view ${vname}: ${s ? `${s.treads} treads` : 'stair label'}`, basis: 'measured', confidence: s ? 0.85 : 0.5, evidence: ev, ...(notes.length ? { note: sentences(notes) } : {}) };
   return [el, { kind: 'stairs', item: { deck: d.id, polygon: poly.map((p) => p.map((v) => round(v))), dir: (s?.dir ?? [1, 0]).map((v) => round(v, 4)), z0, z1, treads: s?.treads ?? null, basis: 'measured', evidence: ev } }];
 }
 
