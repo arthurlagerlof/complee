@@ -30,7 +30,8 @@ const rulesKey = (rules) => rules.map((r) => `${r.id}:${r.verified === true}`).j
 function computeReadiness({ results, register, comments, rules, edits }) {
   const items = [];
   const add = (id, level, count, text, go) => { if (count > 0) items.push({ id, level, count, text, go }); };
-  const rows = registerRows(results, register).filter((r) => !r.resolved);
+  const all = registerRows(results, register);
+  const rows = all.filter((r) => !r.resolved && !r.orphan);
   const nc = rows.filter((r) => r.status === 'non_compliant');
 
   add('model_issues', 'blocker', results.model_issues?.length ?? 0, 'model data errors: elements without a usable or unique id, or not elements at all (checked under a new id or skipped)', 'list');
@@ -54,6 +55,8 @@ function computeReadiness({ results, register, comments, rules, edits }) {
   add('manual', 'blocker', man.filter((m) => !m.done && m.applicability !== 'unknown').length, 'manual checks not confirmed', 'manual');
   const cs = commentSummary(comments, results, register);
   add('comments_open', 'blocker', cs.open, 'class comments without a response', 'comments');
+  add('orphaned', 'warning', all.filter((r) => r.orphan).length, 'register entries whose element or rule is not in this model (renamed or removed?): carry them over or drop them', 'register');
+  add('comments_unconfirmed', 'warning', cs.unconfirmed, 'class comments answered while the rule check cannot confirm them (information missing, manual check open, or only what-if values)', 'comments');
   add('contradicted', 'blocker', cs.contradicted, 'class comments answered while the rule check still finds the deviation and the register has no justified deviation for it', 'comments');
 
   // A planned design change is not in the model yet: the design as submitted still has the deviation.

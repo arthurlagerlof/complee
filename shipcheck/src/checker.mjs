@@ -1024,9 +1024,18 @@ const compactElement = (full, raw, dctx, ruleById) => new CompactElement(full, r
 // alone. The others look at neighbours, zones or counts and need the whole model again.
 const LOCAL_CHECKS = new Set(['in_set', 'table_lookup', 'data_quality', 'min', 'max', 'manual']);
 
+// Short hash of what an element is (type, deck, data, geometry): equal for an unchanged element in every revision.
+export function elementFingerprint(el) {
+  const text = JSON.stringify([el.type, el.deck, el.props ?? null, el.geom ?? null]);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(36) + text.length.toString(36);
+}
+
 function checkElement(el, rules, ctx) {
   const { model } = ctx;
   const all = [], not_applicable = [], manual = [];
+  let fp = null;
   const unknownApplicability = new Set();
   for (const rule of rules) {
     const ec = elementCondition(rule, el, model);
@@ -1038,9 +1047,10 @@ function checkElement(el, rules, ctx) {
     if (sc.ok === false) { not_applicable.push({ rule_id: rule.id, source: rule.source, reason: sc.reason }); continue; }
     if (rule.check === 'manual') {
       // A requirement no algorithm can decide (qualitative, "to the satisfaction of the Administration", ...):
-      // listed for a person to confirm, never counted as a pass.
+      // listed for a person to confirm, never counted as a pass. The fingerprint of the element's data lets a
+      // confirmation go stale when the element changes.
       const base = { rule_id: rule.id, source: rule.source, clause: rule.clause, rule_text: rule.text, text_status: rule.text_status || 'paraphrase',
-        verified: rule.verified === true, reference_url: rule.reference_url || null, evidence: rule.evidence || null };
+        verified: rule.verified === true, reference_url: rule.reference_url || null, evidence: rule.evidence || null, fingerprint: (fp ??= elementFingerprint(el)) };
       if (ec.ok === 'unknown') manual.push({ ...base, applicability: 'unknown', reason: `Applies only if ${rule.applies_note ?? `${ec.missing} ${ec.want}`}: ${ec.missing} is not set in the model.` });
       else if (sc.ok === 'unknown') manual.push({ ...base, applicability: 'unknown', reason: `Applies only if confirmed: ${sc.missing} is missing in the ship particulars.` });
       else manual.push({ ...base, applicability: 'applies' });

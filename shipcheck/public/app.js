@@ -15,7 +15,7 @@ import { consistencyIssues, widthCheck } from './src/consistency.mjs';
 import { readiness } from './src/readiness.mjs';
 import { statusForRules, verificationCounts, LEVEL_LABEL } from './src/verify-status.mjs';
 import { projectFile, readProjectFile } from './src/project-file.mjs';
-import { COMMENT_STATUSES, COMMENT_STATUS_LABEL, EVIDENCE_LABEL, parseComments, addComments, withComment, withoutComment, commentEvidence, commentSummary, commentsCSV, isContradicted } from './src/class-comments.mjs';
+import { COMMENT_STATUSES, COMMENT_STATUS_LABEL, EVIDENCE_LABEL, EVIDENCE_CLASS, parseComments, addComments, withComment, withoutComment, commentEvidence, commentSummary, commentsCSV, isContradicted } from './src/class-comments.mjs';
 import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, registerSummary, withDisposition, registerCSV, projectKey, manualRows, manualSummary, withManualCheck } from './src/dispositions.mjs';
 import { createFallbackViewer } from './viewer-fallback.js';
 import { createLocalViewer } from './viewer-stream.js';
@@ -578,6 +578,7 @@ function wireReadiness() {
       const p = readProjectFile(await f.text(), S.registerProject);
       const here = Object.keys(S.register).length + (S.comments?.comments?.length ?? 0);
       const msg = `Open "${f.name}"${p.saved ? ` (saved ${new Date(p.saved).toLocaleString('en-GB')})` : ''}: ${Object.keys(p.register).length} register entries and ${p.comments.length} class comments.`
+        + (p.problems.length ? `\n\nNot taken over: ${p.problems.join('; ')}.` : '')
         + (p.other_project ? `\n\nIt was saved for another project (${p.model ?? p.project}).` : '')
         + (here ? `\n\nThis replaces the ${here} entries saved in this browser for this project.` : '');
       if (!confirm(msg)) return;
@@ -703,6 +704,8 @@ function renderList() {
 // ---------- detail panel ----------
 
 function select(id, { fly = true } = {}) {
+  // Comments and register entries can name elements of another revision: say so instead of selecting nothing.
+  if (!elById(id)) { alert(`${id} is not in this model (renamed, removed, or from another revision).`); return; }
   clearCutControl();
   S.selected = id;
   const el = elById(id);
@@ -1738,12 +1741,34 @@ function loadRegister(sc, model) {
   return store;
 }
 const commentsKey = (project) => `complee.comments.${project}`;
+// A save that fails (storage full, blocked, private window) is said once per session: the work is then only on screen.
+let storageWarned = false;
+function storageFailed(what, e) {
+  console.warn(`The ${what} could not be saved in this browser:`, e.message);
+  if (storageWarned) return;
+  storageWarned = true;
+  alert(`The ${what} could not be saved in this browser (${e.name === 'QuotaExceededError' ? 'storage full' : 'storage blocked'}). It stays on screen until you close the page: use "Save project file" to keep it.`);
+}
 function saveComments() {
-  try { localStorage.setItem(commentsKey(S.registerProject), JSON.stringify(S.comments)); } catch (e) { console.warn('The class comments could not be saved in this browser:', e.message); }
+  try { localStorage.setItem(commentsKey(S.registerProject), JSON.stringify(S.comments)); } catch (e) { storageFailed('class comments', e); }
 }
 function saveRegister() {
-  try { localStorage.setItem(registerKey(S.registerProject), JSON.stringify(S.register)); } catch (e) { console.warn('The findings register could not be saved in this browser:', e.message); }
+  try { localStorage.setItem(registerKey(S.registerProject), JSON.stringify(S.register)); } catch (e) { storageFailed('findings register', e); }
 }
+// The same project open in another tab: take over what that tab saved, instead of overwriting it with the next change.
+window.addEventListener('storage', (e) => {
+  if (!S.registerProject || !e.key) return;
+  if (e.key === registerKey(S.registerProject)) S.register = readJSON(e.key, {});
+  else if (e.key === commentsKey(S.registerProject)) { S.comments = readJSON(e.key, { comments: [] }); if (!Array.isArray(S.comments.comments)) S.comments = { comments: [] }; }
+  else return;
+  renderSummary();
+  renderRegisterButton();
+  if (!$('#registerPanel').hidden) openRegister();
+});
+// What-if values and a model opened from a file are not saved anywhere: ask before the page is left.
+window.addEventListener('beforeunload', (e) => {
+  if (S.edits?.size || S.sc?.modelData) { e.preventDefault(); e.returnValue = ''; }
+});
 const currentFinding = (key) => findingsOf(S.results).find((f) => findingKey(f) === key);
 
 function dispositionControls(row) {
@@ -1788,6 +1813,7 @@ function manualHTML(m) {
       <input class="manNote" data-key="${esc(m.key)}" value="${esc(m.note)}" placeholder="Evidence reference, e.g. drawing no." maxlength="600">
     </div>
     ${m.done && m.updated ? `<div class="na">Confirmed by ${esc(m.responsible)}, ${esc(new Date(m.updated).toLocaleDateString('en-GB'))}${m.revision ? ` (revision ${esc(m.revision)})` : ''}.</div>` : ''}
+    ${m.stale ? `<div class="disp-warn">Confirmed by ${esc(m.responsible)}${m.revision ? ` for revision ${esc(m.revision)}` : ''}, but the element has changed since (or the confirmation does not record what it was): check it again.</div>` : ''}
     <div class="manual-err check-bad" hidden></div>
   </div>`;
 }
@@ -1842,8 +1868,9 @@ function openRegister() {
   if (registerTab === 'comments') return openComments();
   const panel = $('#registerPanel');
   const all = registerRows(S.results, S.register), s = registerSummary(all);
-  const current = all.filter((r) => !r.resolved && (!registerOpenOnly || r.disposition === 'open' || r.stale || r.missing_note));
+  const current = all.filter((r) => !r.resolved && !r.orphan && (!registerOpenOnly || r.disposition === 'open' || r.stale || r.missing_note));
   const resolved = all.filter((r) => r.resolved);
+  const orphans = all.filter((r) => r.orphan);
   const row = (r) => `<tr class="${r.stale || r.missing_note ? 'warn' : ''}">
       <td><span class="badge st-${r.status}">${LABEL[r.status]}</span></td>
       <td class="part" data-id="${esc(r.element)}" data-rule="${esc(r.rule_id)}"><b>${esc(r.element)}</b> ${esc(r.name)}</td>
@@ -1864,6 +1891,10 @@ function openRegister() {
     <p class="muted" style="margin:8px 0">A disposition records how a finding is handled and by whom. It never changes the result of the rule check. One register per project, shared by all its revisions (${(S.registerMeta?.revisions ?? []).length} seen); saved in this browser. Export the CSV or the report to share it.</p>
     ${current.length ? `<table class="register"><thead><tr><th>Check result</th><th>Element</th><th>Rule</th><th>Measured</th><th>Required</th><th>Disposition · responsible · justification</th><th>Updated · revision</th></tr></thead><tbody>${current.map(row).join('')}</tbody></table>`
       : `<p class="muted">${s.total ? 'No finding needs attention.' : 'The rule check reports no findings for this model.'}</p>`}
+    ${orphans.length ? `<h2>Not in this model (${orphans.length})</h2>
+      <p class="muted">The element or the rule of these dispositions is not in this revision. That does not mean the deviation is resolved: if the element was renamed, move the disposition to its new id (it is then compared with the current value); otherwise remove it.</p>
+      <table class="register"><tbody>${orphans.map((r) => `<tr class="warn"><td><b>${esc(r.element)}</b> ${esc(r.name)}</td><td>${esc(r.rule_id)}</td><td>${r.orphan === 'element' ? 'element not in this model' : 'rule no longer runs on it'}</td><td>was: ${esc(r.measured)}</td><td>${esc(DISPOSITION_LABEL[r.disposition])}</td><td>${esc(r.note)}</td>
+        <td><input class="regMoveTo" data-key="${esc(r.key)}" placeholder="new element id" size="12"> <button class="tiny regMove" data-key="${esc(r.key)}">move</button> <button class="tiny regDrop" data-key="${esc(r.key)}">remove</button></td></tr>`).join('')}</tbody></table>` : ''}
     ${resolved.length ? `<h2>No longer reported by the check (${resolved.length})</h2>
       <table class="register"><tbody>${resolved.map((r) => `<tr><td><b>${esc(r.element)}</b> ${esc(r.name)}</td><td>${esc(r.rule_id)}</td><td>was: ${esc(r.measured)}</td><td>${esc(DISPOSITION_LABEL[r.disposition])}</td><td>${esc(r.responsible)}</td><td>${esc(r.note)}</td><td><button class="tiny regDrop" data-key="${esc(r.key)}">remove</button></td></tr>`).join('')}</tbody></table>` : ''}
     </div>`;
@@ -1878,6 +1909,18 @@ function openRegister() {
   if ($('#cmpClear')) $('#cmpClear').onclick = () => { S.compare = null; openRegister(); };
   panel.querySelectorAll('.item.cmp[data-id]').forEach((n) => (n.onclick = () => { closeRegister(); select(n.dataset.id); }));
   panel.querySelectorAll('.regDrop').forEach((b) => (b.onclick = () => { const next = { ...S.register }; delete next[b.dataset.key]; S.register = next; saveRegister(); openRegister(); }));
+  // A renamed element: the disposition moves to the new id and is compared with that element's current result.
+  panel.querySelectorAll('.regMove').forEach((b) => (b.onclick = () => {
+    const input = panel.querySelector(`.regMoveTo[data-key="${CSS.escape(b.dataset.key)}"]`);
+    const to = input?.value.trim();
+    const rule = b.dataset.key.slice(b.dataset.key.lastIndexOf('|') + 1);
+    if (!to || !elById(to)) { input?.classList.add('missing'); return; }
+    const next = { ...S.register };
+    if (next[`${to}|${rule}`] && !confirm(`${to} already has a disposition for ${rule}. Replace it?`)) return;
+    next[`${to}|${rule}`] = { ...next[b.dataset.key], moved_from: b.dataset.key.slice(0, b.dataset.key.lastIndexOf('|')) };
+    delete next[b.dataset.key];
+    S.register = next; saveRegister(); renderRegisterButton(); openRegister();
+  }));
   panel.querySelectorAll('td.part').forEach((n) => (n.onclick = () => {
     closeRegister();
     select(n.dataset.id);
@@ -1892,9 +1935,12 @@ let commentsOpenOnly = false, commentImportOpen = false, commentImportMsg = '';
 S.commentAi = new Map();
 
 function evidenceHTML(ev) {
-  const cls = { finding: 'st-non_compliant', missing: 'st-not_enough_info', no_finding: 'st-compliant', unlinked: 'st-none' }[ev.state];
-  const items = ev.items.slice(0, 6).map((i) => i.missing_element ? `${esc(i.element)}: not in this model`
-    : i.status ? `${esc(i.element)} ${esc(i.rule_id)}: ${esc(i.measured ?? 'missing')}, required ${esc(i.required)}` : `${esc(i.element)}: no rule applies`).join(' · ');
+  const cls = `st-${EVIDENCE_CLASS[ev.state] ?? 'none'}`;
+  // Deviations first, so the six shown include the ones that matter; manual checks say whether someone confirmed them.
+  const rank = (i) => (i.status === 'non_compliant' ? 0 : i.missing_element || i.status === 'not_enough_info' || i.status === 'manual_open' ? 1 : 2);
+  const items = [...ev.items].sort((a, b) => rank(a) - rank(b)).slice(0, 6).map((i) => i.missing_element ? `${esc(i.element)}: not in this model`
+    : i.manual ? `${esc(i.element)} ${esc(i.rule_id)}: manual check ${i.status === 'compliant' ? 'confirmed' : 'open'}`
+      : i.status ? `${esc(i.element)} ${esc(i.rule_id)}: ${esc(i.measured ?? 'missing')}, required ${esc(i.required)}` : `${esc(i.element)}: no rule applies`).join(' · ');
   return `<div class="cmt-ev"><span class="badge ${cls}">${esc(EVIDENCE_LABEL[ev.state])}</span> <span class="muted">${items}${ev.items.length > 6 ? ' …' : ''}</span></div>`;
 }
 
@@ -1913,7 +1959,7 @@ function commentAiHTML(c) {
 }
 
 function commentCard(c) {
-  const ev = commentEvidence(c, S.results);
+  const ev = commentEvidence(c, S.results, S.register);
   const warn = isContradicted(c, S.results, S.register);
   return `<div class="cmt ${warn ? 'warn' : ''}" data-id="${esc(c.id)}">
     <div class="cmt-head"><b>${esc(c.ref)}</b>${c.document ? ` <span class="muted">· ${esc(c.document)}</span>` : ''}${c.received ? ` <span class="muted">· received ${esc(c.received)}</span>` : ''}${c.revision ? ` <span class="muted">· on ${esc(c.revision)}</span>` : ''}
@@ -1938,7 +1984,7 @@ function openComments() {
   const panel = $('#registerPanel');
   const all = S.comments?.comments ?? [];
   const sum = commentSummary(all, S.results, S.register);
-  const shown = commentsOpenOnly ? all.filter((c) => c.status !== 'closed' || commentEvidence(c, S.results).state === 'finding') : all;
+  const shown = commentsOpenOnly ? all.filter((c) => c.status !== 'closed' || commentEvidence(c, S.results, S.register).state === 'finding') : all;
   panel.innerHTML = `<div class="trace-head">
       ${registerTabs()}
       <span class="muted">${sum.total} comment${sum.total === 1 ? '' : 's'} · ${sum.open} open · ${sum.answered} answered · ${sum.closed} closed${sum.contradicted ? ` · <b class="check-bad">${sum.contradicted} answered but still a finding</b>` : ''}</span>
@@ -1964,7 +2010,7 @@ function openComments() {
   wireRegisterTabs(panel);
   $('#cmtOpenOnly').onchange = (e) => { commentsOpenOnly = e.target.checked; openComments(); };
   $('#cmtImportBtn').onclick = () => { commentImportOpen = !commentImportOpen; commentImportMsg = ''; openComments(); };
-  $('#cmtCsv').onclick = () => download(`class-comments-${S.sc.id}.csv`, commentsCSV(S.comments.comments, S.results), 'text/csv');
+  $('#cmtCsv').onclick = () => download(`class-comments-${S.sc.id}.csv`, commentsCSV(S.comments.comments, S.results, S.register), 'text/csv');
   if ($('#cmtFile')) $('#cmtFile').onchange = async (e) => { const f = e.target.files[0]; if (f) $('#cmtPaste').value = await f.text(); };
   if ($('#cmtAdd')) $('#cmtAdd').onclick = () => {
     const drafts = parseComments($('#cmtPaste').value);
@@ -1975,7 +2021,8 @@ function openComments() {
     });
     S.comments = out.store; saveComments();
     const linked = out.store.comments.slice(-out.added).filter((c) => c.links.elements.length || c.links.rules.length).length;
-    commentImportMsg = `Added ${out.added} comment${out.added === 1 ? '' : 's'}, ${linked} linked to the model automatically${out.skipped ? `; ${out.skipped} already in the list (same document and number)` : ''}.`;
+    commentImportMsg = `Added ${out.added} comment${out.added === 1 ? '' : 's'}, ${linked} linked to the model automatically${out.skipped ? `; ${out.skipped} already in the list (same document, number and text)` : ''}.`
+      + (drafts.notes?.length ? ` Check: ${drafts.notes.join(' ')}` : '');
     commentImportOpen = false;
     openComments();
     renderRegisterButton();
@@ -2030,7 +2077,7 @@ function wireComments(panel) {
 async function draftCommentReply(id) {
   const c = S.comments.comments.find((x) => x.id === id);
   if (!c) return;
-  const ev = commentEvidence(c, S.results);
+  const ev = commentEvidence(c, S.results, S.register);
   const rules = [...new Set([...(c.links?.rules ?? []), ...ev.items.map((i) => i.rule_id).filter(Boolean)])].slice(0, 6)
     .map((rid) => { const r = ruleById(rid); return r ? { id: r.id, source: r.source, clause: r.clause, text: r.text } : null; }).filter(Boolean);
   const notes = Object.fromEntries(ev.items.filter((i) => i.rule_id).map((i) => [`${i.element}|${i.rule_id}`, S.register[`${i.element}|${i.rule_id}`]]).filter(([, d]) => d)

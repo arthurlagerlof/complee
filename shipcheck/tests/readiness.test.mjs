@@ -47,13 +47,19 @@ test('open work is counted as blockers and warnings; cleared work disappears', (
   assert.equal(planned.ready, false);
 
   const fixed = checkModel(model(950), RULES);
+  // The corridor changed (850 -> 950 mm): its manual check was confirmed for the old design and must be checked again.
+  r = readiness({ results: fixed, register, comments: comments.comments, rules: RULES });
+  assert.equal(ids(r).manual, 1);
+  assert.equal(manualRows(fixed, register)[0].stale, true);
+  register = withManualCheck(register, manualRows(fixed, register)[0], { done: true, responsible: 'A. Engineer' });
   r = readiness({ results: fixed, register, comments: comments.comments, rules: RULES });
   assert.equal(r.ready, true);
   // Nothing blocks, but one rule check is undecided: never shown as plainly "Ready to submit".
   assert.equal(r.complete, false);
-  assert.deepEqual(ids(r), { missing_info: 1, unverified: 1 });
+  // The answered comment names the corridor, whose height is still unknown: the check cannot confirm the answer.
+  assert.deepEqual(ids(r), { comments_unconfirmed: 1, missing_info: 1, unverified: 1 });
   const html = toHTML({ title: 't', scenario: 's', results: fixed, model: model(950), rules: RULES, register, comments: comments.comments });
-  assert.match(html, /No blockers, but 1 rule check undecided · 2 warnings/);
+  assert.match(html, /No blockers, but 1 rule check undecided · 3 warnings/);
   assert.doesNotMatch(html, /✓ Ready to submit/);
 });
 
@@ -71,10 +77,49 @@ test('project file round trip; foreign or broken files are refused or flagged', 
   const file = projectFile({ project: 'ship:x', model: 'X', revision: 'rev B', register: { 'C1|W': { disposition: 'fix' } }, comments: [{ id: 'c1', text: 'hi' }] }, new Date('2026-11-12T00:00:00Z'));
   assert.equal(file.format, PROJECT_FORMAT);
   const back = readProjectFile(JSON.stringify(file), 'ship:x');
-  assert.deepEqual(back.register, { 'C1|W': { disposition: 'fix' } });
+  assert.equal(back.register['C1|W'].disposition, 'fix');
   assert.equal(back.comments.length, 1);
+  assert.deepEqual(back.problems, []);
   assert.equal(back.other_project, false);
   assert.equal(readProjectFile(JSON.stringify(file), 'ship:y').other_project, true);
   assert.throws(() => readProjectFile('{"format":"ship/1"}', 'ship:x'), /not a Complee project file/);
   assert.throws(() => readProjectFile('nope', 'ship:x'), /not JSON/);
+});
+
+test('a damaged or hand-edited project file is cleaned and the dropped parts are named', () => {
+  const raw = JSON.stringify({
+    format: PROJECT_FORMAT, project: 'ship:x',
+    register: {
+      'C1|W': { disposition: 'waived', responsible: 42, note: null },
+      'C1|M': { kind: 'manual', done: true, responsible: '  ' },
+      'C2|M': { kind: 'manual', done: true, responsible: 'A. Engineer', fingerprint: 'abc' },
+      'no-rule': { disposition: 'fix' },
+      'C3|W': null,
+    },
+    comments: [{ id: 'c1', text: 'a', links: { elements: 'C1', rules: ['W', 3] }, status: 'weird' }, { id: 'c1', text: 'again' }, { id: 7, text: 'x' }, null],
+  });
+  const p = readProjectFile(raw, 'ship:x');
+  assert.equal(p.register['C1|W'].disposition, 'open', 'unknown disposition becomes open');
+  assert.equal(p.register['C1|W'].responsible, '42');
+  assert.equal(p.register['C1|W'].note, '');
+  assert.equal(p.register['C1|M'].done, false, 'done without a name is not confirmed');
+  assert.equal(p.register['C2|M'].done, true);
+  assert.equal(p.register['C2|M'].fingerprint, 'abc');
+  assert.deepEqual(Object.keys(p.register).sort(), ['C1|M', 'C1|W', 'C2|M']);
+  assert.deepEqual(p.comments.map((c) => c.id), ['c1']);
+  assert.deepEqual(p.comments[0].links, { elements: [], rules: ['W'] });
+  assert.equal(p.comments[0].status, 'open');
+  assert.equal(p.problems.length, 4);
+  assert.match(p.problems.join(' '), /2 register entries.*1 manual check.*2 class comments.*1 class comment with an id/);
+});
+
+test('saving and opening a project file leaves the register as it was (nothing turns stale)', () => {
+  const results = checkModel(model(850), RULES);
+  let register = {};
+  const [w] = findingsOf(results).filter((f) => f.rule_id === 'W');
+  register = withDisposition(register, w, { disposition: 'deviation', note: 'Agreed with flag', responsible: 'A. Engineer' });
+  register = withManualCheck(register, manualRows(results, register)[0], { done: true, responsible: 'A. Engineer' });
+  const back = readProjectFile(JSON.stringify(projectFile({ project: 'p', register })), 'p').register;
+  assert.deepEqual(readiness({ results, register: back, rules: RULES }).items, readiness({ results, register, rules: RULES }).items);
+  assert.equal(manualRows(results, back)[0].done, true);
 });

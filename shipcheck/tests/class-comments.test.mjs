@@ -55,9 +55,78 @@ test('the current rule check decides the evidence; answering a still-failing com
   store = withComment(store, c1.id, { status: 'answered', response: 'Width increased to 950 mm in rev C.' }, now);
   assert.equal(commentSummary(store.comments, before).contradicted, 1);
   const after = checkModel(model(950), RULES);
-  assert.equal(commentEvidence(store.comments[0], after).state, 'no_finding');
-  assert.deepEqual(commentSummary(store.comments, after), { total: 3, open: 2, answered: 1, closed: 0, contradicted: 0 });
-  assert.match(commentsCSV(store.comments, after), /"Rule check: no deviation now","Answered, waiting for class","Width increased/);
+  // Only the element is linked: its rules show no deviation, but whether they are the comment's topic is not known.
+  assert.equal(commentEvidence(store.comments[0], after).state, 'unscoped');
+  // With the rule linked the check confirms the topic.
+  const scoped = { ...store.comments[0], links: { elements: ['MD-C1'], rules: ['W-MIN'] } };
+  assert.equal(commentEvidence(scoped, after).state, 'no_finding');
+  assert.deepEqual(commentSummary(store.comments, after), { total: 3, open: 2, answered: 1, closed: 0, contradicted: 0, unconfirmed: 0 });
+  assert.match(commentsCSV([scoped], after), /"Rule check: no deviation now","Answered, waiting for class","Width increased/);
   assert.match(toHTML({ title: 't', scenario: 's', results: after, model: model(950), rules: RULES, comments: store.comments }), /Class comments \(3\)/);
   assert.equal(withoutComment(store, c3.id).comments.length, 2);
+});
+
+test('comment sheets with a title line, German headers and unclear statuses', () => {
+  const csv = 'Kommentarliste Zeichnung 100-01\nNr.;Kommentar;Zeichnung;Zustand;Antwort Werft\n1;Gangbreite MD-C1 prüfen;100-01;erledigt;geändert\n2;Handlauf fehlt;100-01;OK?;\n3;Tür MD-D1;100-01;in Arbeit;';
+  const out = parseComments(csv);
+  assert.deepEqual(out.map((c) => [c.ref, c.status]), [['1', 'closed'], ['2', 'open'], ['3', 'open']]);
+  assert.equal(out[0].response, 'geändert');
+  assert.match(out.notes.join(' '), /1 line above the column headers/);
+  assert.match(out.notes.join(' '), /"ok\?".*"in arbeit"|"in arbeit".*"ok\?"/);
+});
+
+test('letters: lettered and coded references, numbers in running text, the signature', () => {
+  const t = [
+    'Dear Sirs,',
+    'A1. Corridor MD-C1 to be widened,',
+    '3.5 m clear height is to be kept.',
+    'HULL-003: Door MD-D1 closer.',
+    'b) The meeting',
+    '15.11.2026 was agreed.',
+    'Kind regards,',
+    'J. Surveyor',
+    '1. not a comment',
+  ].join('\n');
+  const out = parseComments(t);
+  assert.deepEqual(out.map((c) => c.ref), ['A1', 'HULL-003', 'b']);
+  assert.match(out[0].text, /widened, 3\.5 m clear height/);
+  assert.match(out[2].text, /meeting 15\.11\.2026 was agreed/);
+  assert.match(out.notes.join(' '), /closing formula/);
+  assert.equal(Object.keys(out).length, 3, 'notes are not an element of the list');
+  const bullets = parseComments('- first\n- second');
+  assert.deepEqual(bullets.map((c) => c.ref), ['1', '2']);
+  assert.match(bullets.notes.join(' '), /bullets without numbers/);
+});
+
+test('the same number with another text (a later letter) is a new comment', () => {
+  const now = new Date('2026-11-12T10:00:00Z');
+  const { store } = addComments({ comments: [] }, parseComments('1. MD-C1 width.'), { document: 'GA' }, now);
+  const again = addComments(store, parseComments('1. MD-D1 closer.'), { document: 'GA' }, now);
+  assert.equal(again.added, 1);
+  assert.equal(addComments(again.store, parseComments('1.   md-c1   WIDTH.'), { document: 'ga' }, now).added, 0, 'case and spaces do not make a new comment');
+});
+
+test('links on a large model are found quickly and exactly, also for ids with dots', () => {
+  const ids = Array.from({ length: 60000 }, (_, i) => `P-${i}`);
+  ids.push('ADA-403.5.1');
+  const t0 = performance.now();
+  for (let i = 0; i < 200; i++) findLinks(`See P-${i * 7} and p-59999, not P-600000, and ADA-403.5.1.`, ids, []);
+  assert.ok(performance.now() - t0 < 1500, 'well under 10 ms per comment');
+  assert.deepEqual(findLinks('See P-7 and p-59999, not P-600000, and ADA-403.5.1.', ids, []).elements, ['P-7', 'P-59999', 'ADA-403.5.1']);
+});
+
+test('evidence: what-if values and manual checks do not confirm a comment', () => {
+  const rules = [...RULES, { id: 'MARK', source: 'Code', clause: '2', text: 'marked', check: 'manual', verified: false, applies_to: { types: ['corridor'] } }];
+  const m = model(850);
+  m.elements[0].props.clear_width = { value: 950, unit: 'mm', source: 'what-if, not in model' };
+  const typed = checkModel(m, RULES);
+  const c = { id: 'x', status: 'answered', response: 'r', links: { elements: ['MD-C1'], rules: ['W-MIN'] } };
+  assert.equal(commentEvidence(c, typed).state, 'what_if');
+  assert.equal(commentSummary([c], typed).unconfirmed, 1);
+  const results = checkModel(model(950), rules);
+  const manual = { ...c, links: { elements: ['MD-C1'], rules: ['MARK'] } };
+  assert.equal(commentEvidence(manual, results).state, 'missing');
+  const register = { 'MD-C1|MARK': { kind: 'manual', done: true, responsible: 'A. Engineer' } };
+  assert.equal(commentEvidence(manual, results, register).state, 'no_finding');
+  assert.equal(commentEvidence({ ...c, links: { elements: ['GONE'], rules: [] } }, results).state, 'missing');
 });

@@ -129,11 +129,11 @@ ${r.items.length ? `<table><tr><th>Level</th><th>Count</th><th>Open work</th></t
 export function commentsSection(comments, results, register = {}) {
   if (!comments?.length) return '';
   const s = commentSummary(comments, results, register);
-  const cls = { finding: 'nc', missing: 'ni', no_finding: 'ok', unlinked: 'muted' };
+  const cls = { finding: 'nc', missing: 'ni', what_if: 'ni', unscoped: 'muted', no_finding: 'ok', unlinked: 'muted' };
   return `<h2>Class comments (${s.total})</h2>
 <p>${s.open} open, ${s.answered} answered, ${s.closed} closed.${s.contradicted ? ` <b class="nc">${s.contradicted} answered or closed while the rule check still finds the deviation.</b>` : ''}</p>
 <table><tr><th>Ref</th><th>Document</th><th>Comment</th><th>Linked</th><th>Rule check now</th><th>Status</th><th>Response</th><th>Responsible</th></tr>
-${comments.map((c) => { const ev = commentEvidence(c, results); return `<tr><td><b>${esc(c.ref)}</b></td><td>${esc(c.document)}${c.received ? `<br><span class="muted">${esc(c.received)}</span>` : ''}</td><td>${esc(c.text)}</td>
+${comments.map((c) => { const ev = commentEvidence(c, results, register); return `<tr><td><b>${esc(c.ref)}</b></td><td>${esc(c.document)}${c.received ? `<br><span class="muted">${esc(c.received)}</span>` : ''}</td><td>${esc(c.text)}</td>
 <td>${esc([...(c.links?.elements ?? []), ...(c.links?.rules ?? [])].join(', '))}</td><td class="${cls[ev.state]}">${esc(EVIDENCE_LABEL[ev.state])}</td><td>${esc(COMMENT_STATUS_LABEL[c.status] ?? c.status)}</td><td>${esc(c.response)}</td><td>${esc(c.responsible)}</td></tr>`; }).join('\n')}
 </table>`;
 }

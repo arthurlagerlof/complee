@@ -18,6 +18,30 @@ test('register: every revision of the same design maps to one project', () => {
     assert.equal(projectKey({ name: a }), projectKey({ name: b }), `${a} / ${b}`);
   }
   assert.notEqual(projectKey({ name: 'Research vessel' }), projectKey({ name: 'Research' }), 'a word starting with v is not a version');
+  for (const [a, b] of [['Ship rev. 3.dxf', 'Ship'], ['ship_v12.rvt', 'ship'], ['Ship [rev B]', 'Ship']]) {
+    assert.equal(projectKey({ name: a }), projectKey({ name: b }), `${a} / ${b}`);
+  }
+  for (const [a, b] of [['Project Vega', 'Project'], ['Stena Vita', 'Stena'], ['Deck review', 'Deck']]) {
+    assert.notEqual(projectKey({ name: a }), projectKey({ name: b }), `${a} keeps its name`);
+  }
+});
+
+test('register: a disposition whose element or rule is gone is an orphan, not "resolved"', () => {
+  const out = checkModel(structuredClone(REV_A), RULES);
+  const some = Object.keys(out.elements)[0];
+  const store = {
+    'GONE-1|LL-REG12-SILL': { disposition: 'deviation', note: 'agreed', measured: '300 mm' },
+    [`${some}|NO-SUCH-RULE`]: { disposition: 'fix' },
+  };
+  const rows = registerRows(out, store);
+  const gone = rows.find((r) => r.key === 'GONE-1|LL-REG12-SILL');
+  assert.equal(gone.orphan, 'element');
+  assert.equal(gone.resolved, false);
+  assert.equal(rows.find((r) => r.key === `${some}|NO-SUCH-RULE`).orphan, 'rule');
+  const s = registerSummary(rows);
+  assert.equal(s.orphaned, 2);
+  assert.equal(s.resolved, 0);
+  assert.match(registerCSV(rows), /Element not in this model.*find the element/);
 });
 
 test('register: a disposition from revision A is carried into B, flagged when the value changed, kept when resolved', () => {
