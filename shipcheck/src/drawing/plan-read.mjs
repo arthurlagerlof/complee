@@ -929,10 +929,21 @@ function buildRooms(faces, labels, outlineRing, graph) {
     if (!byFace.has(f)) byFace.set(f, []);
     byFace.get(f).push(g);
   }
+  // a printed area on a line of its own, kept apart from the name by a room number ("Stanza" / "5.02" / "15.84 m²",
+  // "Cabin" / "201" / "9,6 m²"), belongs to the named space it stands in; only when that space has no printed area yet
+  const areaText = new Map(); // face → the label group holding its printed area
+  for (const g of labels) {
+    if (g.area == null || isRoomLabel(g)) continue;
+    const f = smallestNamed(g.c);
+    const ls = f && byFace.get(f);
+    if (!ls || ls.some((x) => x.area != null) || areaText.has(f)) continue;
+    areaText.set(f, g);
+  }
+  const printedOf = (f, ls) => ls.map((g) => g.area).find((v) => v != null) ?? areaText.get(f)?.area ?? null;
   // a printed area is evidence: a cabin split by its bunks is joined with the unlabelled pieces next to it, when that
   // brings its area to the printed value (within 3 %)
   const absorbed = new Map(); // face → the labelled face that took it in
-  const merges = mergeByPrintedArea(cand, byFace, graph, absorbed);
+  const merges = mergeByPrintedArea(cand, byFace, graph, absorbed, printedOf);
   const list = [], things = [];
   let small = 0;
   for (const f of cand) {
@@ -952,8 +963,8 @@ function buildRooms(faces, labels, outlineRing, graph) {
     const main = ranked[0] || null;
     const others = ranked.slice(1).filter((g) => g.room && !sameRoomWords(g, main));
     for (const o of others) unresolved.push({ what: `label "${o.text}" shares one closed area with "${main.text}": the walls between them do not close (a gap or a missing line); kept as one room named "${nameOf(main)}"`, at: o.c, texts: o.ids });
-    const printed = ls.map((g) => g.area).find((v) => v != null) ?? null;
-    const room = { ring, holes, area: m ? m.area : f.area, gross: f.gross, centre: c, label: main ? nameOf(main) : null, labelIds: ls.flatMap((g) => g.ids), type: main?.room?.type ?? 'space',
+    const printed = printedOf(f, ls);
+    const room = { ring, holes, area: m ? m.area : f.area, gross: f.gross, centre: c, label: main ? nameOf(main) : null, labelIds: [...ls.flatMap((g) => g.ids), ...(ls.length && areaText.has(f) ? areaText.get(f).ids : [])], type: main?.room?.type ?? 'space',
       zone: main?.room?.zone ?? null, printedArea: printed, recognised: !!main?.room, labelled: !!main, sharedLabels: others.map((o) => o.text), contains: [], faces: m ? m.faces : [f], evidence: [], notes: [] };
     if (main?.viaLeader) room.notes.push(`label "${main.text}" is outside the space and points to it with a leader line`);
     if (main && !main.room) room.notes.push(`label "${main.text}" is not in the room vocabulary: type space, zone not set`);
@@ -979,7 +990,7 @@ const nameOf = (g) => g.text.replace(/\s*\d+(?:[.,]\d+)?\s*m\s*[²2³3?�]\s*/g
 
 // Faces next to each other share an edge of the planar graph; a door or opening closure between them is a real
 // boundary and is never crossed.
-function mergeByPrintedArea(cand, byFace, graph, absorbed) {
+function mergeByPrintedArea(cand, byFace, graph, absorbed, printedOf = (f, ls) => ls.map((g) => g.area).find((v) => v != null) ?? null) {
   const out = new Map();
   if (!graph) return out;
   const faceOfHalf = new Map();
@@ -991,7 +1002,7 @@ function mergeByPrintedArea(cand, byFace, graph, absorbed) {
     return set;
   };
   for (const [f, ls] of byFace) {
-    const P = ls.map((g) => g.area).find((v) => v != null);
+    const P = printedOf(f, ls);
     if (P == null) continue;
     const target = P * 1e6;
     if (f.area >= 0.97 * target) continue;

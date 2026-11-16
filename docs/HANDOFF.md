@@ -64,7 +64,11 @@ rule-verification tables are empty (catalog not imported yet: the user should do
   Scans (raster images) are refused with a message. Test drawing: AURORA, 28 m research vessel (public PDF, local only
   in `tools/drawing-samples/`, gitignored): 31/31 doors, 48/49 labels as rooms, 7/7 printed cabin areas within 2 % (2
   from the walls alone, 5 joined using the printed area as evidence), scale 1:100 confirmed twice, 0 referee issues,
-  about 4 s. Scorecard: `node tools/drawing/eval-aurora.mjs`; browser checks: `node tools/drawing/drawing-smoke.mjs`
+  about 4 s. Head-to-head on SpaceLens' three Swiss Dwellings sample PDFs (CC BY 4.0, local only in
+  `tools/drawing-samples/swiss/`): 36/44 printed room areas within 2 % from the walls alone (SpaceLens: 84.4 % over 65
+  plans), scale read on 3/3, doors as many as SpaceLens (site1102: 18 of 21 for both); the misses are balconies read as
+  open deck (5–6 % small) and apartment names ("App. A") joined to the room name below. Scorecards:
+  `node tools/drawing/eval-aurora.mjs`, `node tools/drawing/eval-swiss.mjs`; browser checks: `node tools/drawing/drawing-smoke.mjs`
   and `tools/drawing/shot-3d.mjs` (Playwright with the installed Chrome). Not read yet: stroked text without fonts (the
   RCRV GA), sections (bilge shape), sliding doors, windows in plans.
 - **Checker:** min/max/in_set/table_lookup/distance/count/adjacency/requires/data_quality/manual; applicability by

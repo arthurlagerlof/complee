@@ -54,6 +54,12 @@ test('vocab: deck names, view titles, rooms, scale, dimensions, elevations', () 
   assert.equal(scaleOf('Scale 1:100').n, 100);
   assert.equal(scaleOf('1/8" = 1\'-0"').n, 96);
   assert.equal(scaleOf('slope 1:12 max'), null);
+  assert.deepEqual(scaleOf('Échelle 1:200'), { n: 200, labelled: true });
+  assert.deepEqual(scaleOf('Scala 1:50'), { n: 50, labelled: true });
+  assert.deepEqual(scaleOf('1:100 (A3)'), { n: 100, labelled: false }); // the value next to a "Scala" / "Massstab" cell
+  assert.equal(scaleOf('1:50 @ A1').n, 50);
+  assert.equal(scaleOf('gear 1:3'), null);
+  assert.equal(scaleOf('1:100 A3 page 2'), null);
   assert.equal(principalOf('LOA 60.00 m').mm, 60000);
   assert.equal(principalOf('B = 12,0 m').key, 'beam');
   assert.equal(principalOf('Length o.a').key, 'length_overall');

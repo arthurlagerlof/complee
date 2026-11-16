@@ -191,7 +191,7 @@ test('geometry goes to the page with each buffer transferred once', () => {
 // ---------- the whole chain, once the stage modules exist ----------
 
 // A small general arrangement drawn 1:1 in mm: a profile above a main deck plan with three rooms, a door and labels.
-function tinyGA() {
+function tinyGA({ numbered = false } = {}) {
   const out = [];
   const g = (...pairs) => { for (const [c, v] of pairs) out.push(String(c), String(v)); };
   const line = (layer, [x1, y1], [x2, y2], ltype) => g([0, 'LINE'], [8, layer], ...(ltype ? [[6, ltype]] : []), [10, x1], [20, y1], [30, 0], [11, x2], [21, y2], [31, 0]);
@@ -214,7 +214,12 @@ function tinyGA() {
   line('WALL', [10000, -3000], [10000, 3000]);
   g([0, 'ARC'], [8, 'DOOR'], [10, 5000], [20, 1000], [30, 0], [40, 800], [50, 90], [51, 180]);
   line('DOOR', [5000, 1000], [5000, 1800]);
-  text('TEXT', [2000, 0], 300, 'CABIN');
+  if (numbered) {
+    // name / room number / printed area on three lines: the number keeps the area apart from the name
+    text('TEXT', [2000, 600], 300, 'CABIN');
+    text('TEXT', [2000, 0], 300, '101');
+    text('TEXT', [2000, -600], 300, '30.0 m²');
+  } else text('TEXT', [2000, 0], 300, 'CABIN');
   text('TEXT', [7000, 0], 300, 'MESS');
   text('TEXT', [13000, 0], 300, 'ENGINE ROOM');
   text('TEXT', [8000, -4500], 400, 'MAIN DECK');
@@ -253,6 +258,17 @@ test('a hand-made DXF general arrangement becomes a checkable model with 3D geom
   // What the worker posts must survive postMessage (structured clone) with the buffers transferred.
   const { entries, transfer } = geometryForTransfer(r.geometry);
   structuredClone({ model: r.model, recon: r.recon, views: r.views, report: r.report, geometry: entries }, { transfer });
+});
+
+test('a printed area on its own line under a room number belongs to the named room it stands in', { skip: skipUnless('sheet.mjs', 'read-dxf.mjs', 'views.mjs', 'interpret.mjs', 'mesh.mjs') }, async () => {
+  const [sheet] = await readDrawingFile({ name: 'tiny-numbered.dxf', bytes: enc(tinyGA({ numbered: true })) });
+  const { report } = await convertDrawing(sheet, {}, { geometry: false });
+  const cabin = report.rooms.find((r) => r.name === 'CABIN');
+  assert.ok(cabin, 'the cabin is a room');
+  assert.equal(cabin.area_printed, 30, 'the printed area reaches the room across the room number');
+  assert.ok(report.areas.list.some((a) => a.room === 'CABIN' && a.printed === 30 && a.agrees), 'and is checked against the measured area');
+  assert.ok(!report.rooms.some((r) => /^101$|m²/.test(r.name)), 'neither the number nor the area becomes a room name');
+  assert.equal(report.rooms.find((r) => r.name === 'MESS')?.area_printed ?? null, null, 'a room without its own area text gets none');
 });
 
 test('the sample PDF general arrangement converts or says plainly why not', { skip: skipUnless('sheet.mjs', 'read-pdf.mjs', 'views.mjs', 'interpret.mjs', 'mesh.mjs') }, async () => {

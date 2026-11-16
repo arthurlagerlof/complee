@@ -87,7 +87,7 @@ export function viewTitleOf(text) {
 
 // ---------- title block ----------
 
-const TITLE_BLOCK = /\b(DRAWN|CHECKED|APPROVED|DESIGNED|SCALE|DWG ?NO|DRG ?NO|DRAWING NO|DRAWING NUMBER|DATE|REV|REVISION|SHEET|TITLE|PROJECT|CLIENT|OWNER|YARD|HULL NO|NEWBUILDING|GENERAL ARRANGEMENT|GENERALPLAN|GENERAL PLAN|ZEICHNUNG|ZEICHNUNGS ?NR|MASSSTAB|MASSTAB|GEZ|GEPR|GEPRUEFT|BLATT|DATUM|BAUNUMMER|WERFT|ALGEMEEN PLAN|TEKENING|SCHAAL|YLEISJAERJESTELY|GENERALARRANGEMANG|NAVAL ARCHITECTS|CONSULTING|SHIPYARD|LTD|GMBH|A S|AB|OY|BV|INC)\b/;
+const TITLE_BLOCK = /\b(DRAWN|CHECKED|APPROVED|DESIGNED|SCALE|DWG ?NO|DRG ?NO|DRAWING NO|DRAWING NUMBER|DATE|REV|REVISION|SHEET|TITLE|PROJECT|CLIENT|OWNER|YARD|HULL NO|NEWBUILDING|GENERAL ARRANGEMENT|GENERALPLAN|GENERAL PLAN|ZEICHNUNG|ZEICHNUNGS ?NR|MASSSTAB|MASSTAB|SCALA|ECHELLE|ESCALA|GEZ|GEPR|GEPRUEFT|BLATT|DATUM|BAUNUMMER|WERFT|ALGEMEEN PLAN|TEKENING|SCHAAL|YLEISJAERJESTELY|GENERALARRANGEMANG|NAVAL ARCHITECTS|CONSULTING|SHIPYARD|LTD|GMBH|A S|AB|OY|BV|INC)\b/;
 export const isTitleBlockWord = (text) => TITLE_BLOCK.test(normText(text));
 
 // ---------- rooms ----------
@@ -178,18 +178,19 @@ export function numericText(text) {
   return parseNumber(String(text).replace(/\s*mm$/i, ''));
 }
 
-/** "SCALE 1:100", "M 1:50", "Maßstab 1:100", "1:100", '1/8" = 1\'-0"' → { n, labelled } or null. */
+/** "SCALE 1:100", "M 1:50", "Maßstab 1:100", "Échelle 1:200", "1:100", "1:100 (A3)", '1/8" = 1\'-0"' → { n, labelled } or null. */
 export function scaleOf(text) {
   const raw = String(text);
   const imp = /(\d+)\s*\/\s*(\d+)\s*(?:"|''|IN)\s*=\s*1\s*'\s*-?\s*0?\s*"?/i.exec(raw);
   if (imp) return { n: (12 * Number(imp[2])) / Number(imp[1]), labelled: /SCALE/i.test(raw) };
   const t = normText(raw);
-  const m = /(?:\b(SCALE|MASSSTAB|MASSTAB|MASZSTAB|SCHAAL|SKALA|MITTAKAAVA|SKALE|M)\b\s*[:=]?\s*)?\b1\s*[:/]\s*(\d+(?:[.,]\d+)?)\b/.exec(t);
+  const m = /(?:\b(SCALE|MASSSTAB|MASSTAB|MASZSTAB|SCHAAL|SKALA|SKALE|MITTAKAAVA|SCALA|ECHELLE|ESCALA|M)\b\s*[:=]?\s*)?\b1\s*[:/]\s*(\d+(?:[.,]\d+)?)\b/.exec(t);
   if (!m) return null;
   const n = Number(m[2].replace(',', '.'));
   if (!(n >= 1 && n <= 5000)) return null;
-  // a bare ratio is accepted only when it is the whole text (a ratio inside other words is a slope, a gear ratio…)
-  if (!m[1] && !/^\s*\(?1\s*[:/]\s*\d+(?:[.,]\d+)?\)?\s*$/.test(t)) return null;
+  // a bare ratio is accepted only when it is the whole text (a ratio inside other words is a slope, a gear ratio…),
+  // optionally with the paper size it holds for ("1:100 (A3)", "1:50 @ A1")
+  if (!m[1] && !/^\s*\(?1\s*[:/]\s*\d+(?:[.,]\d+)?\)?(?:\s*(?:@|AT)?\s*\(?(?:ISO\s*)?(?:A[0-5]|B[0-5]|LETTER|TABLOID|ANSI\s*[A-E])\)?)?\s*$/.test(t)) return null;
   return { n, labelled: !!m[1] };
 }
 
