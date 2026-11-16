@@ -306,6 +306,19 @@ test('a building floor plan without ship cues is found as the plan; legend symbo
   assert.ok(report.rooms.find((r) => r.name === 'Séjour').area > 39 && report.rooms.find((r) => r.name === 'Séjour').area < 41, 'Séjour is 5 m × 8 m');
 });
 
+test('a room named by a label read with OCR says so and is marked to check; one named by text is not', { skip: skipUnless('sheet.mjs', 'read-dxf.mjs', 'views.mjs', 'interpret.mjs', 'mesh.mjs') }, async () => {
+  const [sheet] = await readDrawingFile({ name: 'tiny-ocr.dxf', bytes: enc(tinyGA()) });
+  // as if OCR had read the CABIN label from line work: the same text, flagged with its confidence
+  const cabin = sheet.texts.find((t) => t.text === 'CABIN');
+  Object.assign(cabin, { id: 'o99', ocr: { confidence: 88 } });
+  const { model } = await convertDrawing(sheet, {}, { geometry: false });
+  const room = model.elements.find((e) => e.name === 'CABIN'), mess = model.elements.find((e) => e.name === 'MESS');
+  assert.ok(room && mess, 'both rooms');
+  assert.equal(room.check, true, 'marked to check');
+  assert.match(room.note ?? '', /read by OCR.*confidence 88 %/);
+  assert.ok(!mess.check && !/OCR/.test(mess.note ?? ''), 'a name from real text carries no OCR note');
+});
+
 test('a printed area on its own line under a room number belongs to the named room it stands in', { skip: skipUnless('sheet.mjs', 'read-dxf.mjs', 'views.mjs', 'interpret.mjs', 'mesh.mjs') }, async () => {
   const [sheet] = await readDrawingFile({ name: 'tiny-numbered.dxf', bytes: enc(tinyGA({ numbered: true })) });
   const { report } = await convertDrawing(sheet, {}, { geometry: false });

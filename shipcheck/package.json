@@ -15,7 +15,9 @@
     "report": "node scripts/check.mjs --report"
   },
   "dependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
     "pdfjs-dist": "4.10.38",
+    "tesseract.js": "7.0.0",
     "three": "0.160.0",
     "three-mesh-bvh": "^0.7.6",
     "web-ifc": "^0.0.66"

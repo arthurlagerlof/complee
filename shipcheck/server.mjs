@@ -328,6 +328,7 @@ const TYPES = {
   '.mjs': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.csv': 'text/csv', '.png': 'image/png',
   '.glb': 'model/gltf-binary', '.dxf': 'application/dxf', '.gltf': 'model/gltf+json', '.wasm': 'application/wasm',
   '.pfb': 'application/octet-stream', '.ttf': 'font/ttf', // pdf.js standard fonts (drawing import)
+  '.gz': 'application/octet-stream', // OCR language data, unpacked by the engine itself
 };
 // URL prefix -> folder on disk. Anything else is 404.
 const STATIC = [
@@ -337,6 +338,12 @@ const STATIC = [
   ['/node_modules/three-mesh-bvh/', 'node_modules/three-mesh-bvh'],
   ['/node_modules/web-ifc/', 'node_modules/web-ifc'], // IFC import in the browser (wasm)
   ['/node_modules/pdfjs-dist/', 'node_modules/pdfjs-dist'], // PDF drawing import in the browser
+  // OCR of labels drawn as line work (drawing import): engine, its worker, the wasm core and the English data
+  ['/node_modules/tesseract.js/dist/', 'node_modules/tesseract.js/dist'],
+  // the engine core that tesseract.js itself depends on (npm keeps it inside tesseract.js when versions differ)
+  ['/node_modules/tesseract.js-core/', fs.existsSync(path.join(ROOT, 'node_modules', 'tesseract.js', 'node_modules', 'tesseract.js-core'))
+    ? 'node_modules/tesseract.js/node_modules/tesseract.js-core' : 'node_modules/tesseract.js-core'],
+  ['/node_modules/@tesseract.js-data/eng/', 'node_modules/@tesseract.js-data/eng'],
   // Local 3D viewer model chunks (exported with tools/export; not in Git, deployed with deploy.sh / deploy.ps1)
   ['/model/', process.env.MODEL_DIR || 'model'],
   ['/', 'public'],
@@ -347,6 +354,9 @@ const STATIC_TYPES = {
   '/model/': new Set(['.glb', '.json']),
   // pdf.js: the modules, its worker and the standard fonts; not its source maps, docs or package files.
   '/node_modules/pdfjs-dist/': new Set(['.mjs', '.pfb', '.ttf']),
+  '/node_modules/tesseract.js/dist/': new Set(['.js']),
+  '/node_modules/tesseract.js-core/': new Set(['.js', '.wasm']),
+  '/node_modules/@tesseract.js-data/eng/': new Set(['.gz']),
 };
 const MODEL_CATALOG_BY_FILE = {
   'ships/rcrv/parts.json': 'model-rcrv-parts',

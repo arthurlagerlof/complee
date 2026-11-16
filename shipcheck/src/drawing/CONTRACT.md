@@ -125,3 +125,11 @@ each element's bounding box in model mm so the element `geom` matches its mesh e
 
 `convertDrawing(sheet, overrides) -> { model, geometry, recon, views, report }` and
 `readDrawingFile({ name, bytes }, { pdfjs }) -> Sheet[]` (one per PDF page).
+
+OCR (`ocr.mjs`, optional): `convertDrawing(sheet, overrides, { ocr: recognize })` first reads labels drawn as line
+work. `recognize({ width, height, data /* RGBA */ }) -> [{ text, confidence 0–100, bbox: { x0, y0, x1, y1 } }]` is the
+engine (tesseract.js: `public/drawing-worker.js` in the browser, `tools/drawing/ocr-node.mjs` in Node). What it reads
+is added to `sheet.texts` as `{ id: 'o…', text, box, height, angle, ocr: { confidence } }`; the strokes it read get
+`path.ocrText = id` and stay out of the plan line work. A room named from such a text has `check: true` and a note
+"name read by OCR … check the spelling". `report.ocr = { lines, groups, candidates, skipped, ms, texts }`.
+`needsOcr(sheet).suggest`: many letter-like stroke groups and few real texts.

@@ -503,6 +503,11 @@ table.dw-views tr.dw-flash td { background: #e7eefc; transition: background .2s;
 .dw-steps li.failed .dw-tick { border-color: var(--bad); background: var(--bad); }
 .dw-error { background: #fdf3f3; border: 1px solid #f1c1c1; border-radius: 6px; padding: 6px 10px; margin: 6px 0; font-size: 12px; color: #7f1d1d; }
 .dw-error .muted { margin-top: 4px; }
+/* OCR: the option in the settings and the words read, in the report */
+.dw-inline { display: inline-flex; align-items: center; gap: 6px; font-weight: 400; }
+.dw-ocr { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 8px; }
+.dw-word { display: inline-block; padding: 1px 7px; border: 1px solid #c9d3df; border-radius: 10px; background: #f5f8fb; font-size: 12px; color: #1f2933; }
+.dw-word.warn { border-color: #e6c27a; background: #fdf6e7; }
 .dw-assumed { margin: 4px 0; padding: 6px 8px 6px 24px; background: #fff4d6; border: 1px solid #f0d49a; border-radius: 6px; font-size: 12px; color: #6b4a00; }
 .dw-measured, .dw-unresolved { margin: 4px 0; padding-left: 18px; font-size: 12px; }
 .dw-unresolved button { margin-left: 4px; }

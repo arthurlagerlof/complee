@@ -1,6 +1,7 @@
 // The local server: file whitelist (never .env or source files), check API, APS endpoints.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 
 test('server serves the app and API but never .env, keys or files outside the whitelist', async (t) => {
   process.env.PORT = '0';
@@ -34,6 +35,16 @@ test('server serves the app and API but never .env, keys or files outside the wh
   assert.equal(await code('/node_modules/pdfjs-dist/package.json'), 404);
   assert.equal(await code('/node_modules/pdfjs-dist/build/pdf.mjs.map'), 404);
   assert.equal(await code('/node_modules/pdfjs-dist/../../.env'), 404);
+  // OCR for labels drawn as lines: the engine, its worker, the wasm core and the English data; nothing else
+  if (fs.existsSync(new URL('../node_modules/tesseract.js/package.json', import.meta.url))) {
+    assert.equal(await code('/node_modules/tesseract.js/dist/tesseract.esm.min.js'), 200);
+    assert.equal(await code('/node_modules/tesseract.js/dist/worker.min.js'), 200);
+    assert.equal(await code('/node_modules/tesseract.js-core/tesseract-core-lstm.wasm.js'), 200);
+    assert.equal(await code('/node_modules/@tesseract.js-data/eng/4.0.0_best_int/eng.traineddata.gz'), 200);
+    assert.equal(await code('/node_modules/tesseract.js/dist/worker.min.js.map'), 404);
+    assert.equal(await code('/node_modules/tesseract.js/package.json'), 404);
+    assert.equal(await code('/node_modules/@tesseract.js-data/eng/index.js'), 404);
+  }
 
   // APS: keys are never served; the status only says whether they exist.
   assert.equal(await code('/3D_Since_AI/.env'), 404);

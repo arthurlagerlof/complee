@@ -294,6 +294,7 @@ function viewGeometry(r, sheet, ctx) {
     const hit = ctx.paths.get(id);
     if (!hit) continue;
     const p = hit.p;
+    if (p.ocrText) continue; // strokes of writing read by OCR: a label now, not line work
     const pts = p.pts.map(r.toModel);
     if (p.arc) {
       const sweep = (((p.arc.a1 - p.arc.a0) % 360) + 360) % 360 || 360;
@@ -566,10 +567,17 @@ function buildElements(plans, decks, profile, ctx) {
       if (r.sharedLabels.length) notes.push(`also labelled ${r.sharedLabels.map((s) => `"${s}"`).join(', ')}: the walls between them do not close`);
       if (r.contains?.length) notes.push(`labels of things in this room: ${r.contains.map((t) => `"${t}"`).join(', ')}`);
       if (r.openDeck) notes.push(`height: rail / bulwark ${RAIL} mm, assumed`);
+      // a name read by OCR from line work (no text in the file) is a reading, not a fact: said so, and marked to check
+      const ocrLabels = r.labelIds.map((id) => ctx.texts.get(id)).filter((t) => t?.ocr);
+      if (r.label && ocrLabels.length) {
+        const conf = Math.min(...ocrLabels.map((t) => t.ocr.confidence));
+        notes.push(`name read by OCR from line work (the drawing has no text there; confidence ${conf} %): check the spelling.`);
+        if (props.zone?.basis === 'read') props.zone.source += ' (read by OCR)';
+      }
       const unnamed = !r.label;
       const el = { id: null, type, name: r.label ?? (type === 'corridor' ? 'Corridor' : 'Unnamed space'), deck: d.id, geom: { x: round(b[0]), y: round(b[1]), z: 0, lx: round(b[2] - b[0]), ly: round(b[3] - b[1]), h: round(roomH) },
         props, source: `drawing ${ctx.sheet.source?.file ?? ''} view ${vname}: room recognised from its walls${r.label ? ` and its label "${r.label}"` : ''}`.replace('  ', ' '), basis: 'measured', confidence, evidence: ev,
-        ...(unnamed ? { check: true } : {}), ...(r.openDeck ? { open_deck: true } : {}), ...(notes.length ? { note: notes.join(' ') } : {}) };
+        ...(unnamed || (r.label && ocrLabels.length) ? { check: true } : {}), ...(r.openDeck ? { open_deck: true } : {}), ...(notes.length ? { note: notes.join(' ') } : {}) };
       push(el, { kind: 'rooms', item: { deck: d.id, polygon: r.ring.map((p) => p.map((v) => round(v))), holes: r.holes.map((h) => h.map((p) => p.map((v) => round(v)))), z0, z1: z0 + roomH, ...(r.openDeck ? { open: true } : {}), basis: 'measured', evidence: ev } });
       if (confidence < 0.6) ctx.check.push(`${d.name}: ${r.label ? `room "${r.label}"` : 'an unnamed closed area'} of ${round(r.area / 1e6, 1)} m² at x ${fmt(centroid(r.ring)[0])}: check what it is.`);
       el._room = r;

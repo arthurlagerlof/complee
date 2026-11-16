@@ -7,6 +7,7 @@
 //   host = { addScenario({ name, idHint, json, geometry, replace }) -> Promise<id|null>, results() -> S.results,
 //            hasElement(id), select(id), download(name, text, type), closeOtherPanels() }
 import { detectFormat, unsupportedMessage, readDrawingFile, lineWork, STAGES, STAGE_LABEL } from './src/drawing/convert.mjs';
+import { needsOcr } from './src/drawing/ocr.mjs';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const $ = (s, root = document) => root.querySelector(s);
@@ -24,6 +25,7 @@ const ZONE_COLOR = {
 };
 const STAGE_HINT = {
   read: 'Check that the file opens in a PDF viewer or CAD program, and export it again if not.',
+  ocr: 'Untick "read them with OCR" and convert again: the drawing converts without the labels drawn as lines.',
   views: 'No separate drawings were told apart on the sheet. Check that this is the general arrangement page (profile and deck plans).',
   scale: 'Enter the drawing scale (1 : n) above and convert again.',
   decks: 'Mark the deck plans as "plan" with their deck names, enter the elevations above the baseline, and convert again.',
@@ -120,11 +122,21 @@ function cancelWorker() {
   killWorker();
   p?.reject(Object.assign(new Error('Cancelled.'), { cancelled: true }));
 }
+// OCR of labels drawn as line work: suggested when the sheet has many letter-like strokes and little real text; the
+// engineer's choice wins (st.ocr true / false).
+function ocrHint() {
+  if (!st.sheet) return null;
+  if (st.ocrHintFor !== st.sheet) { st.ocrHintFor = st.sheet; try { st.ocrHintValue = needsOcr(st.sheet); } catch { st.ocrHintValue = null; } }
+  return st.ocrHintValue;
+}
+const ocrOn = () => st.ocr ?? !!ocrHint()?.suggest;
+
 // Convert or analyse the current sheet; the sheet itself is sent only when the worker does not hold it yet.
 async function runOnSheet(mode, onProgress) {
   const overrides = cleanOverrides(st.overrides);
   const key = st.keys[st.page];
-  const send = (withSheet) => callWorker(withSheet ? { key, sheet: st.sheet, overrides, mode } : { key, overrides, mode }, [], onProgress);
+  const ocr = mode === 'convert' && ocrOn();
+  const send = (withSheet) => callWorker(withSheet ? { key, sheet: st.sheet, overrides, mode, ocr } : { key, overrides, mode, ocr }, [], onProgress);
   const had = sentKeys.has(key);
   sentKeys.add(key);
   try {
@@ -412,6 +424,8 @@ function renderForm() {
         <option value="">automatic${detectedBow ? ` (${esc(detectedBow)})` : ''}</option>
         <option value="right"${o.bow === 'right' ? ' selected' : ''}>right</option>
         <option value="left"${o.bow === 'left' ? ' selected' : ''}>left</option></select></td></tr>
+      <tr><td><label for="dwOcr">Labels drawn as lines</label></td><td><label class="dw-inline"><input id="dwOcr" type="checkbox"${ocrOn() ? ' checked' : ''}> read them with OCR</label>
+        <div class="muted">${ocrHint()?.suggest ? `Suggested: ${ocrHint().texts.toLocaleString('en')} texts but ${ocrHint().groups.toLocaleString('en')} groups of letter-like strokes. Takes about 10–30 s; names read this way are marked to check.` : 'For drawings whose labels are drawn as lines (no text in the file). Names read this way are marked to check.'}</div></td></tr>
       <tr><td><label for="dwShip">Ship name</label></td><td><input id="dwShip" type="text" value="${esc(o.shipName ?? '')}" placeholder="${esc((st.result?.model ?? st.auto?.model)?.name ?? 'from the title block')}"></td></tr>
     </table>
     <h2>Views on the sheet (${effViews.length})</h2>
@@ -452,6 +466,7 @@ function wireForm() {
   $('#dwScale', d).addEventListener('input', (e) => { const n = parseFloat(e.target.value); st.overrides.scale = Number.isFinite(n) && n > 0 ? n : undefined; changed(); });
   $('#dwBow', d).addEventListener('change', (e) => { st.overrides.bow = e.target.value || undefined; changed(); });
   $('#dwShip', d).addEventListener('input', (e) => { st.overrides.shipName = e.target.value; changed(); });
+  $('#dwOcr', d).addEventListener('change', (e) => { st.ocr = e.target.checked; });
   for (const row of d.querySelectorAll('tr[data-view]')) {
     const id = row.dataset.view;
     const found = st.views.find((v) => v.id === id);
@@ -507,17 +522,18 @@ async function convert() {
   const d = document.getElementById('detail');
   const steps = $('#dwSteps', d);
   steps.hidden = false;
-  steps.innerHTML = STAGES.map((s) => `<li data-s="${s}"><span class="dw-tick" aria-hidden="true"></span>${esc(STAGE_LABEL[s])}<span class="dw-time"></span></li>`).join('');
+  const stages = ocrOn() ? ['ocr', ...STAGES] : STAGES;
+  steps.innerHTML = stages.map((s) => `<li data-s="${s}"><span class="dw-tick" aria-hidden="true"></span>${esc(STAGE_LABEL[s])}<span class="dw-time"></span></li>`).join('');
   $('#dwConvert', d).disabled = true;
   $('#dwCancel', d).hidden = false;
   $('#dwFormMsg', d).innerHTML = '';
   const t0 = performance.now();
   const state = {};
   const mark = (stage, fraction) => {
-    const i = STAGES.indexOf(stage);
+    const i = stages.indexOf(stage);
     if (i < 0) return;
     // Every earlier stage is done once a later one reports (interpret may run several steps in one call).
-    STAGES.slice(0, i).forEach((s) => { if (state[s] !== 'done') state[s] = 'done'; });
+    stages.slice(0, i).forEach((s) => { if (state[s] !== 'done') state[s] = 'done'; });
     state[stage] = fraction >= 1 ? 'done' : 'active';
     for (const li of steps.children) {
       const s = li.dataset.s;
@@ -527,7 +543,7 @@ async function convert() {
   };
   try {
     const r = await runOnSheet('convert', mark);
-    STAGES.forEach((s) => mark(s, 1));
+    stages.forEach((s) => mark(s, 1));
     const t = r.report?.timings ?? {};
     for (const li of steps.children) {
       const s = li.dataset.s;
@@ -578,6 +594,8 @@ async function addResult(r, ms) {
   st.result = { model: r.model, recon: r.recon, views: r.views ?? st.views, report: r.report ?? {}, ms, page: st.page };
   st.convertedAt = new Date();
   if (r.views?.length) st.views = r.views;
+  // texts read by OCR in the worker: added to this page's copy of the sheet so the overlay can show their evidence
+  for (const t of r.report?.ocr?.texts ?? []) if (!st.sheet.texts.some((x) => x.id === t.id)) st.sheet.texts.push({ ...t, ocr: { confidence: t.confidence } });
   ui.view.setItems(null);
   st.overlay = false;
   st.picked = null;
@@ -700,6 +718,8 @@ function renderReport() {
       <button id="dwDownload" title="The converted model as ship/1 JSON (opens again with Open…)">Download model (ship/1 JSON)</button>
     </div>
     ${disagreeing.length ? `<div class="dw-error"><b>Check the scale.</b> The model uses 1:${esc(scaleValue)} (${esc(scale.source ?? '')}), but the drawing gives ${disagreeing.map((s) => `1:${esc(+Number(num(s.value)).toPrecision(4))} (${esc(sourceKind(s.source, s.basis)[0])})`).join(' and ')}. A wrong scale changes every size in the model.</div>` : ''}
+    ${rep.ocr ? `<h2>Read by OCR (${rep.ocr.lines})</h2><p class="muted">The drawing has these labels as line work, not as text: read by OCR in ${fmtMs(rep.ocr.ms)}${rep.ocr.skipped ? `, ${rep.ocr.skipped} groups not read (too many)` : ''}. Room names taken from them are marked to check.</p>
+      ${rep.ocr.texts?.length ? `<p class="dw-ocr">${rep.ocr.texts.map((t) => `<span class="dw-word${t.confidence < 85 ? ' warn' : ''}" title="confidence ${esc(t.confidence)} %">${esc(t.text)}</span>`).join(' ')}</p>` : '<p class="muted">Nothing legible was found.</p>'}` : ''}
     ${assumed.length ? `<h2>Assumed — check these (${assumed.length})</h2><ul class="dw-assumed">${list(assumed)}</ul>` : ''}
     ${toCheck.length ? `<h2>To check on the drawing (${toCheck.length})</h2>${toCheck.length > 6
       ? `<ul class="dw-check">${list(toCheck.slice(0, 5))}</ul><details class="assume"><summary>${toCheck.length - 5} more</summary><ul class="dw-check">${list(toCheck.slice(5))}</ul></details>`

@@ -81,7 +81,20 @@ rule-verification tables are empty (catalog not imported yet: the user should do
   first (views joined by a frame drawn as strips, a title taken by the wrong view); after the fixes views, 2 decks,
   scale 1:50 and beam are right, but its labels are drawn as outlines (no text), so no room has a name, planking hatch
   gives 7 false stairs, doors 3 instead of 1. Not a blind result any more; a second unseen vector ship GA is still
-  needed (the two found were a text specification and a picture handout: nothing invented from either). Scorecards: `node tools/drawing/eval-aurora.mjs`, `node tools/drawing/eval-swiss.mjs [--dir … --questions
+  needed (the two found were a text specification and a picture handout: nothing invented from either). Final blind
+  test, no code changed (Wikimedia SVGs, expectations first in `blind/EXPECTED.md`): I-201 submarine GA: bow, plan,
+  external profile and sections found, 23 labelled spaces named (galley, head, cold storage, store, CO's cabin, radar,
+  …), 0 doors; but the inboard profile is not split from the sections, 40 "open deck" pieces, tank abbreviations (OFT,
+  MBT, WRT, FW) typed as spaces, machinery labels as rooms, size wrong (no scale on the sheet, assumed and flagged).
+  I-400 compartment plan: plan and bow right, profile not found, 1 false door. Titanic lifeboat infographic: nothing
+  invented (2 unnamed spaces, 0 doors).
+  OCR for labels drawn as line work (`src/drawing/ocr.mjs`; tesseract.js 7 with English data, served by the viewer
+  server from node_modules, nothing fetched elsewhere): letter-like strokes of one pen are grouped, each group rastered
+  on its own and read; readings below 60 % confidence, short symbol readings and stroke rows are dropped; words of one
+  line are joined. Suggested and on when a sheet has many such groups and few texts (off for AURORA). Room names read
+  this way are marked to check. Pilot boat: 36 labels read (W/C, Shower, Fridge, 2x Bunks, Life Raft, ER Vent, Genset, Hatch, …)
+  in about 10–20 s in Node, about 40 s in the browser; rooms on that sheet still suffer from tile and planking hatch
+  making small faces. Browser test: `node tools/drawing/ocr-smoke.mjs`. Scorecards: `node tools/drawing/eval-aurora.mjs`, `node tools/drawing/eval-swiss.mjs [--dir … --questions
   … --one-click]`; browser checks: `node tools/drawing/drawing-smoke.mjs`
   and `tools/drawing/shot-3d.mjs` (Playwright with the installed Chrome). Not read yet: stroked text without fonts (the
   RCRV GA), sections (bilge shape), sliding doors, windows in plans.

@@ -10,6 +10,32 @@
 import { readDrawingFile, convertDrawing, geometryForTransfer } from './src/drawing/convert.mjs';
 
 const sheets = new Map(); // key -> sheet, the current file's pages only
+
+// OCR for labels drawn as line work (src/drawing/ocr.mjs): tesseract.js with its engine and English data served by this
+// server under /node_modules/; started on the first request and kept for the next conversion.
+let ocrEngine = null;
+function ocrRecognizer() {
+  ocrEngine ??= (async () => {
+    const mod = await import('/node_modules/tesseract.js/dist/tesseract.esm.min.js');
+    const { createWorker, PSM } = mod.default ?? mod; // the ESM build exports the library as its default
+    const w = await createWorker('eng', 1, {
+      workerPath: '/node_modules/tesseract.js/dist/worker.min.js', corePath: '/node_modules/tesseract.js-core',
+      langPath: '/node_modules/@tesseract.js-data/eng/4.0.0_best_int', gzip: true, workerBlobURL: false, cacheMethod: 'none', logger: () => {},
+    });
+    await w.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK, preserve_interword_spaces: '1' });
+    return async (img) => {
+      // the engine reads encoded images in a worker (no DOM to draw ImageData on): PNG through an OffscreenCanvas
+      const canvas = new OffscreenCanvas(img.width, img.height);
+      canvas.getContext('2d').putImageData(new ImageData(img.data, img.width, img.height), 0, 0);
+      const png = await canvas.convertToBlob({ type: 'image/png' });
+      const { data } = await w.recognize(png, {}, { blocks: true, text: false });
+      const lines = [];
+      for (const b of data.blocks || []) for (const p of b.paragraphs || []) for (const l of p.lines || []) lines.push({ text: l.text, confidence: l.confidence, bbox: l.bbox });
+      return lines;
+    };
+  })().catch((e) => { ocrEngine = null; throw Object.assign(new Error(`The OCR engine could not start: ${e?.message || e}`), { stage: 'ocr' }); });
+  return ocrEngine;
+}
 const KEEP = 6;
 
 function remember(key, sheet) {
@@ -36,7 +62,8 @@ self.addEventListener('message', async ({ data }) => {
     else sheet = sheets.get(data.key);
     if (!sheet) throw Object.assign(new Error('The drawing is no longer in the converter\'s memory. Open the file again.'), { code: 'missing' });
     const analyse = data.mode === 'analyse';
-    const r = await convertDrawing(sheet, data.overrides ?? {}, { onProgress: progress, geometry: !analyse });
+    const ocr = data.ocr ? await ocrRecognizer() : null;
+    const r = await convertDrawing(sheet, data.overrides ?? {}, { onProgress: progress, geometry: !analyse, ocr });
     const { entries, transfer } = geometryForTransfer(r.geometry);
     self.postMessage({ type: 'done', id, model: r.model, geometry: analyse ? null : entries, recon: r.recon, views: r.views, report: r.report }, transfer);
   } catch (e) {

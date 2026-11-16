@@ -10,7 +10,7 @@
 /** Conversion stages in order, with the labels the UI shows. */
 export const STAGES = ['views', 'scale', 'decks', 'rooms', 'doors', 'hull', 'mesh'];
 export const STAGE_LABEL = {
-  views: 'Finding views', scale: 'Scale', decks: 'Deck levels', rooms: 'Walls and rooms',
+  ocr: 'Reading labels (OCR)', views: 'Finding views', scale: 'Scale', decks: 'Deck levels', rooms: 'Walls and rooms',
   doors: 'Doors and stairs', hull: 'Hull', mesh: '3D geometry',
 };
 // The stages that interpret.mjs covers in one call; it may report them itself (4th argument { onProgress }).
@@ -163,7 +163,7 @@ export function lineWork(sheet) {
  *   geometry: false stops after the interpretation (the preview uses it to prefill the form: no mesh, no model check).
  * @returns {Promise<{ model, geometry: Map|null, recon, views, report }>} report.timings: ms per stage
  */
-export async function convertDrawing(sheet, overrides = {}, { onProgress, geometry: wantGeometry = true, modules } = {}) {
+export async function convertDrawing(sheet, overrides = {}, { onProgress, geometry: wantGeometry = true, modules, ocr } = {}) {
   if (!sheet || !Array.isArray(sheet.paths)) throw fail('No drawing sheet to convert.', 'empty');
   if (!sheet.paths.length) throw fail('The sheet has no line work: nothing to convert. A scanned drawing inside a PDF has none either; export the drawing as PDF or DXF from the CAD program.', 'empty');
   const m = modules ?? await loadModules();
@@ -180,8 +180,16 @@ export async function convertDrawing(sheet, overrides = {}, { onProgress, geomet
   };
   const close = () => { if (current) timings[current] = (timings[current] ?? 0) + (now() - since); current = null; };
   const t0 = now();
-  let views = null;
+  let views = null, ocrStats = null;
   try {
+    // labels drawn as line work: read by OCR first (only when asked; the engine comes from the caller), once per sheet
+    if (ocr && !sheet.ocrDone) {
+      tick('ocr');
+      const { ocrSheet } = await import('./ocr.mjs');
+      ocrStats = await ocrSheet(sheet, ocr, { onProgress: ({ done, total }) => tick('ocr', total ? done / total : 1) });
+      sheet.ocrDone = ocrStats;
+      tick('ocr', 1);
+    } else if (sheet.ocrDone) ocrStats = sheet.ocrDone;
     tick('views');
     views = m.findViews(sheet);
     tick('views', 1);
@@ -200,6 +208,8 @@ export async function convertDrawing(sheet, overrides = {}, { onProgress, geomet
     const report = out?.report ?? {};
     if (!model || !Array.isArray(model.elements)) throw fail('The interpretation returned no model.', 'interpret');
     report.timings = { ...(report.timings ?? {}), ...timings, interpret: interpretMs };
+    if (ocrStats) report.ocr = { lines: ocrStats.lines, groups: ocrStats.read, candidates: ocrStats.candidates, skipped: ocrStats.skipped, ms: ocrStats.ms,
+      texts: sheet.texts.filter((t) => t.ocr).map((t) => ({ id: t.id, text: t.text, confidence: t.ocr.confidence, box: t.box, height: t.height, angle: t.angle })) };
     report.timedStages = [...timed];
     let geometry = null;
     if (wantGeometry) {
