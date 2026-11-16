@@ -260,6 +260,52 @@ test('a hand-made DXF general arrangement becomes a checkable model with 3D geom
   structuredClone({ model: r.model, recon: r.recon, views: r.views, report: r.report, geometry: entries }, { transfer });
 });
 
+// A building floor plan drawn 1:1 in mm, without any ship cue (no centre line, not symmetric), with a legend of small
+// symmetric symbols, a scale bar and a French title block, as on the Swiss Dwellings sheets.
+function tinyFloor() {
+  const out = [];
+  const g = (...pairs) => { for (const [c, v] of pairs) out.push(String(c), String(v)); };
+  const line = (layer, [x1, y1], [x2, y2]) => g([0, 'LINE'], [8, layer], [10, x1], [20, y1], [30, 0], [11, x2], [21, y2], [31, 0]);
+  const poly = (layer, pts, closed = true) => { g([0, 'LWPOLYLINE'], [8, layer], [90, pts.length], [70, closed ? 1 : 0]); for (const [x, y] of pts) g([10, x], [20, y]); };
+  const text = (layer, [x, y], h, s) => g([0, 'TEXT'], [8, layer], [10, x], [20, y], [30, 0], [40, h], [1, s]);
+  const door = ([x, y], r, a0) => { g([0, 'ARC'], [8, 'DOOR'], [10, x], [20, y], [30, 0], [40, r], [50, a0], [51, a0 + 90]); const a = (a0 * Math.PI) / 180; line('DOOR', [x, y], [x + r * Math.cos(a), y + r * Math.sin(a)]); };
+  g([0, 'SECTION'], [2, 'HEADER'], [9, '$INSUNITS'], [70, 4], [0, 'ENDSEC'], [0, 'SECTION'], [2, 'ENTITIES']);
+  // the floor: 12 m × 8 m, a wall at x = 5 m, a wall at y = 3 m in the right part
+  poly('WALL', [[0, 0], [12000, 0], [12000, 8000], [0, 8000]]);
+  line('WALL', [5000, 0], [5000, 8000]);
+  line('WALL', [5000, 3000], [12000, 3000]);
+  door([5000, 1200], 850, 90); door([5000, 6100], 800, 180); door([8200, 3000], 900, 0); door([1500, 0], 900, 90);
+  text('TEXT', [1800, 4000], 250, 'Séjour');
+  text('TEXT', [7800, 1300], 250, 'Cuisine');
+  text('TEXT', [7800, 5500], 250, 'Chambre');
+  // legend: small symbols drawn symmetric about their middle, and a scale bar
+  for (const [i, y] of [[0, 400], [1, 1400], [2, 2400]]) { poly('LEGEND', [[-4600, y], [-3400, y], [-3400, y + 500], [-4600, y + 500]]); line('LEGEND', [-4600, y + 250], [-3400, y + 250]); text('TEXT', [-3200, y + 150], 200, ['WC', 'Lavabo', 'Douche'][i]); }
+  line('BAR', [-4600, -1000], [-600, -1000]); for (let x = -4600; x <= -600; x += 1000) line('BAR', [x, -1000], [x, -1080]);
+  // title block in the corner, rows of unequal height as usual
+  poly('TITLE', [[14000, -3000], [20000, -3000], [20000, -800], [14000, -800]]);
+  line('TITLE', [14000, -1600], [20000, -1600]); line('TITLE', [15700, -3000], [15700, -800]);
+  text('TEXT', [14200, -1300], 200, 'Projet'); text('TEXT', [16000, -1300], 250, 'Plan 1er étage');
+  text('TEXT', [14200, -2500], 200, 'Dessin'); text('TEXT', [16000, -2500], 200, 'Échelle 1:100');
+  g([0, 'ENDSEC'], [0, 'EOF']);
+  return out.join('\n') + '\n';
+}
+
+test('a building floor plan without ship cues is found as the plan; legend symbols and a scale bar are not decks', { skip: skipUnless('sheet.mjs', 'read-dxf.mjs', 'views.mjs', 'interpret.mjs', 'mesh.mjs') }, async () => {
+  const { findViews } = await import('../src/drawing/views.mjs');
+  const [sheet] = await readDrawingFile({ name: 'tiny-floor.dxf', bytes: enc(tinyFloor()) });
+  const views = findViews(sheet);
+  const plans = views.filter((v) => v.kind === 'plan');
+  assert.equal(plans.length, 1, `one plan, not the legend: ${views.map((v) => `${v.kind}[${v.box.map(Math.round)}]`).join(' ')}`);
+  const roomText = sheet.texts.find((t) => t.text === 'Cuisine');
+  assert.ok(plans[0].texts.includes(roomText.id), 'the plan is the floor with the room names');
+  assert.match(plans[0].why.join(' '), /door swings/, 'and says why');
+  assert.ok(views.some((v) => v.kind === 'title'), 'the title block stays a title block');
+  const { report } = await convertDrawing(sheet, {}, { geometry: false });
+  assert.equal(report.decks.length, 1, 'one floor, no decks made of symbols');
+  for (const name of ['Séjour', 'Cuisine', 'Chambre']) assert.ok(report.rooms.some((r) => r.name === name), `${name} is a room`);
+  assert.ok(report.rooms.find((r) => r.name === 'Séjour').area > 39 && report.rooms.find((r) => r.name === 'Séjour').area < 41, 'Séjour is 5 m × 8 m');
+});
+
 test('a printed area on its own line under a room number belongs to the named room it stands in', { skip: skipUnless('sheet.mjs', 'read-dxf.mjs', 'views.mjs', 'interpret.mjs', 'mesh.mjs') }, async () => {
   const [sheet] = await readDrawingFile({ name: 'tiny-numbered.dxf', bytes: enc(tinyGA({ numbered: true })) });
   const { report } = await convertDrawing(sheet, {}, { geometry: false });

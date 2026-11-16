@@ -64,11 +64,16 @@ rule-verification tables are empty (catalog not imported yet: the user should do
   Scans (raster images) are refused with a message. Test drawing: AURORA, 28 m research vessel (public PDF, local only
   in `tools/drawing-samples/`, gitignored): 31/31 doors, 48/49 labels as rooms, 7/7 printed cabin areas within 2 % (2
   from the walls alone, 5 joined using the printed area as evidence), scale 1:100 confirmed twice, 0 referee issues,
-  about 4 s. Head-to-head on SpaceLens' three Swiss Dwellings sample PDFs (CC BY 4.0, local only in
-  `tools/drawing-samples/swiss/`): 36/44 printed room areas within 2 % from the walls alone (SpaceLens: 84.4 % over 65
-  plans), scale read on 3/3, doors as many as SpaceLens (site1102: 18 of 21 for both); the misses are balconies read as
-  open deck (5–6 % small) and apartment names ("App. A") joined to the room name below. Scorecards:
-  `node tools/drawing/eval-aurora.mjs`, `node tools/drawing/eval-swiss.mjs`; browser checks: `node tools/drawing/drawing-smoke.mjs`
+  about 4 s. Head-to-head with SpaceLens on the same 65 Swiss Dwellings plans it benchmarks on (Stoa
+  `junction-dataset-preview`, swiss_dwellings, CC BY 4.0; local only in `tools/drawing-samples/stoa-preview/`), 550
+  printed room areas, fully automatic: 87.1 % within 2 % (479/550), or 90.2 % of the 531 areas inside a room we built,
+  median error 0.00 %. SpaceLens: 84.4 % of the 390 areas its fill found, median 0.32 % (it leaves the other 160 out;
+  strict that is about 60 %). Doors, counted per leaf as the dataset does (a double door is 2): 34/65 plans exact
+  (SpaceLens 32/65), mean miss 1.4 (1.3). Scale read on 65/65; median 0.36 s per plan (SpaceLens 0.2 s). Floor plans
+  without ship cues are found by their door swings and labels (`views.mjs` `floorPlans`); legend symbols, scale bars and
+  border strips are not decks (`dropSymbolPlans`); symmetry counts only for drawings with line work. Remaining misses:
+  balconies read as open deck (5–6 % small), apartment names ("App. A") joined to the room name below. Scorecards: `node tools/drawing/eval-aurora.mjs`, `node tools/drawing/eval-swiss.mjs [--dir … --questions
+  … --one-click]`; browser checks: `node tools/drawing/drawing-smoke.mjs`
   and `tools/drawing/shot-3d.mjs` (Playwright with the installed Chrome). Not read yet: stroked text without fonts (the
   RCRV GA), sections (bilge shape), sliding doors, windows in plans.
 - **Checker:** min/max/in_set/table_lookup/distance/count/adjacency/requires/data_quality/manual; applicability by

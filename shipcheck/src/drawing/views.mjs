@@ -149,6 +149,8 @@ export function findViews(sheet) {
   // 5. classify
   const views = clusters.map((c, i) => describe(c, i, assigned.get(c) || { inside: [], title: null }, { bbox, diag, gap, sheet }));
   linkShipViews(views);
+  floorPlans(views, diag);
+  dropSymbolPlans(views);
   decideBow(views, sheet);
   return views
     .filter((v) => v.kind !== 'noise')
@@ -289,10 +291,12 @@ function describe(c, i, texts, ctx) {
   if (aspect >= 1.8 && g.longH >= 2 && g.symH < 0.55) { sc.profile += 0.35; ev.profile.push(`elongated (${aspect.toFixed(1)}:1) with ${g.longH} long horizontal lines and no mirror symmetry about a horizontal axis`); }
   const deckLabels = texts.inside.filter((t) => deckOf(t.text) && !/^(BELOW|UNDER)/i.test(t.text.trim())).length;
   if (deckLabels >= 2) { sc.profile += 0.15; ev.profile.push(`${deckLabels} deck names inside`); }
-  if (g.symH >= 0.55 && aspect >= 1.2) { sc.plan += 0.25 + 0.2 * (g.symH - 0.55) / 0.45; ev.plan.push(`mirror-symmetric about a horizontal axis (${Math.round(g.symH * 100)} % of the line ends)`); }
-  if (g.centreline) { sc.plan += 0.2; ev.plan.push(`centre line at sheet y ${g.centreline.y.toFixed(1)}${g.centreline.dashed ? ' (dash-dot)' : ''}`); }
+  // symmetry says something only about a drawing with some line work: any empty box or bar is symmetric
+  const drawn = c.segs.length >= 20;
+  if (drawn && g.symH >= 0.55 && aspect >= 1.2) { sc.plan += 0.25 + 0.2 * (g.symH - 0.55) / 0.45; ev.plan.push(`mirror-symmetric about a horizontal axis (${Math.round(g.symH * 100)} % of the line ends)`); }
+  if (g.centreline && (g.centreline.dashed || drawn)) { sc.plan += 0.2; ev.plan.push(`centre line at sheet y ${g.centreline.y.toFixed(1)}${g.centreline.dashed ? ' (dash-dot)' : ''}`); }
   if (g.halfPlan) { sc.plan += 0.2; ev.plan.push('drawn on one side of a centre line at its edge (half plan)'); }
-  if (g.symV >= 0.6 && aspect >= 0.35 && aspect <= 2.2 && g.symH < g.symV) { sc.section += 0.4; ev.section.push(`mirror-symmetric about a vertical axis (${Math.round(g.symV * 100)} %)`); }
+  if (drawn && g.symV >= 0.6 && aspect >= 0.35 && aspect <= 2.2 && g.symH < g.symV) { sc.section += 0.4; ev.section.push(`mirror-symmetric about a vertical axis (${Math.round(g.symV * 100)} %)`); }
   if (titleWords >= 2 || (scales && titleWords >= 1)) { sc.title += 0.35 + 0.08 * Math.min(titleWords, 5); ev.title.push(`${titleWords} title-block words`); }
   if (g.corner) { sc.title += titleWords ? 0.15 : 0; if (titleWords) ev.title.push('in a corner of the sheet'); }
   if (principal >= 2) { sc.table += 0.5; ev.table.push(`${principal} principal dimensions`); }
@@ -389,10 +393,19 @@ function geometry(c, { bbox, diag, sheet }) {
   }
   if (!baseline && long.length) { const l = long.slice().sort((a, b) => yOf(a) - yOf(b))[0]; baseline = { y: yOf(l), ticks: 0 }; }
   const arcs = 0;
+  // door swings: open arcs of about a quarter turn, small against the drawing (a door against a deck or a floor)
+  const size = Math.hypot(w, h);
+  let doorArcs = 0;
+  for (const k of new Set(c.segs.map((s) => s[4]))) {
+    const a = sheet.paths[k]?.arc;
+    if (!a || !(a.r > 0.002 * size && a.r < 0.08 * size)) continue;
+    const sweep = (((a.a1 - a.a0) % 360) + 360) % 360;
+    if (sweep >= 60 && sweep <= 100) doorArcs++;
+  }
   const axisShare = c.segs.filter((s) => Math.abs(s[2] - s[0]) < 1e-6 * diag || Math.abs(s[3] - s[1]) < 1e-6 * diag).length / Math.max(1, c.segs.length);
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
   const corner = (cx - bbox[0] < 0.3 * (bbox[2] - bbox[0]) || bbox[2] - cx < 0.3 * (bbox[2] - bbox[0])) && (cy - bbox[1] < 0.3 * (bbox[3] - bbox[1]) || bbox[3] - cy < 0.3 * (bbox[3] - bbox[1]));
-  return { longH: long.length, symH, symV, centreline, halfPlan, baseline, mainX, arcs, axisShare, corner };
+  return { longH: long.length, symH, symV, centreline, halfPlan, baseline, mainX, arcs, doorArcs, axisShare, corner };
 }
 
 // Views of one GA: a cluster under or over a profile, inside its x range, elongated and symmetric, is a plan even
@@ -409,6 +422,45 @@ function linkShipViews(views) {
       v.kind = 'plan'; v.confidence = 0.55;
       v.why.push(`below/above the profile within its length and symmetric about a horizontal axis: a deck plan (no deck name found)`);
     }
+  }
+}
+
+// A floor plan without ship cues (no centre line, not symmetric: a building floor, an accommodation block drawn on its
+// own): a large drawing that nothing else claimed, with door swings and several labels in it. A profile, section or
+// title block guessed from the shape alone (no title says so) gives way to a row of door swings: those views have none.
+const FLOOR = { minSize: 0.15, minDoors: 3, minDoorsOverShape: 5, minLabels: 3 };
+function floorPlans(views, diag) {
+  for (const v of views) {
+    if (!v._g) continue;
+    const shapeOnly = ['profile', 'section', 'title'].includes(v.kind) && !v._ev?.[v.kind]?.some((e) => e.startsWith('title "'));
+    if (v.kind !== 'other' && !(shapeOnly && v._g.doorArcs >= FLOOR.minDoorsOverShape)) continue;
+    const size = Math.hypot(v.box[2] - v.box[0], v.box[3] - v.box[1]);
+    const labels = v._texts.filter((t) => /\p{L}{2,}/u.test(String(t.text)) && !isTitleBlockWord(t.text)).length;
+    if (size < FLOOR.minSize * diag || v._g.doorArcs < FLOOR.minDoors || labels < FLOOR.minLabels) continue;
+    const was = v.kind;
+    v.kind = 'plan'; v.confidence = 0.5;
+    v.why = [`${v._g.doorArcs} door swings and ${labels} labels in a large drawing without a centre line: a floor plan${was !== 'other' ? ` (its shape alone suggested a ${was})` : ''}`];
+    if (!v.deck && v.title && deckOf(v.title)) { v.deckName = v.title; v.deck = deckOf(v.title); }
+  }
+}
+
+// The decks of one drawing are drawn at one scale, so they are of a size. A "plan" without a deck title that is a
+// small fraction of the largest plan is a symbol (a legend entry, a north arrow, a door or fitting symbol drawn
+// symmetric), not another deck; so is one far flatter than the largest plan (a scale bar: a half plan still has half
+// the breadth).
+function dropSymbolPlans(views) {
+  const plans = views.filter((v) => v.kind === 'plan');
+  if (plans.length < 2) return;
+  const sizeOf = (v) => Math.hypot(v.box[2] - v.box[0], v.box[3] - v.box[1]);
+  const minorOf = (v) => Math.min(v.box[2] - v.box[0], v.box[3] - v.box[1]);
+  const big = plans.reduce((a, b) => (sizeOf(b) > sizeOf(a) ? b : a));
+  for (const v of plans) {
+    if (v === big || v.deck) continue;
+    const small = sizeOf(v) < 0.2 * sizeOf(big), flat = minorOf(v) < 0.1 * minorOf(big);
+    if (!small && !flat) continue;
+    v.kind = 'other'; v.confidence = 0.3;
+    v.why.push(small ? 'less than a fifth of the size of the largest plan and no deck name: a symbol, not a deck'
+      : 'less than a tenth of the breadth of the largest plan and no deck name: a bar or a symbol, not a deck');
   }
 }
 
