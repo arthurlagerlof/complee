@@ -8,24 +8,27 @@ import { partsToModel, swbsGroup } from '../src/parts-model.mjs';
 import { scoreResults, scoreLine } from '../src/score.mjs';
 import { fetchCatalog, catalogAvailable } from '../src/catalog-api.mjs';
 
-// The production parts file (20 MB) is not part of the bundled catalog: these tests need the database API.
-const HAVE = (await Promise.all(['model-rcrv-parts', 'model-rcrv-precomputed'].map(catalogAvailable))).every(Boolean);
-const baseTest = test;
-const productionTest = HAVE ? baseTest : (name, ...rest) => baseTest(name, { skip: 'production model not in the bundled catalog (set SHIPCHECK_DATA_API_URL)' }, () => {});
-const [rulesCatalog, parts, meta, expected, precomputed, cruise] = HAVE ? await Promise.all([
-  fetchCatalog('rules'),
-  fetchCatalog('model-rcrv-parts'),
-  fetchCatalog('model-rcrv-meta'),
-  fetchCatalog('expected-rcrv-3d'),
-  fetchCatalog('model-rcrv-precomputed'),
-  fetchCatalog('model-cruise-deck'),
-]) : [{ rules: [] }, null, null, null, null, null];
-const RULES = rulesCatalog.rules;
+// The production parts file (20 MB) and the precomputed results are not always present (local file or database API).
+// Each test is gated on the catalog entries it actually reads, so a missing precomputed file does not hide the rest.
+const KEYS = ['rules', 'model-rcrv-parts', 'model-rcrv-meta', 'expected-rcrv-3d', 'model-rcrv-precomputed', 'model-cruise-deck'];
+const has = Object.fromEntries(await Promise.all(KEYS.map(async (k) => [k, await catalogAvailable(k)])));
+const data = Object.fromEntries(await Promise.all(KEYS.map(async (k) => [k, has[k] ? await fetchCatalog(k) : null])));
+const gated = (...keys) => {
+  const missing = keys.filter((k) => !has[k]);
+  return missing.length ? (name) => test(name, { skip: `${missing.join(', ')} not available (local catalog or SHIPCHECK_DATA_API_URL)` }, () => {}) : test;
+};
+const RULES = data.rules?.rules ?? [];
+const parts = data['model-rcrv-parts'], meta = data['model-rcrv-meta'], expected = data['expected-rcrv-3d'];
+const precomputed = data['model-rcrv-precomputed'], cruise = data['model-cruise-deck'];
 const res = (out, el, rule) => out.elements[el]?.results.find((r) => r.rule_id === rule);
 
-const model = HAVE ? partsToModel(parts, meta) : null;
-const loaded = HAVE ? { parts, model, out: checkModel(model, RULES), expected } : {};
-const load = () => loaded;
+const productionTest = gated('rules', 'model-rcrv-parts', 'model-rcrv-meta', 'expected-rcrv-3d');
+const rulesTest = gated('rules');
+let loaded;
+const load = () => {
+  if (!loaded) { const model = partsToModel(parts, meta); loaded = { parts, model, out: checkModel(model, RULES), expected }; }
+  return loaded;
+};
 
 productionTest('rcrv-3d: hand-checked findings detected, bulk counts match, no false alarms', () => {
   const { out, expected } = load();
@@ -119,7 +122,7 @@ productionTest('rcrv-3d: draft rule (no official value) is listed and never run'
   assert.ok(Object.values(out.elements).every((e) => e.results.every((r) => r.rule_id !== 'MIN-THK-SWBS')));
 });
 
-productionTest('rcrv-3d: database precomputed results match a fresh run', () => {
+gated('rules', 'model-rcrv-parts', 'model-rcrv-meta', 'expected-rcrv-3d', 'model-rcrv-precomputed')('rcrv-3d: database precomputed results match a fresh run', () => {
   const { out } = load();
   const pre = precomputed;
   assert.deepEqual(pre.summary, out.summary);
@@ -136,7 +139,7 @@ productionTest('aluminium and stainless parts are not checked against steel grad
 
 // ---------- new check types (small synthetic models) ----------
 
-productionTest('where operators: prefix, in, not_in, exists', () => {
+rulesTest('where operators: prefix, in, not_in, exists', () => {
   assert.ok(whereMatches('114', { prefix: '1' }));
   assert.ok(!whereMatches(undefined, { prefix: '1' }));
   assert.ok(whereMatches('110', { in: ['110', '120'] }));
@@ -144,14 +147,14 @@ productionTest('where operators: prefix, in, not_in, exists', () => {
   assert.ok(whereMatches('x', { exists: true }) && whereMatches(undefined, { exists: false }));
 });
 
-productionTest('steel grade parsing follows UR W11 note 1 ("H" before or after)', () => {
+rulesTest('steel grade parsing follows UR W11 note 1 ("H" before or after)', () => {
   assert.deepEqual(parseSteelGrade('A'), { strength: 'MS', letter: 'A' });
   assert.deepEqual(parseSteelGrade('AH36'), { strength: 'HT', letter: 'A', level: 36 });
   assert.deepEqual(parseSteelGrade('HE32'), { strength: 'HT', letter: 'E', level: 32 });
   assert.equal(parseSteelGrade('API 5L X-52'), null);
 });
 
-productionTest('UR S6 Table 7 boundaries: Grade A at 15 mm / 15.01 mm, D at 30 mm, beyond 50 mm', () => {
+rulesTest('UR S6 Table 7 boundaries: Grade A at 15 mm / 15.01 mm, D at 30 mm, beyond 50 mm', () => {
   const rule = RULES.find((r) => r.id === 'IACS-S6-T7-GRADE-THICKNESS');
   const m = (t, grade, cls) => ({ name: 't', units: 'mm', elements: [{ id: 'X', type: 'plate', name: 'x', props: {
     thickness: t, steel_grade: grade, swbs_group: '110', material_family: 'carbon steel', ...(cls ? { material_class: cls } : {}) } }] });
@@ -167,7 +170,7 @@ productionTest('UR S6 Table 7 boundaries: Grade A at 15 mm / 15.01 mm, D at 30 m
   assert.equal(st(25, 'AH36', 'II'), 'compliant', 'HT column: AH suffices for Class II at 20-25 mm');
 });
 
-productionTest('new rules are valid and every unverified rule is in VERIFY.md', () => {
+rulesTest('new rules are valid and every unverified rule is in VERIFY.md', () => {
   const verify = fs.readFileSync(new URL('../VERIFY.md', import.meta.url), 'utf8');
   for (const r of RULES) {
     assert.deepEqual(validateRule(r), [], r.id);
@@ -180,12 +183,14 @@ productionTest('new rules are valid and every unverified rule is in VERIFY.md', 
 
 // ---------- Meyer mentors Q&A (7 Nov) ----------
 
-productionTest('mentor Q&A: DNV confirmed, every rule reviewed but still unverified, no drawing codes in rules', () => {
+gated('rules', 'model-rcrv-meta', 'model-cruise-deck')('mentor Q&A: DNV confirmed, every rule reviewed but still unverified, no drawing codes in rules', () => {
   assert.equal(meta.ship.class_society.value, 'DNV');
   assert.match(meta.ship.class_society.source, /confirmed by Meyer mentors \(Q&A, 7 Nov\)/);
   for (const r of RULES) {
     assert.equal(r.verified, false, `${r.id} must stay verified:false`);
-    assert.equal(r.review_status, 'reviewed by Meyer mentors (Q&A, 7 Nov)', r.id);
+    // Manual checks were added on 12 Nov, after the Q&A: they must not claim a review they did not get.
+    if (r.check === 'manual') assert.equal(r.review_status, undefined, `${r.id} was not part of the 7 Nov Q&A`);
+    else assert.equal(r.review_status, 'reviewed by Meyer mentors (Q&A, 7 Nov)', r.id);
   }
   assert.doesNotMatch(JSON.stringify(RULES), /\b(BHP|BHK|TTP|FLT|MDK|SSH)\b/);
   const verify = fs.readFileSync(new URL('../VERIFY.md', import.meta.url), 'utf8');

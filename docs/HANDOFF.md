@@ -34,7 +34,8 @@ cd shipcheck && npm start        # http://localhost:8080 (evidence intake), /ind
 ```powershell
 cd backend; .venv\Scripts\python -m uvicorn app.main:app --port 8000   # AI + rule verification
 ```
-Tests: `cd shipcheck && npm test` (12 tests are skipped: they need the database API);
+Tests: `cd shipcheck && npm test` (the RCRV production-model tests run on the local `catalog/ships/rcrv/parts.json`;
+one test is skipped: it compares against `results-3d.json`, which is neither local nor imported into the database);
 `cd backend; .venv\Scripts\python -m pytest -q`.
 Browser smoke test of the streamed viewer: `cd shipcheck/tools/export && node --test viewer-smoke.mjs`. Playwright's own
 browser is not installed on this machine (`npx playwright install` downloads it); with `CHROME_PATH` set to the
