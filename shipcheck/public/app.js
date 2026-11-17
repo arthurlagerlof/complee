@@ -1,6 +1,6 @@
 // ShipCheck UI. The pass/fail decision always comes from the shared deterministic checker
 // (src/checker.mjs), which runs right here in the browser so edits re-check instantly.
-import { checkModel, recheckElements, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK, coverageOf } from './src/checker.mjs';
+import { checkModel, recheckElements, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK, coverageOf, unconfirmedInputs } from './src/checker.mjs';
 import { scoreResults, scoreLine, badgeText } from './src/score.mjs';
 import { partsToModel } from './src/parts-model.mjs';
 import { reportRows, toCSV, toHTML, readinessTitle } from './src/report.mjs';
@@ -91,6 +91,13 @@ function provClass(src = '') {
   return '';
 }
 const prov = (src) => (src ? `<span class="prov ${provClass(src)}" title="${esc(src)}">${esc(src.length > 34 ? src.slice(0, 32) + '…' : src)}</span>` : '');
+// A result resting on values a drawing converter measured, read or assumed: a pre-check until a person confirms them.
+function unconfirmedTag(r) {
+  const u = unconfirmedInputs(r);
+  if (!u.length) return '';
+  const what = u.map((i) => `${i.name} (${i.basis} from the drawing)`).join(', ');
+  return `<span class="tag unconfirmed" title="${esc(`Rests on ${what}, not confirmed by a person. Confirm ${u.length > 1 ? 'these values' : 'this value'} before relying on this result.`)}">pre-check: input unconfirmed</span>`;
+}
 
 const S = {
   scenarios: [], sc: null, pristine: null, model: null, norm: null,
@@ -1160,6 +1167,7 @@ function renderResults(id) {
       ${r.inputs.length ? `<div class="inputs">Inputs: ${r.inputs.map((i) => `${esc(i.name)} = ${esc(i.value)}${prov(i.source)}`).join('; ')}</div>` : ''}
       <blockquote>“${esc(r.rule_text)}”</blockquote>
       <div class="tags">
+        ${unconfirmedTag(r)}
         ${verificationTag(r.rule_id, r.verified)}
         ${r.review_status ? `<span class="tag review" title="How the value is shown was reviewed; this is not a verification against the official text">${esc(r.review_status)}</span>` : ''}
         <span class="tag grey">${r.text_status === 'verbatim' ? 'verbatim text' : 'paraphrased text'}</span>

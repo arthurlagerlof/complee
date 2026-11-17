@@ -55,3 +55,26 @@ test('traceability matrix: parts x rules, same data in the report and the CSV', 
   const html = toHTML({ title: 't', scenario: 'cruise', results: out, model: CRUISE, rules: RULES });
   assert.match(html, /Traceability: parts × rules/);
 });
+
+test('a result resting on a value measured from a drawing is marked as a pre-check; design data and typed values are not', async () => {
+  const { unconfirmedInputs } = await import('../src/checker.mjs');
+  const rule = { id: 'W-MIN', source: 'Code', clause: '1', text: 'width', check: 'min', parameter: 'clear_width', value: 900, unit: 'mm', verified: false, applies_to: { types: ['door'] } };
+  const model = { schema: 'ship/1', units: 'mm', decks: [{ id: 'D1', name: 'Main', elevation: 0, height: 2400 }], elements: [
+    { id: 'DR1', type: 'door', name: 'Door 1', deck: 'D1', basis: 'measured', props: { clear_width: { value: 800, unit: 'mm', basis: 'measured', source: 'measured from the drawing: arc A1' } } },
+    { id: 'DR2', type: 'door', name: 'Door 2', deck: 'D1', basis: 'measured', props: { clear_width: { value: 950, unit: 'mm', basis: 'typed', source: 'typed by the user' } } },
+    { id: 'DR3', type: 'door', name: 'Door 3', deck: 'D1', props: { clear_width: 700 } },
+  ] };
+  const out = checkModel(model, [rule]);
+  const r = (id) => out.elements[id].results[0];
+  assert.deepEqual(unconfirmedInputs(r('DR1')).map((i) => [i.name, i.basis]), [['clear_width', 'measured']]);
+  assert.equal(unconfirmedInputs(r('DR2')).length, 0, 'a value typed by the user counts as confirmed');
+  assert.equal(unconfirmedInputs(r('DR3')).length, 0, 'design model data carries no basis');
+  const rows = reportRows(out, model, [rule]);
+  assert.equal(rows.find((x) => x.element === 'DR1').unconfirmed_input, 'clear_width (measured)');
+  assert.equal(rows.find((x) => x.element === 'DR3').unconfirmed_input, '');
+  const html = toHTML({ title: 't', scenario: 's', results: out, model, rules: [rule] });
+  assert.match(html, /Pre-check: 1 of 3 rule results rest on values measured, read or assumed from a drawing/);
+  assert.match(html, /pre-check: input unconfirmed/);
+  // A design model (no basis anywhere) gets no pre-check note.
+  assert.doesNotMatch(toHTML({ title: 't', scenario: 's', results: checkModel(CRUISE, RULES), model: CRUISE, rules: RULES }), /Pre-check:/);
+});

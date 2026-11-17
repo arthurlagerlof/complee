@@ -1,6 +1,6 @@
 // Findings report (HTML, printable to PDF) and CSV. Pure functions: used by the browser (Report / CSV
 // buttons) and by the CLI (node check.mjs --report <scenario>), so both give the same output.
-import { findingsOf, normalizeModel, coverageOf } from './checker.mjs';
+import { findingsOf, normalizeModel, coverageOf, unconfirmedInputs } from './checker.mjs';
 import { readiness } from './readiness.mjs';
 import { commentEvidence, commentSummary, COMMENT_STATUS_LABEL, EVIDENCE_LABEL } from './class-comments.mjs';
 import { scoreLine } from './score.mjs';
@@ -32,6 +32,8 @@ export function reportRows(results, model, rules = [], { register = null } = {})
       rule: f.rule_id, source: f.source, clause: f.clause, measured: f.measured ?? 'missing', required: f.required,
       explanation: f.explanation,
       provenance: (f.inputs || []).map((i) => `${i.name}=${i.value} [${i.source}]`).join('; '),
+      // Inputs a drawing converter measured, read or assumed: the result is a pre-check until a person confirms them.
+      unconfirmed_input: unconfirmedInputs(f).map((i) => `${i.name} (${i.basis})`).join('; '),
       basis: f.basis ?? ruleById.get(f.rule_id)?.basis ?? 'explicit',
       text: f.text_status ?? ruleById.get(f.rule_id)?.text_status ?? 'paraphrase',
       verified: f.verified ? 'yes' : 'no',
@@ -188,6 +190,10 @@ export function toHTML({ title, scenario, results, model, rules = [], score = nu
   const types = new Set((model ? normalizeModel(model).elements : []).map((e) => e.type));
   const drafts = (results.draft_rules || []).filter((d) => (rules.find((r) => r.id === d.id)?.applies_to?.types || []).some((t) => types.has(t)));
   const pass = score?.pass;
+  // Results resting on values from a drawing (only drawing-derived models carry a basis; design models skip the count).
+  const fromDrawing = model && normalizeModel(model).elements.some((e) => e.basis != null);
+  const allResults = fromDrawing ? Object.values(results.elements || {}).flatMap((e) => e.results || []) : [];
+  const unconfirmed = allResults.filter((r) => unconfirmedInputs(r).length).length;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Compliance findings - ${esc(title)}</title>
 <style>body{font:12px/1.4 system-ui,sans-serif;margin:24px;color:#1d2430}h1{font-size:18px;margin:0}h2{font-size:14px;margin:18px 0 6px}
 table{border-collapse:collapse;width:100%;margin-top:8px}th,td{border:1px solid #d5dae0;padding:4px 6px;text-align:left;vertical-align:top}
@@ -200,15 +206,16 @@ th{background:#f3f5f8}.nc{color:#b42318;font-weight:600}.ok{color:#1d6b3d}.ni{co
 ${score ? `<div class="badge ${pass ? 'ok' : 'bad'}">${pass ? '✓' : '✗'} Accuracy: ${esc(badgeText(score))}</div><div class="muted">${esc(scoreLine(score))} (ground truth of the unedited design, same as npm test)</div>` : ''}
 <p>Result: <b>${s.non_compliant}</b> non-compliant, <b>${s.not_enough_info}</b> not enough info, <b>${s.compliant}</b> rule checks without deviation.
 ${usedRules.length} rules applied, ${verified}/${rules.length} rule values verified against official text: every "no" must be checked before submission (VERIFY.md).</p>
+${unconfirmed ? `<p class="ni">Pre-check: ${unconfirmed} of ${allResults.length} rule results rest on values measured, read or assumed from a drawing, not confirmed by a person. A pass or a finding among them holds only once those values are confirmed (column "Unconfirmed input").</p>` : ''}
 ${edits.length ? `<p><b>${edits.length} value(s) edited in this session:</b> ${edits.map((x) => `${esc(x.id)}.${esc(x.key)} ${esc(x.before)} → ${esc(x.after)}`).join('; ')}</p>` : ''}
 ${drafts.length ? `<p><b>Draft rules, not run (no official value):</b> ${drafts.map((d) => `${esc(d.id)}: ${esc(d.reason)}`).join(' ')}</p>` : ''}
 ${readinessSection({ results, register, comments, rules, edits: edits.length })}
 <h2>Findings (${rows.length})</h2>
 ${register ? `<p>Findings register: <b>${openCount}</b> of ${rows.length} findings open, ${rows.length - openCount} with a disposition. A disposition records how a finding is handled; it never changes the checker status.</p>` : ''}
-<table><tr><th>Status</th><th>Element</th><th>Group / deck</th><th>Rule</th><th>Source / clause</th><th>Measured</th><th>Required</th><th>Explanation</th><th>Input provenance (model text = mm)</th><th>Basis</th><th>Verified</th><th>Review</th>${register ? '<th>Disposition</th><th>Responsible</th><th>Justification / note</th>' : ''}</tr>
-${rows.map((r) => `<tr><td class="${r.status === 'Non-compliant' ? 'nc' : 'ni'}">${esc(r.status)}</td><td><b>${esc(r.element)}</b>${r.objectid !== '' ? `<br><span class="muted">dbId ${esc(r.objectid)}</span>` : ''}<br>${esc(r.name)}</td>
+<table><tr><th>Status</th><th>Element</th><th>Group / deck</th><th>Rule</th><th>Source / clause</th><th>Measured</th><th>Required</th><th>Explanation</th><th>Input provenance (model text = mm)</th><th>Unconfirmed input</th><th>Basis</th><th>Rule value verified</th><th>Review</th>${register ? '<th>Disposition</th><th>Responsible</th><th>Justification / note</th>' : ''}</tr>
+${rows.map((r) => `<tr><td class="${r.status === 'Non-compliant' ? 'nc' : 'ni'}">${esc(r.status)}${r.unconfirmed_input ? '<br><span class="muted">pre-check: input unconfirmed</span>' : ''}</td><td><b>${esc(r.element)}</b>${r.objectid !== '' ? `<br><span class="muted">dbId ${esc(r.objectid)}</span>` : ''}<br>${esc(r.name)}</td>
 <td>${esc(r.group)}</td><td>${esc(r.rule)}${r.same_requirement_as ? `<br><span class="muted">same requirement as ${esc(r.same_requirement_as)}</span>` : ''}</td><td>${esc(r.source)}<br><span class="muted">${esc(r.clause)}</span></td><td>${esc(r.measured)}</td><td>${esc(r.required)}</td>
-<td>${esc(r.explanation)}</td><td class="muted">${esc(r.provenance)}</td><td>${esc(r.basis)}</td><td>${r.verified}</td><td>${esc(r.review)}</td>${register ? `<td>${esc(r.disposition)}</td><td>${esc(r.responsible)}</td><td>${esc(r.note)}</td>` : ''}</tr>`).join('\n')}
+<td>${esc(r.explanation)}</td><td class="muted">${esc(r.provenance)}</td><td>${esc(r.unconfirmed_input)}</td><td>${esc(r.basis)}</td><td>${r.verified}</td><td>${esc(r.review)}</td>${register ? `<td>${esc(r.disposition)}</td><td>${esc(r.responsible)}</td><td>${esc(r.note)}</td>` : ''}</tr>`).join('\n')}
 </table>
 ${coverageSection(results, rules, register)}
 ${commentsSection(comments, results, register)}

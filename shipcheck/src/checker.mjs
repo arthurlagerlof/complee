@@ -37,7 +37,7 @@ export function readValue(v, defaultUnit, defaultSource) {
   if (v == null) return null;
   if (isObj(v) && 'value' in v) {
     if (v.value == null) return null;
-    return { value: v.value, unit: v.unit ?? defaultUnit, source: v.source ?? defaultSource, note: v.note, original: v.original };
+    return { value: v.value, unit: v.unit ?? defaultUnit, source: v.source ?? defaultSource, note: v.note, original: v.original, basis: v.basis };
   }
   return { value: v, unit: defaultUnit, source: defaultSource };
 }
@@ -157,7 +157,9 @@ export function normalizeModel(raw) {
 }
 
 export function prop(el, key, model) {
-  return readValue(el.props?.[key], model.units, el.source || model.source || 'not stated');
+  const v = readValue(el.props?.[key], model.units, el.source || model.source || 'not stated');
+  if (v && v.basis == null && el.basis != null) v.basis = el.basis;
+  return v;
 }
 
 function shipValue(model, key) {
@@ -1036,6 +1038,20 @@ export function elementFingerprint(el) {
   return (h >>> 0).toString(36) + text.length.toString(36);
 }
 
+// Values a drawing converter derived (basis measured, read or assumed) are not design data a person entered or
+// confirmed. Every input of a result names its basis, so a result resting on such a value shows as a pre-check:
+// pass or finding, it holds only once the value is confirmed. Inputs without a basis (design model data) stay as they are.
+const UNCONFIRMED_BASIS = new Set(['measured', 'read', 'assumed']);
+function inputBasis(input, el, model) {
+  if (input.basis) return input.basis;
+  const ship = /^ship\.(.+)$/.exec(input.name ?? '');
+  if (ship) return model.ship?.[ship[1]]?.basis ?? null;
+  const p = prop(el, input.name, model);
+  return p ? p.basis ?? null : el.basis ?? null; // computed from the geometry: the element's own basis
+}
+const withBasis = (inputs, el, model) => inputs.map((i) => { const b = inputBasis(i, el, model); return b && !i.basis ? { ...i, basis: b } : i; });
+export const unconfirmedInputs = (r) => (r?.inputs || []).filter((i) => UNCONFIRMED_BASIS.has(i.basis));
+
 function checkElement(el, rules, ctx) {
   const { model } = ctx;
   const all = [], not_applicable = [], manual = [];
@@ -1065,6 +1081,7 @@ function checkElement(el, rules, ctx) {
       ? fn(rule, el, ctx)
       : result(rule, 'not_enough_info', { explanation: `Unknown check type "${rule.check}".` });
     if (sc.inputs.length) r.inputs = [...r.inputs, ...sc.inputs];
+    if (r.inputs.length) r.inputs = withBasis(r.inputs, el, model);
     // Whether the rule applies is open (a value its scope depends on is missing or unusable). It is never dropped:
     // when the design meets it anyway the result says so; otherwise it is "not enough info", with what the check
     // would find if the rule applies.
