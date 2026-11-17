@@ -1,6 +1,6 @@
 // ShipCheck UI. The pass/fail decision always comes from the shared deterministic checker
 // (src/checker.mjs), which runs right here in the browser so edits re-check instantly.
-import { checkModel, recheckElements, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK, coverageOf, unconfirmedInputs } from './src/checker.mjs';
+import { checkModel, recheckElements, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK, coverageOf, unconfirmedInputs, confirmedInputs } from './src/checker.mjs';
 import { scoreResults, scoreLine, badgeText } from './src/score.mjs';
 import { partsToModel } from './src/parts-model.mjs';
 import { reportRows, toCSV, toHTML, readinessTitle } from './src/report.mjs';
@@ -17,6 +17,7 @@ import { statusForRules, verificationCounts, LEVEL_LABEL } from './src/verify-st
 import { projectFile, readProjectFile } from './src/project-file.mjs';
 import { COMMENT_STATUSES, COMMENT_STATUS_LABEL, EVIDENCE_LABEL, EVIDENCE_CLASS, parseComments, addComments, withComment, withoutComment, commentEvidence, commentSummary, commentsCSV, isContradicted } from './src/class-comments.mjs';
 import { DISPOSITIONS, DISPOSITION_LABEL, needsNote, findingKey, registerRows, registerSummary, withDisposition, registerCSV, projectKey, manualRows, manualSummary, withManualCheck } from './src/dispositions.mjs';
+import { SHIP as INPUT_SHIP, applyInputConfirmations, withInputConfirmation, withoutInputConfirmation } from './src/input-confirmations.mjs';
 import { createFallbackViewer } from './viewer-fallback.js';
 import { createLocalViewer } from './viewer-stream.js';
 import { loadOfficialText } from './regulation-text.js';
@@ -97,6 +98,48 @@ function unconfirmedTag(r) {
   if (!u.length) return '';
   const what = u.map((i) => `${i.name} (${i.basis} from the drawing)`).join(', ');
   return `<span class="tag unconfirmed" title="${esc(`Rests on ${what}, not confirmed by a person. Confirm ${u.length > 1 ? 'these values' : 'this value'} before relying on this result.`)}">pre-check: input unconfirmed</span>`;
+}
+// The values from a drawing that a result rests on: each stored value can be confirmed, with the name of who checked
+// it against the drawing; a value computed from the geometry has no single value to confirm.
+const reviewerKey = 'complee.reviewer';
+const reviewerName = () => { try { return localStorage.getItem(reviewerKey) ?? ''; } catch { return ''; } };
+// A confirmation for another value (the drawing was converted again, or the value changed): to be checked again.
+function staleNote(i) {
+  const st = S.inputConfirm?.stale.find((x) => x.element === i.value_of.element && x.prop === i.value_of.prop);
+  return st ? ` <span class="disp-warn">confirmed earlier as ${esc(String(st.confirmed))}; the value changed, check it again</span>` : '';
+}
+function inputConfirmHTML(r) {
+  const once = (list) => [...new Map(list.map((i) => [i.value_of ? `${i.value_of.element}|${i.value_of.prop}` : i.name, i])).values()];
+  const open = once(unconfirmedInputs(r)), done = once(confirmedInputs(r));
+  if (!open.length && !done.length) return '';
+  const attrs = (i) => `data-el="${esc(i.value_of.element)}" data-prop="${esc(i.value_of.prop)}"`;
+  const openRow = (i) => (i.value_of
+    ? `<div class="ic-row"><span><b>${esc(i.name)}</b> = ${esc(i.value)} <span class="muted">${esc(i.basis)} from the drawing</span>${staleNote(i)}</span><button class="tiny icConfirm" ${attrs(i)} title="I checked this value against the drawing">Confirm value</button></div>`
+    : `<div class="ic-row muted"><span><b>${esc(i.name)}</b> = ${esc(i.value)}: computed from the drawing geometry; check it on the drawing</span></div>`);
+  const doneRow = (i) => `<div class="ic-row ok"><span>✓ <b>${esc(i.name)}</b> = ${esc(i.value)} confirmed by ${esc(i.confirmed_by)}${i.confirmed_at ? `, ${esc(new Date(i.confirmed_at).toLocaleDateString('en-GB'))}` : ''}</span>${i.value_of ? `<button class="tiny icUndo" ${attrs(i)}>Undo</button>` : ''}</div>`;
+  const canConfirm = open.some((i) => i.value_of);
+  return `<div class="ic"><div class="ic-head">Values from the drawing</div>
+    ${open.map(openRow).join('')}${done.map(doneRow).join('')}
+    ${canConfirm ? `<div class="ic-who"><input class="icWho" placeholder="Checked by (required)" value="${esc(reviewerName())}" size="22"></div>` : ''}</div>`;
+}
+function setInputConfirmation(element, prop, who) {
+  const p = element === INPUT_SHIP ? S.model.ship?.[prop] : elById(element)?.props?.[prop];
+  if (!p || typeof p !== 'object') return;
+  if (who) {
+    S.register = withInputConfirmation(S.register, { element, prop, value: p.value, unit: p.unit, basis: p.basis }, { responsible: who, revision: revisionLabel(S.sc) });
+    try { localStorage.setItem(reviewerKey, who); } catch { /* storage blocked: the name is asked again */ }
+  } else S.register = withoutInputConfirmation(S.register, element, prop);
+  saveRegister();
+  S.inputConfirm = applyInputConfirmations(S.model, S.register);
+  recheck(element === INPUT_SHIP ? undefined : [element]);
+}
+function wireInputConfirmations(root) {
+  root.querySelectorAll('.icConfirm').forEach((b) => (b.onclick = () => {
+    const who = b.closest('.ic')?.querySelector('.icWho');
+    if (!who?.value.trim()) { who?.classList.add('need'); who?.focus(); return; }
+    setInputConfirmation(b.dataset.el, b.dataset.prop, who.value.trim());
+  }));
+  root.querySelectorAll('.icUndo').forEach((b) => (b.onclick = () => setInputConfirmation(b.dataset.el, b.dataset.prop, null)));
 }
 
 const S = {
@@ -330,6 +373,8 @@ async function loadScenario(id) {
     S.shipOriginal = null;
     S.keelNote = null;
     S.register = loadRegister(sc, model);
+    // Values from a drawing that a person confirmed (stored with the register): marked before the check runs.
+    S.inputConfirm = applyInputConfirmations(S.model, S.register);
     closeRegister();
     S.selected = null;
     S.ruleView = null;
@@ -713,6 +758,9 @@ function visibleElements() {
   });
 }
 
+// A model converted from a drawing: its elements carry a basis (measured, read, typed, assumed). Design models do not,
+// so the list does not look at the inputs of their (possibly many, lazily built) results.
+const fromDrawing = () => (S.norm.__fromDrawing ??= S.norm.elements.some((e) => e.basis != null));
 function renderList() {
   const deckOrder = Object.fromEntries(S.norm.decks.map((d, i) => [d.id, i]));
   const items = visibleElements().sort((a, b) => ORDER[a.worst] - ORDER[b.worst] || deckOrder[a.deck] - deckOrder[b.deck]);
@@ -723,7 +771,7 @@ function renderList() {
     return `<div class="item ${S.selected === e.id ? 'sel' : ''}" data-id="${esc(e.id)}">
       <span class="dot st-${e.worst ?? 'none'}"></span>
       <span><b>${esc(e.id)}</b> ${esc(e.name)} <span class="deckTag">· ${esc(S.norm.decks.length > 1 ? e.deck : '')}</span></span>
-      ${bad.length ? `<span class="rules">${bad.map((r) => `<span class="rtag st-${r.status}">${esc(r.rule_id)}</span>`).join('')}</span>` : ''}
+      ${bad.length ? `<span class="rules">${bad.map((r) => `<span class="rtag st-${r.status}">${esc(r.rule_id)}</span>`).join('')}${fromDrawing() && bad.some((r) => unconfirmedInputs(r).length) ? '<span class="rtag pre" title="Rests on a value from the drawing that no one has confirmed yet">pre-check</span>' : ''}</span>` : ''}
     </div>`;
   }).join('') + (items.length > shown.length ? `<button class="more" id="moreBtn">Show ${Math.min(LIST_PAGE, items.length - shown.length)} more (${(items.length - shown.length).toLocaleString('en')} hidden)</button>` : '');
   if (!items.length) $('#list').innerHTML = '<p class="muted">No element matches the filters.</p>';
@@ -1175,6 +1223,7 @@ function renderResults(id) {
         ${r.same_requirement_as?.length ? `<span class="tag grey" title="Same limit on the same value from another instrument: one requirement, two sources">same requirement as ${esc(r.same_requirement_as.join(', '))}</span>` : ''}
         ${r.reference_url ? `<a class="tag grey" href="${esc(r.reference_url)}" target="_blank" rel="noopener">official source ↗</a>` : ''}
       </div>
+      ${inputConfirmHTML(r)}
       ${r.status !== 'compliant' ? `<div class="ai-row"><button class="tiny ai-btn explainBtn" data-rule="${esc(r.rule_id)}" title="Plain-language explanation, exceptions to check and ways to resolve it (AI)">✦ Explain</button></div><div class="ai-out" data-explain="${esc(r.rule_id)}">${explainHTML(id, r)}</div>` : ''}
       ${r.status !== 'compliant' ? dispositionHTML(id, r) : ''}
       </div>`).join('') || '<p class="muted">No rule in the current rule set applies to this element.</p>';
@@ -1211,6 +1260,7 @@ function renderResults(id) {
   document.querySelectorAll('#dResults .ruleLink').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); showRule(a.dataset.rule); }));
   wireDispositions($('#dResults'));
   wireManualChecks($('#dResults'));
+  wireInputConfirmations($('#dResults'));
   document.querySelectorAll('#dResults .explainBtn').forEach((b) => (b.onclick = () => explainFinding(id, b.dataset.rule)));
 }
 
@@ -1289,7 +1339,8 @@ function applyEdit(id, key, value, unit) {
   const before = display(pristineEl?.props?.[key], S.norm.units);
   el.props = el.props || {};
   const opts = el.props[key]?.options;
-  el.props[key] = { value, ...(unit ? { unit } : {}), ...(opts ? { options: opts } : {}), source: EDIT_SOURCE };
+  // basis what-if: on a model from a drawing a typed what-if is neither measured from the drawing nor a confirmed value.
+  el.props[key] = { value, ...(unit ? { unit } : {}), ...(opts ? { options: opts } : {}), source: EDIT_SOURCE, ...(el.basis != null ? { basis: 'what-if' } : {}) };
   S.edits.set(`${id}.${key}`, { id, key, before, after: unit ? `${value} ${unit}` : Array.isArray(value) ? value.join(', ') : String(value) });
   recheck([id]);
   const row = $('#dEditor').querySelector(`[data-key="${CSS.escape(key)}"]`)?.closest('tr');

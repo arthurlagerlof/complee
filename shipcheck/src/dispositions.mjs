@@ -3,7 +3,8 @@
 // result: the status column always comes from the deterministic checker.
 //
 // store: { "<element>|<rule>": { disposition, responsible, note, updated, measured, status } }
-// Manual checks share the store: { kind: 'manual', done, responsible, note, updated } under the same key form.
+// Manual checks share the store: { kind: 'manual', done, responsible, note, updated } under the same key form,
+// and so do confirmed values from a drawing: { kind: 'input', ... } under "<element>|input:<prop>" (input-confirmations.mjs).
 import { findingsOf, manualChecksOf } from './checker.mjs';
 import { csvCell } from './csv.mjs';
 
@@ -71,7 +72,7 @@ export function registerRows(results, store = {}) {
     });
   }
   for (const [key, d] of Object.entries(store)) {
-    if (seen.has(key) || !d || typeof d !== 'object' || d.kind === 'manual') continue;
+    if (seen.has(key) || !d || typeof d !== 'object' || d.kind === 'manual' || d.kind === 'input') continue; // input: a confirmed drawing value (input-confirmations.mjs)
     const [element, rule_id] = splitKey(key);
     const e = results.elements?.[element];
     const nowCompliant = !!e?.results?.some((r) => r.rule_id === rule_id && r.status === 'compliant');

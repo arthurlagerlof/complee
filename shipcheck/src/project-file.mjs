@@ -19,6 +19,13 @@ const KEY = /^.+\|[^|]+$/;
 function cleanEntry(key, d) {
   if (!KEY.test(key) || !isObj(d) || ['__proto__', 'constructor', 'prototype'].includes(key)) return null;
   const base = { responsible: text(d.responsible, 80), note: text(d.note, 600), updated: text(d.updated, 40), revision: text(d.revision, 200), name: text(d.name, 300), deck: text(d.deck, 80) };
+  if (d.kind === 'input') {
+    // A confirmed value from a drawing: only with the name of who checked it, and only for a plain value (the value is
+    // compared with the model's value when the project is opened).
+    const plain = (v) => ['string', 'number', 'boolean'].includes(typeof v) || (Array.isArray(v) && v.length <= 50 && v.every((x) => ['string', 'number'].includes(typeof x)));
+    if (!base.responsible.trim() || !plain(d.value) || typeof d.prop !== 'string' || typeof d.element !== 'string') return null;
+    return { ...base, kind: 'input', element: text(d.element, 200), prop: text(d.prop, 100), value: d.value, unit: typeof d.unit === 'string' ? d.unit.slice(0, 10) : null, basis_was: typeof d.basis_was === 'string' ? d.basis_was.slice(0, 20) : null };
+  }
   if (d.kind === 'manual') {
     return { ...base, kind: 'manual', done: d.done === true && !!base.responsible.trim(), ...(typeof d.fingerprint === 'string' ? { fingerprint: d.fingerprint.slice(0, 40) } : {}) };
   }

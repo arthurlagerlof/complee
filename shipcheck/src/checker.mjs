@@ -1042,15 +1042,23 @@ export function elementFingerprint(el) {
 // confirmed. Every input of a result names its basis, so a result resting on such a value shows as a pre-check:
 // pass or finding, it holds only once the value is confirmed. Inputs without a basis (design model data) stay as they are.
 const UNCONFIRMED_BASIS = new Set(['measured', 'read', 'assumed']);
-function inputBasis(input, el, model) {
-  if (input.basis) return input.basis;
-  const ship = /^ship\.(.+)$/.exec(input.name ?? '');
-  if (ship) return model.ship?.[ship[1]]?.basis ?? null;
-  const p = prop(el, input.name, model);
-  return p ? p.basis ?? null : el.basis ?? null; // computed from the geometry: the element's own basis
+// An input that is a stored value (an element property or a ship particular) also names where it is stored
+// (value_of: { element, prop }), so a person can confirm it (src/input-confirmations.mjs); a value computed from the
+// geometry has no such place and is confirmed by checking the drawing itself.
+function withBasis(inputs, el, model) {
+  return inputs.map((i) => {
+    const ship = /^ship\.(.+)$/.exec(i.name ?? '');
+    const raw = ship ? model.ship?.[ship[1]] : el.props?.[i.name];
+    const basis = i.basis ?? (ship ? raw?.basis : raw != null ? raw.basis ?? el.basis : el.basis) ?? null;
+    if (!basis || i.basis) return i;
+    const out = { ...i, basis };
+    if (raw != null && (UNCONFIRMED_BASIS.has(basis) || basis === 'confirmed')) out.value_of = { element: ship ? '(ship)' : el.id, prop: ship ? ship[1] : i.name };
+    if (basis === 'confirmed') { out.confirmed_by = raw.confirmed_by ?? ''; out.confirmed_at = raw.confirmed_at ?? ''; }
+    return out;
+  });
 }
-const withBasis = (inputs, el, model) => inputs.map((i) => { const b = inputBasis(i, el, model); return b && !i.basis ? { ...i, basis: b } : i; });
 export const unconfirmedInputs = (r) => (r?.inputs || []).filter((i) => UNCONFIRMED_BASIS.has(i.basis));
+export const confirmedInputs = (r) => (r?.inputs || []).filter((i) => i.basis === 'confirmed');
 
 function checkElement(el, rules, ctx) {
   const { model } = ctx;
