@@ -9,12 +9,12 @@ const M = 0.001;
 const EXPLODE_GAP_M = 5;
 
 export function createViewer(container, { onPick } = {}) {
-  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setClearColor(0x000000, 0);
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xf3f5f8);
   scene.add(new THREE.HemisphereLight(0xffffff, 0x8899aa, 1.15));
   const sun = new THREE.DirectionalLight(0xffffff, 1.1);
   sun.position.set(30, 60, 40);

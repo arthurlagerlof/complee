@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +16,19 @@ class Settings(BaseSettings):
 
     app_env: str = "development"
     debug: bool = False
+
+    @field_validator("debug", mode="before")
+    @classmethod
+    def _parse_debug(cls, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on", "debug", "dev", "development"}:
+                return True
+            if normalized in {"0", "false", "no", "off", "release", "prod", "production", ""}:
+                return False
+        return bool(value)
     database_url: str | None = None
     frontend_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     embedding_model: str = "BAAI/bge-m3"
@@ -37,6 +50,21 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     gemini_model: str | None = None
+    shipcheck_root: str | None = None
+    model_dir: str = "model"
+    model_source: str | None = None
+    model_base_url: str | None = None
+    model_manifest: str | None = None
+    model_cache_dir: str | None = None
+    vultr_s3_endpoint: str | None = None
+    vultr_s3_bucket: str | None = None
+    vultr_s3_access_key: str | None = None
+    vultr_s3_secret_key: str | None = None
+    vultr_s3_region: str = "us-east-1"
+    vultr_s3_prefix: str = ""
+    aps_client_id: str | None = None
+    aps_client_secret: str | None = None
+    evidence_provider: str = "sinceai"
 
     @property
     def allowed_origins(self) -> list[str]:

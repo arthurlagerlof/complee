@@ -254,11 +254,14 @@ function FindingsWorkspace({ onBack }: { onBack: () => void }) {
   const shown = findings.filter((f) => !filter || f.finding_type === filter)
   const summary = completeness?.summary
   const stages = run?.stages || {}
+  const gapCount = findings.filter((f) => f.finding_type === 'potential_gap').length
+  const missingCount = findings.filter((f) => f.finding_type === 'missing_information').length
+  const pendingCount = findings.filter((f) => f.review_status === 'pending').length
 
   return <div className="evidence-app">
     <header className="evidence-header"><a className="brand" href="#top" onClick={back} aria-label="Complee home"><span className="brand-mark"><Ship size={17} strokeWidth={1.8} /></span>Complee</a><a className="evidence-return-link" href="#top" onClick={back}><ArrowLeft size={14} />Back to main page</a><nav className="evidence-steps" aria-label="Review workflow"><a href="#evidence"><span>01</span>Upload</a><i /><a href={SHIPCHECK_REVIEW_URL}><span>02</span>Review design</a><i /><b><span>03</span>Manage findings</b></nav><span className="evidence-local"><i />ENGINEER REVIEW</span></header>
     <main className="evidence-workspace findings-workspace">
-      <div className="evidence-title"><div><span className="evidence-kicker">VESSEL DESIGN REVIEW / STEP 03</span><h1>Manage findings</h1><p>Approved design data is assessed automatically: structured checks, regulatory retrieval, AI interpretation and two separate scores per requirement. Every finding stays open until an engineer reviews it; nothing here declares compliance.</p></div>
+      <div className="evidence-title"><div><span className="evidence-kicker">VESSEL DESIGN REVIEW / STEP 03</span><h1>Manage findings</h1><p>Structured checks, regulatory matches, and scoring—all findings remain open for engineer sign-off.</p></div>
         <a className="findings-model-link" href={SHIPCHECK_REVIEW_URL}><Box size={15} />Open the reference model</a></div>
 
       <section className="evidence-file-card">
@@ -325,7 +328,7 @@ function FindingsWorkspace({ onBack }: { onBack: () => void }) {
             <button type="button" onClick={() => void search()} disabled={!query || !!busy}><Search size={12} /> Search</button>
           </div>
           {provisions.map((p) => <label key={p.id} className="findings-provision-option"><input type="checkbox" checked={selected.includes(p.id)} onChange={(e) => setSelected((s) => e.target.checked ? [...s, p.id].slice(0, 10) : s.filter((id) => id !== p.id))} /><b>{p.document_code} {p.clause_reference}</b><span>{p.text.slice(0, 220)}{p.text.length > 220 ? '…' : ''}</span></label>)}
-          <p className="evidence-extraction-note">Measurable checks use the calculation modules, never the AI. AI interpretation is used for language and evidence; a threshold it reports is calculated only when quoted verbatim from the provision. Runs stay provisional until finalized, so more sources can be added.</p>
+          <details className="findings-methodology"><summary>Assessment methodology &amp; guardrails</summary><p className="evidence-extraction-note">Measurable checks use the calculation modules, never the AI. AI interpretation is used for language and evidence; a threshold it reports is calculated only when quoted verbatim from the provision. Runs stay provisional until finalized, so more sources can be added.</p></details>
         </section>
 
         <section className="evidence-file-card">
@@ -339,6 +342,14 @@ function FindingsWorkspace({ onBack }: { onBack: () => void }) {
                 {Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
             </div></div>
+          {findings.length > 0 && (
+            <div className="findings-kpi-strip" role="group" aria-label="Triage summary">
+              <button type="button" className={`findings-kpi${filter === '' ? ' is-active' : ''}`} onClick={() => setFilter('')}><span>TOTAL</span><b>{findings.length}</b></button>
+              <button type="button" className={`findings-kpi is-gap${filter === 'potential_gap' ? ' is-active' : ''}`} onClick={() => setFilter(filter === 'potential_gap' ? '' : 'potential_gap')}><span>POTENTIAL GAPS</span><b>{gapCount}</b></button>
+              <button type="button" className={`findings-kpi is-missing${filter === 'missing_information' ? ' is-active' : ''}`} onClick={() => setFilter(filter === 'missing_information' ? '' : 'missing_information')}><span>MISSING INFO</span><b>{missingCount}</b></button>
+              <div className="findings-kpi"><span>PENDING SIGN-OFF</span><b>{pendingCount}</b></div>
+            </div>
+          )}
           {!shown.length ? <div className="evidence-empty"><CircleAlert size={16} />{run ? 'No findings in this run.' : 'No assessment yet. Import approved candidates (the run starts automatically) or press Run assessment.'}</div>
             : <table className="findings-table findings-matrix"><thead><tr><th>Provision</th><th>Components</th><th>Method</th><th>Status</th><th>Rule ambiguity</th><th>Compliance likelihood</th><th>Change</th><th>Review</th></tr></thead><tbody>
               {shown.map((f) => {
@@ -362,7 +373,7 @@ function FindingsWorkspace({ onBack }: { onBack: () => void }) {
                 </Fragment>
               })}
             </tbody></table>}
-          <p className="evidence-extraction-note">Rule ambiguity (0–100) rates how clear the provision and its applicability are. Estimated compliance likelihood is a heuristic estimate, not a calibrated probability; it is given only when a calculation actually ran, otherwise “not estimable” with the information needed.</p>
+          <details className="findings-methodology"><summary>Scoring definitions</summary><p className="evidence-extraction-note">Rule ambiguity (0–100) rates how clear the provision and its applicability are. Estimated compliance likelihood is a heuristic estimate, not a calibrated probability; it is given only when a calculation actually ran, otherwise “not estimable” with the information needed.</p></details>
         </section>
       </>}
       {viewer && <UploadedModelViewer {...viewer} onClose={() => setViewer(null)} />}

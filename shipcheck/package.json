@@ -8,7 +8,6 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node server.mjs",
     "test": "node --test --test-concurrency=1",
     "check": "node scripts/check.mjs",
     "prepare-model": "node scripts/prepare-model.mjs",

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, CircleAlert, LoaderCircle, RefreshCw, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, CircleAlert, LoaderCircle, RefreshCw, Ship } from 'lucide-react'
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -66,13 +66,16 @@ function AiWorkspace({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <main className="ai-workspace">
-      <header className="ai-topbar">
-        <button type="button" className="ai-back" onClick={onBack}><ArrowLeft size={16} /> Back to Complee</button>
-        <a className="brand" href="#ai-settings"><span className="brand-mark"><ShieldCheck size={16} /></span>Complee <span className="ai-topbar-label">AI PROVIDERS</span></a>
-        <span className="ai-local-label">Backend environment managed</span>
+    <main className="evidence-app ai-workspace">
+      <header className="evidence-header">
+        <a className="brand" href="#top" onClick={(e) => { e.preventDefault(); onBack() }} aria-label="Complee home">
+          <span className="brand-mark"><Ship size={17} strokeWidth={1.8} /></span>
+          Complee
+        </a>
+        <button type="button" className="evidence-return-link ai-back-btn" onClick={onBack}><ArrowLeft size={14} />Back to main page</button>
+        <span className="evidence-local" style={{ marginLeft: 'auto' }}><i />AI PROVIDERS</span>
       </header>
-      <div className="ai-content">
+      <div className="ai-content" style={{ paddingTop: '96px' }}>
         <div className="ai-heading">
           <div>
             <span className="section-kicker">SETTINGS</span>

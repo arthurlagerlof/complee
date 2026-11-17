@@ -3,21 +3,30 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Complee - add evidence</title>
+<meta name="theme-color" content="#102b45" />
+<title>Complee — Upload Design Files</title>
 <link rel="icon" href="data:," />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body class="evidence-page">
-<header class="top evidence-top">
-  <a class="brand" href="evidence.html"><b>Complee</b><span>class &amp; regulatory compliance</span></a>
-  <nav class="workflow-steps" aria-label="Review workflow"><b><span>1</span> Add evidence</b><i></i><a href="index.html?scenario=rcrv-3d"><span>2</span> Review design</a><i></i><a href="index.html?scenario=rcrv-3d#manage"><span>3</span> Manage findings</a></nav>
+<header class="evidence-header">
+  <a class="brand" href="/landing" aria-label="Complee home">
+    <span class="brand-mark" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10.189V14"/><path d="M12 2v3"/><path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6"/><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-8.188-3.639a2 2 0 0 0-1.624 0L3 14a11.6 11.6 0 0 0 2.81 7.76"/><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1s1.2 1 2.5 1c2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/></svg></span>
+    Complee
+  </a>
+  <a class="evidence-return-link" href="/landing"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>Back to main page</a>
+  <nav class="evidence-steps" aria-label="Review workflow"><b><span>01</span>Upload</b><i></i><a href="index.html?scenario=rcrv-3d"><span>02</span>Review design</a><i></i><a href="/landing#findings"><span>03</span>Manage findings</a></nav>
+  <span class="evidence-local"><i></i>LOCAL WORKSPACE</span>
 </header>
 <main class="evidence-main">
-  <div class="evidence-heading"><div><div class="eyebrow">DESIGN REVIEW / EVIDENCE INTAKE</div><h1>Add vessel design evidence</h1><p class="muted">Start with the documents, drawings, and model for your vessel. Review the design in Complee next.</p></div><div class="evidence-vessel-pill"><span class="status-dot"></span> OSU Regional Class Research Vessel</div></div>
+  <div class="evidence-heading"><div><div class="eyebrow">VESSEL DESIGN REVIEW / STEP 01</div><h1>Upload design files</h1><p class="muted">Upload drawings, specifications, and 3D models to prepare the OSU RCRV review.</p></div><div class="evidence-vessel-pill"><span class="status-dot"></span> OSU Regional Class Research Vessel</div></div>
   <div class="evidence-grid">
     <section class="evidence-primary">
-      <label id="evidenceDrop" class="evidence-drop" for="evidenceFiles" tabindex="0"><span class="evidence-upload-icon">↑</span><strong>Drop evidence files here</strong><span class="muted">or <span class="upload-link">browse files</span> from your computer</span><small>Documents · drawings · 3D models</small><input id="evidenceFiles" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.dwg,.dxf,.ifc,.step,.stp,.iges,.igs,.nwd,.nwc,.rvt,.3dm,.obj,.stl"></label>
-      <section class="evidence-card"><div class="evidence-card-head"><div><h2>Selected evidence</h2><span class="muted" id="evidenceCount">No files selected</span></div><button id="clearEvidence" disabled>Clear all</button></div><div id="evidenceFilesList"><div class="evidence-empty">Your selected documents, drawings, and models will appear here.</div></div></section>
+      <label id="evidenceDrop" class="evidence-drop" for="evidenceFiles" tabindex="0"><span class="evidence-upload-icon">↑</span><strong>Drop design files here</strong><span class="muted">or <span class="upload-link">browse files</span> from your computer</span><small>Documents · drawings · 3D models</small><input id="evidenceFiles" type="file" multiple accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.dwg,.dxf,.ifc,.step,.stp,.iges,.igs,.nwd,.nwc,.rvt,.3dm,.obj,.stl"></label>
+      <section class="evidence-card"><div class="evidence-card-head"><div><h2>Selected design files</h2><span class="muted" id="evidenceCount">No files selected</span></div><button id="clearEvidence" disabled>Clear all</button></div><div id="evidenceFilesList"><div class="evidence-empty">Your selected documents, drawings, and models will appear here.</div></div></section>
       <section id="documentReview" class="evidence-card review-card" hidden><div class="eyebrow">DOCUMENT REVIEW</div><div id="documentReviewContent"></div></section>
     </section>
     <aside class="evidence-side">

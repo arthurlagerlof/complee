@@ -59,10 +59,10 @@ export async function createLocalViewer(container, { onPick, onPickRest, base = 
   labelEl.hidden = true;
   container.appendChild(labelEl);
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+  const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   renderer.localClippingEnabled = true;
-  renderer.setClearColor(0xeef1f5);
+  renderer.setClearColor(0x000000, 0);
   host.appendChild(renderer.domElement);
   const scene = new THREE.Scene();
   // Bright, even lighting so the status colours read like in the APS viewer.

@@ -103,6 +103,7 @@ function App() {
   }
   const backToMain = () => {
     window.history.pushState(null, '', '#top')
+    setShowFindings(false)
     setShowAi(false)
     setShowConcept(true)
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -261,7 +262,7 @@ function App() {
             </div>
             <div className="inspection-workspace" data-reveal>
               <div className="inspection-vessel">
-              <div className="workspace-bar"><span><span className="live-dot" /> R/V TAANI · DESIGN VIEW</span><span>{evidenceCount ? `${evidenceCount} EVIDENCE FILES · ` : ''}PRELOADED MODEL · ILLUSTRATIVE DEMO</span></div>
+              <div className="workspace-bar"><span><span className="live-dot" /> R/V TAANI · DESIGN VIEW</span><span>{evidenceCount ? `${evidenceCount} DESIGN FILES · ` : ''}PRELOADED MODEL · ILLUSTRATIVE DEMO</span></div>
                 <VesselViewer
                   className="inspection-viewer"
                   selectedPointId={selectedId}
@@ -276,7 +277,7 @@ function App() {
                 <div className={`assessment-badge ${selectedPoint.statusTone}`}>{selectedPoint.status}</div>
                 <div className="inspection-detail"><span>DESIGN OBSERVATION</span><p>{selectedPoint.observation}</p></div>
                 <div className="inspection-detail"><span>REGULATORY CONSIDERATION</span><p>{selectedPoint.regulatoryConsideration}</p></div>
-                <div className="evidence-row"><FileText size={15} /><span><small>AVAILABLE EVIDENCE</small>{selectedPoint.evidence}</span></div>
+                <div className="evidence-row"><FileText size={15} /><span><small>SUPPORTING EVIDENCE</small>{selectedPoint.evidence}</span></div>
                 <div className="engineer-action"><span>Suggested engineer action</span><p>{selectedPoint.action}</p></div>
                 <div className="point-selector" role="group" aria-label="Choose an illustrative inspection point">
                   {inspectionPoints.map((point) => (

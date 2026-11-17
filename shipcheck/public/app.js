@@ -1,7 +1,7 @@
 // ShipCheck UI. The pass/fail decision always comes from the shared deterministic checker
 // (src/checker.mjs), which runs right here in the browser so edits re-check instantly.
 import { checkModel, normalizeModel, findingsOf, readValue, UNIT_TO_MM, STATUS_RANK } from './src/checker.mjs';
-import { scoreResults, scoreLine, badgeText } from './src/score.mjs';
+import { scoreResults, scoreLine } from './src/score.mjs';
 import { partsToModel } from './src/parts-model.mjs';
 import { reportRows, toCSV, toHTML } from './src/report.mjs';
 import { traceMatrix, traceCSV, cellLabel } from './src/trace.mjs';
@@ -126,7 +126,6 @@ function useViewer(sc) {
   const stayLocal = want === 'local' && !$('#localView').hidden;
   views.local?.setActive?.(false, { keepTiles: stayLocal });
   $('#threeView').hidden = want !== 'three';
-  $('#apsView').hidden = true;
   if (!stayLocal) $('#localView').hidden = true;
   $('#fallbackView').hidden = true;
   $('#planBtn').hidden = want !== 'three';
@@ -272,8 +271,9 @@ async function loadScenario(id) {
     traceState = { findingsOnly: null, limit: TRACE_PAGE };
     closeTrace();
     listLimit = LIST_PAGE;
-    // Start at the full overview; filtering by status hides the rest geometry.
+    // Start at the full ship overview (non-compliant & missing-info items still sort to the top of #list).
     S.filter.status = new Set(['non_compliant', 'not_enough_info', 'compliant', 'null']);
+    restoreEdits();
     // Ground-truth score is computed on the unedited design with the core rule set only.
     S.baseline = precomputed ? precomputed.score : expected ? scoreResults(checkModel(S.pristine, S.coreRules), expected) : null;
     if (S.baseline && !S.baseline.line) S.baseline.line = scoreLine(S.baseline);
@@ -354,21 +354,24 @@ function renderShip() {
   $('#ship').innerHTML = `
     <h1>${esc(S.model.name)}</h1>
     <div class="muted">${S.model.kind === 'parts'
-      ? `${S.norm.elements.length.toLocaleString('en')} parts checked${S.model.counts ? ` (of ${S.model.counts.kept.toLocaleString('en')} prepared from ${S.model.counts.objects.toLocaleString('en')} model objects)` : ''} · ${S.norm.decks.length} SWBS / system groups · source unit inch, shown in mm`
-      : `${S.norm.decks.length} deck${S.norm.decks.length > 1 ? 's' : ''} · ${S.norm.elements.length} elements · model units ${esc(S.norm.units)} · schema ${esc(S.norm.schema)}`}</div>
-    <table class="kv" style="margin-top:6px">
-      ${row('Ship type', 'type', (v) => v.value)}
-      ${row('Operating area', 'operating_area', list)}
-      ${row('Length overall', 'length_overall', len)}
-      ${row('Beam', 'beam', len)}
-      ${row('Draft', 'draft', len)}
-      ${row('Berths', 'berths', (v) => v.value)}
-      ${row('Gross tonnage', 'gross_tonnage', (v) => v.value)}
-      ${row('Class society', 'class_society', (v) => v.value)}
-      ${sh.propulsion ? row('Propulsion', 'propulsion', (v) => v.value) : ''}
-    </table>
-    ${S.model.provenance_note ? `<div class="note">${esc(S.model.provenance_note)}</div>` : ''}
-    ${S.model.scope_note ? `<div class="note scope">${esc(S.model.scope_note)}</div>` : ''}`;
+      ? `${S.norm.elements.length.toLocaleString('en')} parts · ${S.norm.decks.length} SWBS groups`
+      : `${S.norm.decks.length} deck${S.norm.decks.length > 1 ? 's' : ''} · ${S.norm.elements.length} elements · ${esc(S.norm.units)}`}</div>
+    <details class="side-details">
+      <summary>Ship particulars &amp; scope</summary>
+      <table class="kv" style="margin-top:6px">
+        ${row('Ship type', 'type', (v) => v.value)}
+        ${row('Operating area', 'operating_area', list)}
+        ${row('Length overall', 'length_overall', len)}
+        ${row('Beam', 'beam', len)}
+        ${row('Draft', 'draft', len)}
+        ${row('Berths', 'berths', (v) => v.value)}
+        ${row('Gross tonnage', 'gross_tonnage', (v) => v.value)}
+        ${row('Class society', 'class_society', (v) => v.value)}
+        ${sh.propulsion ? row('Propulsion', 'propulsion', (v) => v.value) : ''}
+      </table>
+      ${S.model.provenance_note ? `<div class="note">${esc(S.model.provenance_note)}</div>` : ''}
+      ${S.model.scope_note ? `<div class="note scope">${esc(S.model.scope_note)}</div>` : ''}
+    </details>`;
 }
 
 // Draft rules are only mentioned where the model has elements they would apply to.
@@ -379,12 +382,6 @@ function relevantDrafts() {
 
 function renderScore() {
   const b = S.baseline;
-  const badge = $('#accBadge');
-  badge.hidden = !b;
-  if (b) {
-    badge.className = `accbadge ${b.pass ? '' : 'bad'}`;
-    badge.textContent = `${b.pass ? '✓' : '✗'} ${badgeText(b)}`;
-  }
   const verified = S.coreRules.filter((r) => r.verified).length;
   $('#score').innerHTML = (b ? `
     <div class="scorebox ${b.pass ? 'pass' : 'fail'}" id="scorebox" title="Computed on the unedited design using the active database catalog (also run by npm test)">
@@ -398,14 +395,13 @@ function renderScore() {
 }
 
 function renderSummary() {
-  const s = S.results.summary, e = S.results.element_summary;
+  const s = S.results.summary;
   $('#summary').innerHTML = `
     <div class="pills" id="pills">
       <div class="pill st-non_compliant">${s.non_compliant}<small>non-compliant</small></div>
       <div class="pill st-not_enough_info">${s.not_enough_info}<small>missing info</small></div>
       <div class="pill st-compliant">${s.compliant}<small>compliant</small></div>
-    </div>
-    <div class="muted">Rule checks per element. Elements: ${e.non_compliant} red, ${e.not_enough_info} amber, ${e.compliant} green, ${e.no_rule} without a rule. Checked in ${S.lastCheckMs.toFixed(1)} ms.</div>`;
+    </div>`;
 }
 
 function renderEdits() {
@@ -416,14 +412,21 @@ function renderEdits() {
       <button class="tiny resetOne" data-id="${esc(x.id)}" data-key="${esc(x.key)}" title="Back to the model value">reset</button></div>`).join('') +
     `<div class="row" style="display:flex;gap:6px;margin-top:6px"><button id="resetEdits">Reset all</button><button id="exportModel">Export edited model</button></div>`;
   box.querySelectorAll('.resetOne').forEach((b) => (b.onclick = () => resetEdit(b.dataset.id, b.dataset.key)));
-  $('#resetEdits').onclick = () => loadScenario(S.sc.id);
+  $('#resetEdits').onclick = () => { clearSavedEdits(S.sc?.id); loadScenario(S.sc.id); };
   $('#exportModel').onclick = () => download(`${S.sc.id}-edited.json`, JSON.stringify(S.model, null, 1), 'application/json');
 }
 
 function renderFilters() {
   const fams = [...new Set(allRules().map((r) => family(r.source)))].sort();
+  const es = S.results?.element_summary || {};
+  const counts = {
+    non_compliant: es.non_compliant ?? 0,
+    not_enough_info: es.not_enough_info ?? 0,
+    compliant: es.compliant ?? 0,
+    null: es.no_rule ?? 0,
+  };
   const chips = ['non_compliant', 'not_enough_info', 'compliant', 'null']
-    .map((st) => `<span class="chip ${S.filter.status.has(st) ? 'on' : ''}" data-st="${st}">${LABEL[st]}</span>`).join('');
+    .map((st) => `<span class="chip ${S.filter.status.has(st) ? 'on' : ''}" data-st="${st}">${LABEL[st]} (${counts[st].toLocaleString('en')})</span>`).join('');
   $('#filters').innerHTML = `<div class="chips">${chips}</div>
     <div class="filters-row">
       <select id="fFam"><option value="">All rule sources</option>${fams.map((f) => `<option ${S.filter.family === f ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>
@@ -602,6 +605,7 @@ function resetEdit(id, key) {
   const orig = S.pristine.elements.find((x) => x.id === id)?.props?.[key];
   if (orig === undefined) delete el.props[key]; else el.props[key] = structuredClone(orig);
   S.edits.delete(`${id}.${key}`);
+  saveEdits();
   recheck([id]);
   if (S.selected === id && !S.ruleView) renderEditor(id);
 }
@@ -632,8 +636,9 @@ function renderRules() {
   const box = $('#rulesBox');
   if (!box) return;
   const used = allRules().filter((r) => !r.draft).map((r) => ({ r, hits: ruleHits(r.id) })).filter((x) => x.hits.length);
-  box.innerHTML = `<h2>Rules (${used.length})</h2>` + used.map(({ r, hits }) => `<div class="ruleRow ${S.ruleView === r.id ? 'sel' : ''}" data-rule="${esc(r.id)}">
-      <b>${esc(r.id)}</b><span class="muted">${esc(countLine(hits))}</span></div>`).join('');
+  box.innerHTML = `<details class="side-details"><summary>Rules (${used.length})</summary><div class="rules-list">` +
+    used.map(({ r, hits }) => `<div class="ruleRow ${S.ruleView === r.id ? 'sel' : ''}" data-rule="${esc(r.id)}">
+      <b>${esc(r.id)}</b><span class="muted">${esc(countLine(hits))}</span></div>`).join('') + `</div></details>`;
   box.querySelectorAll('.ruleRow').forEach((n) => (n.onclick = () => showRule(n.dataset.rule)));
 }
 
@@ -680,19 +685,25 @@ function renderResults(id) {
   const cards = e.results.map((r) => `
     <div class="res st-${r.status}" data-rule="${esc(r.rule_id)}">
       <div class="head"><a href="#" class="ruleLink" data-rule="${esc(r.rule_id)}" title="Show every part this rule applies to">${esc(r.rule_id)}</a><span class="badge st-${r.status}">${LABEL[r.status]}</span></div>
-      <div class="muted">${esc(r.source)} - ${esc(r.clause)}</div>
-      <table class="kv" style="margin-top:4px"><tr><td>Measured</td><td>${esc(r.measured ?? 'missing')}</td></tr><tr><td>Required</td><td>${esc(r.required)}</td></tr></table>
-      <div class="expl">${esc(r.explanation)}</div>
-      ${r.inputs.length ? `<div class="inputs">Inputs: ${r.inputs.map((i) => `${esc(i.name)} = ${esc(i.value)}${prov(i.source)}`).join('; ')}</div>` : ''}
-      <blockquote>“${esc(r.rule_text)}”</blockquote>
-      <div class="tags">
-        ${r.verified ? '<span class="tag blue">Value verified</span>' : '<span class="tag">Rule value not yet verified against official text</span>'}
-        ${r.review_status ? `<span class="tag review" title="How the value is shown was reviewed; this is not a verification against the official text">${esc(r.review_status)}</span>` : ''}
-        <span class="tag grey">${r.text_status === 'verbatim' ? 'verbatim text' : 'paraphrased text'}</span>
-        ${r.basis !== 'explicit' ? `<span class="tag grey" title="${esc(ruleById(r.rule_id)?.basis_note || '')}">basis: ${esc(r.basis)}</span>` : ''}
-        ${r.reference_url ? `<a class="tag grey" href="${esc(r.reference_url)}" target="_blank" rel="noopener">official source ↗</a>` : ''}
+      <div class="muted">${esc(r.source)} · ${esc(r.clause)}</div>
+      <div class="kv-compare">
+        <div><span>MEASURED</span><b>${esc(r.measured ?? 'missing')}</b></div>
+        <div><span>REQUIRED</span><b>${esc(r.required)}</b></div>
       </div>
-      </div>`).join('') || '<p class="muted">No rule in the current rule set applies to this element.</p>';
+      <div class="expl">${esc(r.explanation)}</div>
+      <details class="rule-trace">
+        <summary>Quote, inputs &amp; trace</summary>
+        ${r.inputs.length ? `<div class="inputs">Inputs: ${r.inputs.map((i) => `${esc(i.name)} = ${esc(i.value)}${prov(i.source)}`).join('; ')}</div>` : ''}
+        <blockquote>“${esc(r.rule_text)}”</blockquote>
+        <div class="tags">
+          ${r.verified ? '<span class="tag blue">Value verified</span>' : '<span class="tag">Rule value not yet verified against official text</span>'}
+          ${r.review_status ? `<span class="tag review" title="How the value is shown was reviewed; this is not a verification against the official text">${esc(r.review_status)}</span>` : ''}
+          <span class="tag grey">${r.text_status === 'verbatim' ? 'verbatim text' : 'paraphrased text'}</span>
+          ${r.basis !== 'explicit' ? `<span class="tag grey" title="${esc(ruleById(r.rule_id)?.basis_note || '')}">basis: ${esc(r.basis)}</span>` : ''}
+          ${r.reference_url ? `<a class="tag grey" href="${esc(r.reference_url)}" target="_blank" rel="noopener">official source ↗</a>` : ''}
+        </div>
+      </details>
+    </div>`).join('') || '<p class="muted">No rule in the current rule set applies to this element.</p>';
 
   // "Also required": related rules not applied to this element, and where they are checked in the model.
   const applied = new Set(e.results.map((r) => r.rule_id));
@@ -714,9 +725,8 @@ function renderResults(id) {
 
   $('#dResults').innerHTML = `${gov}
     <h2>Rules applied (${e.results.length})</h2>${cards}
-    <h2 id="alsoHead">Also required (${related.length})</h2>
-    ${also || '<p class="muted">No related rules outside the ones applied above.</p>'}
-    ${na ? `<h2>Considered, not applicable (${e.not_applicable.length})</h2>${na}` : ''}`;
+    ${related.length ? `<details class="side-details" style="margin-top:10px"><summary id="alsoHead">Also required (${related.length})</summary>${also}</details>` : ''}
+    ${na ? `<details class="side-details" style="margin-top:8px"><summary>Considered, not applicable (${e.not_applicable.length})</summary>${na}</details>` : ''}`;
   document.querySelectorAll('#dResults .goto').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); select(a.dataset.id); }));
   document.querySelectorAll('#dResults .ruleLink').forEach((a) => (a.onclick = (ev) => { ev.preventDefault(); showRule(a.dataset.rule); }));
 }
@@ -782,6 +792,45 @@ function renderEditor(id) {
   }));
 }
 
+function editStorageKey(scenarioId) { return `complee.shipcheck.edits.${scenarioId}`; }
+function saveEdits() {
+  if (S.demo || !S.sc || S.precomputed) return;
+  try {
+    const entries = [...S.edits.values()].map((x) => {
+      const prop = elById(x.id)?.props?.[x.key];
+      return prop ? { id: x.id, key: x.key, value: prop.value, unit: prop.unit } : null;
+    }).filter(Boolean);
+    if (entries.length) localStorage.setItem(editStorageKey(S.sc.id), JSON.stringify(entries));
+    else localStorage.removeItem(editStorageKey(S.sc.id));
+  } catch { /* ignore storage quota/privacy errors */ }
+}
+function clearSavedEdits(scenarioId) {
+  if (!scenarioId) return;
+  try { localStorage.removeItem(editStorageKey(scenarioId)); } catch { /* ignore */ }
+}
+function restoreEdits() {
+  if (S.demo || !S.sc || S.precomputed) return;
+  try {
+    const raw = localStorage.getItem(editStorageKey(S.sc.id));
+    if (!raw) return;
+    for (const entry of JSON.parse(raw)) {
+      const el = elById(entry.id);
+      if (!el) continue;
+      const pristineEl = S.pristine.elements.find((x) => x.id === entry.id);
+      const before = display(pristineEl?.props?.[entry.key], S.norm.units);
+      el.props = el.props || {};
+      const opts = el.props[entry.key]?.options;
+      el.props[entry.key] = { value: entry.value, ...(entry.unit ? { unit: entry.unit } : {}), ...(opts ? { options: opts } : {}), source: EDIT_SOURCE };
+      S.edits.set(`${entry.id}.${entry.key}`, {
+        id: entry.id,
+        key: entry.key,
+        before,
+        after: entry.unit ? `${entry.value} ${entry.unit}` : Array.isArray(entry.value) ? entry.value.join(', ') : String(entry.value),
+      });
+    }
+  } catch { /* ignore malformed saved edits */ }
+}
+
 function applyEdit(id, key, value, unit) {
   if (S.precomputed) return;
   const el = elById(id);
@@ -791,6 +840,7 @@ function applyEdit(id, key, value, unit) {
   const opts = el.props[key]?.options;
   el.props[key] = { value, ...(unit ? { unit } : {}), ...(opts ? { options: opts } : {}), source: EDIT_SOURCE };
   S.edits.set(`${id}.${key}`, { id, key, before, after: unit ? `${value} ${unit}` : Array.isArray(value) ? value.join(', ') : String(value) });
+  saveEdits();
   recheck([id]);
   const row = $('#dEditor').querySelector(`[data-key="${CSS.escape(key)}"]`)?.closest('tr');
   if (row) {
@@ -1012,7 +1062,7 @@ async function runDemo() {
       const s = S.results.summary;
       caption(`${s.non_compliant} non-compliant · ${s.not_enough_info.toLocaleString('en')} not enough info · ${s.compliant.toLocaleString('en')} compliant`,
         S.baseline ? `Ground truth: ${S.baseline.line ?? scoreLine(S.baseline)}` : 'Deterministic checker: same input, same result');
-      pulse('#pills'); pulse('#scorebox'); pulse('#accBadge');
+      pulse('#pills'); pulse('#scorebox');
       await beat(3000);
 
       // 3. Fly to the first red part, with the rule quote.
@@ -1144,7 +1194,7 @@ async function runDemo() {
     document.body.classList.remove('demo-running');
     S.demo = null;
     caption('');
-    $('#demoBtn').innerHTML = '&#9654; Demo run-through';
+    $('#demoBtn').innerHTML = '&#9654; Demo';
   }
 }
 // ---------- wiring ----------
@@ -1192,6 +1242,24 @@ $('#fullBtn').onclick = () => {
   $('#simpleBtn').classList.toggle('on', !!viewer.simple);
   $('#cutSel').value = ''; // the viewer drops the deck cut on this switch; keep the selector in step
 };
+function stepIssue(delta) {
+  if (!S.results) return;
+  const deckOrder = Object.fromEntries(S.norm.decks.map((d, i) => [d.id, i]));
+  const issues = Object.values(S.results.elements)
+    .filter((e) => e.worst === 'non_compliant' || e.worst === 'not_enough_info')
+    .sort((a, b) => ORDER[a.worst] - ORDER[b.worst] || deckOrder[a.deck] - deckOrder[b.deck]);
+  if (!issues.length) return;
+  const idx = issues.findIndex((e) => e.id === S.selected);
+  const next = idx === -1 ? (delta > 0 ? 0 : issues.length - 1) : (idx + delta + issues.length) % issues.length;
+  select(issues[next].id, { fly: true });
+}
+$('#prevIssueBtn').onclick = () => stepIssue(-1);
+$('#nextIssueBtn').onclick = () => stepIssue(1);
+window.addEventListener('keydown', (e) => {
+  if (e.metaKey || e.ctrlKey || e.altKey || /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName || '')) return;
+  if (e.key === 'n' || e.key === 'N') stepIssue(1);
+  if (e.key === 'p' || e.key === 'P') stepIssue(-1);
+});
 $('#planBtn').onclick = () => { viewer.setPlan(!viewer.plan); $('#planBtn').classList.toggle('on', viewer.plan); };
 
 window.__shipcheck = S; // for debugging in the console

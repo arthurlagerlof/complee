@@ -3,8 +3,12 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Complee - compliance viewer</title>
+<meta name="theme-color" content="#102b45" />
+<title>Complee — Compliance Viewer</title>
 <link rel="icon" href="data:," />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
 <script type="importmap">
   { "imports": {
@@ -27,22 +31,31 @@
     <p id="loadingDetail" class="loading-detail"></p>
   </div>
 </div>
-<header class="top">
-  <div class="brand"><b>Complee</b><span>class &amp; regulatory compliance</span></div>
-  <nav class="workflow-steps" aria-label="Review workflow"><a href="evidence.html"><span>1</span> Add evidence</a><i></i><b><span>2</span> Review design</b><i></i><a href="index.html?scenario=rcrv-3d#manage"><span>3</span> Manage findings</a></nav>
+<header class="evidence-header">
+  <a class="brand" href="/landing" aria-label="Complee home">
+    <span class="brand-mark" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 10.189V14"/><path d="M12 2v3"/><path d="M19 13V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v6"/><path d="M19.38 20A11.6 11.6 0 0 0 21 14l-8.188-3.639a2 2 0 0 0-1.624 0L3 14a11.6 11.6 0 0 0 2.81 7.76"/><path d="M2 21c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1s1.2 1 2.5 1c2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/></svg></span>
+    Complee
+  </a>
+  <a class="evidence-return-link" href="/landing"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>Back to main page</a>
+  <nav class="evidence-steps" aria-label="Review workflow"><a href="/landing#evidence"><span>01</span>Upload</a><i></i><b><span>02</span>Review design</b><i></i><a href="/landing#findings"><span>03</span>Manage findings</a></nav>
+  <span class="evidence-local"><i></i>3D INSPECTION</span>
+</header>
+<div class="top viewer-toolbar">
   <label>Scenario <select id="scenario"></select></label>
   <label>Decks <select id="deck"></select></label>
   <button id="planBtn" title="Top-down plan view">Plan view</button>
   <button id="simpleBtn" hidden title="Show only the shell, the decks and the checked parts">Simple view</button>
   <button id="fullBtn" hidden title="Show the complete exterior overview and request nearby full-detail parts as you zoom">Full model</button>
   <select id="cutSel" hidden title="Cut above a deck and look at it in plan view"><option value="">No deck cut</option></select>
-  <span id="accBadge" class="accbadge" hidden title="Ground truth of the unedited design: the same files and scoring as npm test"></span>
-  <span class="grow"></span>
-  <button id="demoBtn" class="primary" title="Scripted run-through (Esc to stop)">&#9654; Demo run-through</button>
-  <button id="traceBtn" title="Parts × rules table; click a cell to jump to the part">Traceability</button>
-  <button id="reportBtn" title="Printable findings report">Report</button>
-  <button id="csvBtn" title="Download findings as CSV">CSV</button>
-</header>
+  <div class="toolbar-actions">
+    <button id="prevIssueBtn" title="Focus previous issue (P)">&#8592; Prev issue</button>
+    <button id="nextIssueBtn" class="primary" title="Focus next issue (N)">Next issue &#8594;</button>
+    <button id="demoBtn" title="Scripted run-through (Esc to stop)">&#9654; Demo</button>
+    <button id="traceBtn" title="Parts × rules table; click a cell to jump to the part">Traceability</button>
+    <button id="reportBtn" title="Printable findings report">Report</button>
+    <button id="csvBtn" title="Download findings as CSV">CSV</button>
+  </div>
+</div>
 <main>
   <aside id="side">
     <section id="ship"></section>
@@ -55,16 +68,9 @@
       <div id="filters"></div>
       <div id="list"></div>
     </section>
-    <section class="legend">
-      <span><i class="dot st-compliant"></i>Compliant</span>
-      <span><i class="dot st-non_compliant"></i>Non-compliant</span>
-      <span><i class="dot st-not_enough_info"></i>Not enough info</span>
-      <span><i class="dot st-none"></i>No rule</span>
-    </section>
   </aside>
   <section id="view">
     <div id="threeView" class="viewpane"></div>
-    <div id="apsView" class="viewpane" hidden></div>
     <div id="localView" class="viewpane" hidden></div>
     <div id="fallbackView" class="viewpane" hidden></div>
     <div id="tracePanel" class="viewpane" hidden></div>
