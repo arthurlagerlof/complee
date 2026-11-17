@@ -50,3 +50,6 @@ catalog/ships/rcrv/results-3d.json
 
 # Synthetic GA test drawings (tools/drawing/synthetic-ga.mjs)
 tools/drawing/out/
+
+# Demo drawing for the run-through (third-party GA, internal use only): local, never committed
+demo/*.pdf

@@ -232,14 +232,15 @@ test('inside the real ship: corridor scene in the cut-open deckhouse, component 
 test('presenter mode: the demo waits for → / Space at every step, Esc stops it', { timeout: 300000 }, () => withPage(async (page) => {
   await page.goto(`${BASE}?scenario=rcrv-3d&demo&present`);
   await committed(page, 'rcrv-3d');
-  const cap = () => page.evaluate(() => { const c = document.querySelector('#caption'); return c.hidden ? '' : c.innerText.split('\n')[0]; });
-  await page.waitForFunction(() => /OSU RCRV/.test(document.querySelector('#caption').innerText), null, { timeout: 180000 });
+  // The caption's first line is the chapter ("1 / 12 · Design review"), the second the text of the step.
+  const cap = () => page.evaluate(() => { const c = document.querySelector('#caption'); return c.hidden ? '' : c.innerText.split('\n').slice(0, 2).join(' | '); });
+  await page.waitForFunction(() => /1 \/ 12/.test(document.querySelector('#caption').innerText), null, { timeout: 180000 });
   assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector('#localView .aps-status')).display), 'none', 'no technical badge during the demo');
   const first = await cap();
   await page.waitForTimeout(6000);
   assert.equal(await cap(), first, 'stays on the step until the presenter moves on');
   await page.keyboard.press('ArrowRight');
-  await page.waitForFunction((c) => { const t = document.querySelector('#caption'); return !t.hidden && t.innerText.split('\n')[0] !== c; }, first, { timeout: 15000 });
+  await page.waitForFunction((c) => { const t = document.querySelector('#caption'); return !t.hidden && t.innerText.split('\n').slice(0, 2).join(' | ') !== c; }, first, { timeout: 15000 });
   assert.match(await page.locator('#caption').innerText(), /Space \/ → next/);
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !window.__shipcheck.demo, null, { timeout: 15000 });

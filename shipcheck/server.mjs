@@ -329,6 +329,7 @@ const TYPES = {
   '.glb': 'model/gltf-binary', '.dxf': 'application/dxf', '.gltf': 'model/gltf+json', '.wasm': 'application/wasm',
   '.pfb': 'application/octet-stream', '.ttf': 'font/ttf', // pdf.js standard fonts (drawing import)
   '.gz': 'application/octet-stream', // OCR language data, unpacked by the engine itself
+  '.pdf': 'application/pdf', // the local demo drawing (demo/aurora-ga.pdf, not in Git)
 };
 // URL prefix -> folder on disk. Anything else is 404.
 const STATIC = [

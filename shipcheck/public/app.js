@@ -2338,13 +2338,14 @@ function exportReport() {
   if (w) { w.document.write(html); w.document.close(); } else download(`report-${S.sc.id}.html`, html, 'text/html');
 }
 
-// ---------- demo run-through (about 28 s after the 3D model is loaded) ----------
+// ---------- demo run-through (about 4 minutes, every main function once) ----------
 
 function caption(text, sub = '') {
   const c = $('#caption');
   c.hidden = !text;
   const keys = S.demo ? (S.demo.manual ? 'Space / → next · Esc stop' : 'Space / → takes over step by step · Esc stop') : '';
-  c.innerHTML = `${esc(text)}${sub ? `<small>${esc(sub)}</small>` : ''}${keys ? `<small class="keys">${keys}</small>` : ''}`;
+  const chap = S.demo?.chapter ? `<small class="chap">${esc(S.demo.chapter)}</small>` : '';
+  c.innerHTML = `${chap}${esc(text)}${sub ? `<small>${esc(sub)}</small>` : ''}${keys ? `<small class="keys">${keys}</small>` : ''}`;
 }
 function pulse(sel) {
   const n = typeof sel === 'string' ? document.querySelector(sel) : sel;
@@ -2427,7 +2428,7 @@ function prepareReportPreview() {
   if (!d) { d = document.createElement('div'); d.id = 'reportPreview'; $('#view').appendChild(d); }
   d.hidden = true;
   d.innerHTML = '<div class="rp-head"><b>Report</b><span class="muted">the HTML file the Report button opens · for the class review</span></div><iframe title="Report preview"></iframe>';
-  d.querySelector('iframe').srcdoc = html;
+  d.querySelector('iframe').srcdoc = html.replace(/<button on[a-z]+="print\(\)">[^<]*<\/button>/, ''); // no inline handler under the page's CSP
   preparedReport = { key: toHTMLKey() };
   return d;
 }
@@ -2454,11 +2455,16 @@ async function demoTypeFix(step, focus, fix) {
   return true;
 }
 
-// Demo run-through, about 28 s once the 3D model is loaded:
-// RCRV real model -> check -> first red part with the rule quote -> cruise deck -> C2 overlap -> live fix -> green -> export.
+// Demo run-through, about 4 minutes, every main function once, each on screen long enough to read:
+//  1 general arrangement + check   2 a finding with its rule   3 AI explanation   4 what-if fix
+//  5 escape plan   6 findings register   7 traceability   8 report   9 real 3D production model
+// 10 rule view   11 Drawing → 3D (PDF to 3D model, a finding measured from the drawing)   12 closing frame.
+// Space / → takes over step by step (presenter mode), Esc stops. A chapter whose data is missing here is skipped.
+const DEMO_DRAWING = 'demo/aurora-ga.pdf'; // local only (third-party drawing, internal use): not in Git; without it chapter 11 is skipped
+const DEMO_CHAPTERS = 12;
 async function runDemo() {
   if (S.demo) { S.demo.stop = true; return; }
-  const token = (S.demo = { stop: false, manual: new URLSearchParams(location.search).has('present'), next: null });
+  const token = (S.demo = { stop: false, manual: new URLSearchParams(location.search).has('present'), next: null, chapter: '' });
   const step = async (ms) => { await sleep(ms); if (token.stop) throw new Error('stopped'); };
   // A beat is a pause in the story. Autoplay waits ms; Space / → / Page Down skips ahead and switches to presenter
   // mode, where every beat waits for the next key press (presentation clickers send → or Page Down).
@@ -2468,153 +2474,268 @@ async function runDemo() {
     token.next = null;
     if (token.stop) throw new Error('stopped');
   };
+  // Waits until cond() is true (checked every 250 ms), at most maxMs; returns whether it became true.
+  const until = async (cond, maxMs) => {
+    for (let t = 0; t < maxMs; t += 250) { if (cond()) return true; await step(250); }
+    return !!cond();
+  };
+  let n = 0;
+  const chapter = (title) => { token.chapter = `${++n} / ${DEMO_CHAPTERS} · ${title}`; };
+  const openItem = async (id) => {
+    const item = await pointAt(`#list .item[data-id="${CSS.escape(id)}"]`, step);
+    if (item) item.click(); else select(id);
+    await step(500);
+  };
   document.body.classList.add('demo-running');
   $('#demoBtn').textContent = '■ Stop demo';
+  const layout = S.scenarios.find((s) => s.id === 'rcrv-layout') ?? S.scenarios.find((s) => !s.kind && !s.scene);
   const real = S.scenarios.find((s) => s.kind === 'parts');
-  const inside = S.scenarios.find((s) => s.scene);
   try {
+    closeTrace(); closeRegister(); closeAiPanel(); closeDrawingPanel();
     if (views.three.plan) { views.three.setPlan(false); $('#planBtn').classList.remove('on'); }
-    // 1. Open the real RCRV model (reuse it if it is already open and unedited).
+
+    // 1. The general arrangement of the research vessel, checked against the rule catalog.
+    if (layout) {
+      chapter('Design review');
+      if (S.sc.id !== layout.id || S.edits.size) await loadScenario(layout.id);
+      await waitViewer(step, token);
+      if (S.escapeOn) setEscapeMode(false);
+      showOverview();
+      viewer.paintNeutral();
+      caption(`${S.model.name}`, `${S.norm.decks.length} decks · ${S.norm.elements.length} rooms, doors, stairs, rails and openings · ship/1 design model`);
+      await beat(4000);
+      const run = allRules().filter((r) => !r.draft && Object.values(S.results.elements).some((e) => e.results.some((x) => x.rule_id === r.id)));
+      caption(`Checking ${run.length} rules: deterministic, in the browser`, [...new Set(run.map((r) => family(r.source)))].join(' · '));
+      await paintProgressively(step);
+      const s = S.results.summary;
+      caption(`${s.non_compliant} non-compliant · ${s.not_enough_info} not enough info · ${s.compliant} compliant`,
+        `Checked in ${S.lastCheckMs.toFixed(1)} ms · same input, same result · pass/fail never comes from AI`);
+      pulse('#pills'); pulse('#scorebox'); pulse('#readyBox');
+      await beat(5000);
+
+      // 2. One finding: measured against required, with the rule text and its source.
+      const door = findingsOf(S.results).find((f) => f.status === 'non_compliant' && f.element === 'MD-D1')
+        ?? findingsOf(S.results).find((f) => f.status === 'non_compliant');
+      if (door) {
+        chapter('A finding and its rule');
+        await openItem(door.element);
+        const r = S.results.elements[door.element].results.find((x) => x.rule_id === door.rule_id);
+        caption(`${elById(door.element)?.name ?? door.element}: ${r.measured}, required ${r.required}`, `“${ruleQuote(r)}” (${r.source.split(':')[0]})`);
+        document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
+        await beat(6500);
+
+        // 3. AI explanation of that finding: plain language, exceptions to check, ways to fix it.
+        chapter('AI explanation');
+        const btn = document.querySelector(`#dResults .explainBtn[data-rule="${CSS.escape(r.rule_id)}"]`);
+        if (!aiState.status?.available || !btn) {
+          caption('AI explanation: not available here', 'It needs the Complee backend with an API key; everything else works without it');
+          await beat(3500);
+        } else {
+          caption('✦ Explain: the AI explains the finding in plain language', 'Exceptions to check and ways to fix it · the result itself stays with the checker');
+          const key = explainKey(door.element, r);
+          if (!S.explain.get(key)?.data) { await pointAt(btn, step); btn.click(); } // a second click would fold it away
+          const card = () => document.querySelector(`#dResults .res[data-rule="${CSS.escape(r.rule_id)}"]`);
+          card()?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          await until(() => S.explain.get(key)?.data || S.explain.get(key)?.error, 60000);
+          const st = S.explain.get(key);
+          if (st?.data) {
+            const box = card()?.querySelector('.ai-box');
+            hidePointer(); // the answer grows under the Explain button: keep the pointer off the text
+            box?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            if (box) pulse(box);
+            caption('AI answer: summary and concrete fixes', `${modelLabel(st.data.model)} · ${((st.data.duration_ms ?? 0) / 1000).toFixed(1)} s · ${cents(st.data.cost_usd)} · the finding stays non-compliant until the design changes`);
+            await beat(11000);
+          } else {
+            caption('The AI did not answer in time', st?.error ?? 'The check results are not affected');
+            await beat(3000);
+          }
+        }
+      }
+
+      // 4. What-if: the engineer types a new value; re-checked and recoloured at once, the model is not changed.
+      const d = S.model.demo || {};
+      if (d.focus && S.results.elements[d.focus] && d.fix) {
+        chapter('What-if fix');
+        await openItem(d.focus);
+        const fe = S.results.elements[d.focus];
+        const bad = fe.results.filter((r) => r.status === 'non_compliant');
+        if (bad.length) {
+          caption(`${elById(d.focus).name}: ${bad[0].measured} fails ${bad.length} overlapping rule${bad.length > 1 ? 's' : ''}`,
+            `${bad.map((r) => `${r.rule_id} (${r.required})`).join(' + ')} · inch values converted to mm`);
+          document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
+          await beat(5500);
+        }
+        caption(`What-if: ${d.fix.prop.replace(/_/g, ' ')} = ${d.fix.value} ${d.fix.unit || 'mm'}`, 'Labelled "what-if, not in model"; re-checked and recoloured instantly');
+        await step(800);
+        if (await demoTypeFix(step, d.focus, d.fix)) {
+          await step(600);
+          const now = S.results.elements[d.focus].worst;
+          caption(`${d.focus} is now ${LABEL[now].toLowerCase()} (what-if, not in model)`, `Re-checked in ${S.lastCheckMs.toFixed(1)} ms · reset restores the model value; the model itself is never changed`);
+          $('#detail').scrollTo({ top: 0, behavior: 'smooth' });
+          pulse('#dStatus');
+          await beat(5000);
+        }
+      }
+
+      // 5. Escape plan: routes from every room to a muster station, from the same model.
+      if (S.escape || S.escapePending) {
+        chapter('Escape plan');
+        const eb = await pointAt('#escapeBtn', step);
+        if (eb) eb.click(); else setEscapeMode(true);
+        await until(() => S.escapeOn && S.escape, 10000);
+        if (S.escape) {
+          const rooms = escapeRooms();
+          const count = (st) => rooms.filter((o) => o.status === st).length;
+          caption('Escape plan: every room to a muster station, computed from the layout',
+            `${count('two_routes') + count('direct')} rooms with two independent routes · ${count('shared_route')} share a corridor · ${count('single_route')} with a single route only`);
+          pulse('#escapeBox');
+          await beat(6000);
+          const one = rooms.filter((o) => o.status === 'single_route' && o.primary).sort((a, b) => (b.primary.length_mm ?? 0) - (a.primary.length_mm ?? 0))[0];
+          if (one) {
+            select(one.id);
+            await step(600);
+            caption(`${elById(one.id)?.name ?? one.id}: single route only`, `${one.primary.length_mm ? `${(one.primary.length_mm / 1000).toFixed(1)} m to the muster station · ` : ''}a route analysis next to the rule check, not a pass/fail`);
+            await beat(6000);
+          }
+          setEscapeMode(false);
+          showOverview();
+          await step(600);
+        }
+      }
+
+      // 6. Findings register: how each finding is handled and by whom; never changes the check result.
+      chapter('Findings register');
+      const rb = await pointAt('#registerBtn', step);
+      if (rb) {
+        openRegister();
+        const s2 = registerSummary(registerRows(S.results, S.register));
+        caption(`Findings register: ${s2.total} findings, ${s2.open} open`, 'Disposition, responsible person and justification per finding · carried over to the next revision · CSV and report');
+        await beat(6500);
+        closeRegister();
+      }
+
+      // 7. Traceability: every part against every rule; a cell opens that part and its rule card.
+      chapter('Traceability');
+      caption('Traceability: every part against every rule', 'One click on a cell opens the part and the rule card behind the result');
+      const tb = await pointAt('#traceBtn', step);
+      if (tb) {
+        openTrace();
+        await step(400);
+        prepareReportPreview(); // built now, while the table is on screen and nothing moves
+        await beat(5000);
+        const cell = d.focus && await pointAt(`#tracePanel td.cell[data-id="${CSS.escape(d.focus)}"]`, step);
+        if (cell) {
+          cell.click();
+          caption(`${d.focus}: compliant with the what-if value`, 'From the table straight to the part, its rule card and the value that decided it');
+          await beat(4000);
+        }
+        closeTrace();
+      }
+
+      // 8. Report: the HTML report for the class review (shown in the page; the button opens it in a new tab).
+      chapter('Report');
+      caption('Export the findings: HTML report and CSV', 'Rule references, measured vs required, value provenance, what-if values, readiness');
+      await pointAt('#reportBtn', step);
+      const frame = showReportPreview();
+      await step(1400);
+      for (let i = 1; i <= 8; i++) { frame.contentWindow?.scrollTo({ top: i * 280, behavior: 'smooth' }); await step(900); }
+      await beat(2500);
+      hideReportPreview();
+    }
+
+    // 9. The real production model (ShipConstructor, 35 000+ parts), checked with the same rules.
     if (real) {
-      if (S.sc.id !== real.id || S.edits.size) await loadScenario(real.id);
+      chapter('Real 3D production model');
+      caption('Now the real ship: the ShipConstructor production model', 'Loaded from the exported model tiles; the check already ran');
+      await pointAt('#scenario', step, { click: false });
+      await loadScenario(real.id);
       await waitViewer(step, token);
       const c = S.model.counts;
       caption('OSU RCRV: real ShipConstructor production model', `${c ? `${c.objects.toLocaleString('en')} objects in the model · ` : ''}${S.norm.elements.length.toLocaleString('en')} parts checked · inches converted to mm`);
       showOverview();
       viewer.paintNeutral();
-      await beat(2800);
-
-      // 2. Run the check: colours appear group by group.
-      const run = allRules().filter((r) => !r.draft && Object.values(S.results.elements).some((e) => e.results.some((x) => x.rule_id === r.id)));
-      caption(`Checking ${run.length} rules on real design data`, [...new Set(run.map((r) => family(r.source)))].join(' · '));
+      await beat(3500);
       await paintProgressively(step);
       const s = S.results.summary;
       caption(`${s.non_compliant} non-compliant · ${s.not_enough_info.toLocaleString('en')} not enough info · ${s.compliant.toLocaleString('en')} compliant`,
         S.baseline ? `Ground truth: ${S.baseline.line ?? scoreLine(S.baseline)}` : 'Deterministic checker: same input, same result');
       pulse('#pills'); pulse('#scorebox'); pulse('#accBadge');
-      await beat(3000);
-
-      // 3. Fly to the first red part, with the rule quote.
+      await beat(4500);
       const d = S.model.demo || {};
       const first = findingsOf(S.results).find((f) => f.status === 'non_compliant' && (!d.focus_rule || f.rule_id === d.focus_rule)) ?? findingsOf(S.results)[0];
       if (first) {
-        const item = await pointAt(`#list .item[data-id="${CSS.escape(first.element)}"]`, step);
-        if (item) item.click(); else select(first.element);
+        await openItem(first.element);
         const r = S.results.elements[first.element].results.find((x) => x.rule_id === first.rule_id);
         caption(`${first.element}: ${r.measured} in hull structure (SWBS ${elById(first.element)?.props?.swbs_group?.value ?? '1xx'})`,
           `“${ruleQuote(r, d.quote_match)}” (${r.source.split(':')[0]})`);
         document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
-        await beat(4800);
+        await beat(6000);
       }
 
-      // 3b. Rule view on the real model: every hatch the opening rule applies to, coloured by that rule.
+      // 10. Rule view: every part one rule applies to, coloured by that rule, in the real ship.
       const h = d.hatch;
       if (h && ruleById(h.rule)) {
+        chapter('Rule view');
         const row = await pointAt(`#rulesBox .ruleRow[data-rule="${CSS.escape(h.rule)}"]`, step);
         if (row) row.click(); else showRule(h.rule);
         caption(`Rule view: ${countLine(ruleHits(h.rule))}`, 'Every part the rule applies to, coloured by that rule, in the real ship');
         pulse('#ruleCount');
-        await beat(4200);
+        await beat(5500);
+        const back = document.querySelector('#ruleBack');
+        if (back) { await pointAt(back, step); back.click(); await step(800); }
       }
     }
 
-    // 4. Into the ship: one corridor with a few components, placed in the real deckhouse (simplified example).
-    if (inside) {
-      // Back to the whole ship first (as a user would), then into it.
-      const back = document.querySelector('#ruleBack');
-      if (back) { await pointAt(back, step); back.click(); await step(1300); }
-      caption('Inside the ship: one corridor on deck level 4', 'Simplified example placed in the real deckhouse · the ship is cut open just above the deck');
-      await pointAt('#scenario', step);
-      $('#scenario').value = inside.id;
-      await loadScenario(inside.id);
-      await S.viewerReady;
-      await step(3300); // the ship is cut open above the deck, then the camera flies in
-      const d = S.model.demo || {};
-      const s2 = S.results.summary;
-      caption(`${S.norm.elements.length} components checked: ${s2.non_compliant} non-compliant, ${s2.compliant} compliant`,
-        S.baseline ? `Ground truth: ${S.baseline.line ?? scoreLine(S.baseline)}` : 'Deterministic checker: same input, same result');
-      pulse('#pills'); pulse('#scorebox');
-      await beat(3400);
-
-      // 5. The corridor is too narrow: component view, rule quote, rule card.
-      const focus = d.focus;
-      if (focus && S.results.elements[focus]) {
-        const item = await pointAt(`#list .item[data-id="${CSS.escape(focus)}"]`, step);
-        if (item) item.click(); else select(focus);
-        const fe = S.results.elements[focus];
-        const bad = fe.results.find((r) => r.status === 'non_compliant');
-        if (bad) {
-          caption(`${elById(focus).name}: ${bad.parameter.replace(/_/g, ' ')} ${bad.measured}, required ${bad.required}`,
-            `“${ruleQuote(bad)}” (${bad.source.split(':')[0]})`);
-          document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
-          await beat(4600);
-          caption('The card shows the rule, its source and review status', `${bad.source.split(';')[0]} · ${bad.review_status ?? ''}`);
-          const card = document.querySelector(`#dResults .res[data-rule="${CSS.escape(bad.rule_id)}"]`);
-          card?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-          if (card) { pulse(card); await pointAt(card.querySelector('.st-badge, .badge, h3, b') || card, step, { click: false }); }
-          await beat(3600);
-        }
-        // 6. What-if: the engineer widens the corridor; re-checked and recoloured instantly.
-        const fix = d.fix;
-        if (fix) {
-          caption(`What-if: ${fix.prop.replace(/_/g, ' ')} = ${fix.value} ${fix.unit || 'mm'}`, 'Labelled "what-if, not in model"; re-checked and recoloured instantly');
-          await step(800);
-          if (await demoTypeFix(step, focus, fix)) {
-            await step(500);
-            const now = S.results.elements[focus].worst;
-            caption(`${focus} is now ${LABEL[now].toLowerCase()} (what-if, not in model)`, `Re-checked in ${S.lastCheckMs.toFixed(1)} ms · reset restores the model value; the model itself is never changed`);
-            $('#detail').scrollTo({ top: 0, behavior: 'smooth' });
-            pulse('#dStatus');
-            await beat(3400);
+    // 11. Drawing → 3D: a PDF general arrangement becomes a checked 3D model, without AI.
+    const pdf = await fetch(DEMO_DRAWING, { cache: 'no-store' }).then((res) => (res.ok ? res.blob() : null)).catch(() => null);
+    if (pdf) {
+      chapter('Drawing → 3D');
+      caption('Drawing → 3D: a PDF general arrangement becomes a 3D model', 'Read in the browser from the line work and text of the drawing: no AI, nothing uploaded');
+      await pointAt('#drawingBtn', step, { click: false });
+      const m = await drawingImport();
+      await m.openDrawingImport(drawingHost, { file: new File([pdf], 'aurora_1230-01-01_A_GA.pdf', { type: 'application/pdf' }) });
+      const viewsReady = () => document.querySelectorAll('#detail tr[data-view]').length > 0 && !document.querySelector('#detail #dwConvert')?.disabled;
+      if (await until(viewsReady, 90000)) {
+        const kinds = [...document.querySelectorAll('#detail tr[data-view] select')].map((s) => s.value);
+        const k = (x) => kinds.filter((v) => v === x).length;
+        const scale = $('#dwScale')?.getAttribute('placeholder');
+        caption(`${kinds.length} views found on the sheet: ${k('profile')} profiles, ${k('section')} section, ${k('plan')} deck plans`,
+          `${scale ? `Scale 1:${scale} found on the drawing · ` : ''}every view can be corrected before converting`);
+        await beat(6500);
+        const convert = await pointAt('#dwConvert', step);
+        caption('Converting: rooms from the walls, doors from the swing arcs, decks from the profile', 'Every value says whether it was measured, read from the text, typed or assumed');
+        convert?.click();
+        if (await until(() => document.querySelector('#detail h1')?.textContent === 'Drawing converted to 3D', 120000)) {
+          await step(1500);
+          showOverview();
+          caption(`Converted to 3D: ${S.norm.elements.length} elements on ${S.norm.decks.length} decks, checked at once`,
+            `${S.results.summary.non_compliant} non-compliant · ${S.results.summary.not_enough_info} not enough info · the conversion report lists what was measured and what was assumed`);
+          await beat(7000);
+          const f = findingsOf(S.results).find((x) => x.status === 'non_compliant' && unconfirmedInputs(x).length);
+          if (f) {
+            await openItem(f.element);
+            const r = S.results.elements[f.element].results.find((x) => x.rule_id === f.rule_id);
+            caption(`${elById(f.element)?.name ?? f.element}: ${r.measured} measured from the drawing, required ${r.required}`,
+              'Marked “pre-check: input unconfirmed”: a value from a drawing holds only once a person confirms it');
+            document.querySelectorAll('#dResults .tag.unconfirmed').forEach(pulse);
+            await beat(7500);
           }
+        } else {
+          caption('The conversion did not finish in time', 'The demo continues');
+          await beat(2500);
         }
       }
-
-      // 7. A second finding: the guard rail, drawn in inches, fails two overlapping rules.
-      if (d.second && S.results.elements[d.second]) {
-        const item = await pointAt(`#list .item[data-id="${CSS.escape(d.second)}"]`, step);
-        if (item) item.click(); else select(d.second);
-        const fe = S.results.elements[d.second];
-        const bad = fe.results.filter((r) => r.status === 'non_compliant');
-        if (bad.length) {
-          caption(`${elById(d.second).name}: ${bad[0].measured} fails ${bad.length} overlapping rule${bad.length > 1 ? 's' : ''}`,
-            `${bad.map((r) => `${r.rule_id} (${r.required})`).join(' + ')} · inch values converted to mm`);
-          document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
-          await beat(4400);
-        }
-      }
-    }
-    // 8. Traceability: every part against every rule; a cell opens that part and its rule card.
-    caption('Traceability: every part against every rule', 'One click on a cell opens the part and the rule card behind the result');
-    const tb = await pointAt('#traceBtn', step);
-    if (tb) {
-      openTrace();
-      await step(400);
-      prepareReportPreview(); // built now, while the table is on screen and nothing moves
-      await beat(3400);
-      const focus = S.model.demo?.focus;
-      const cell = focus && await pointAt(`#tracePanel td.cell[data-id="${CSS.escape(focus)}"]`, step);
-      if (cell) {
-        cell.click();
-        caption(`${focus}: compliant with the what-if value`, 'From the table straight to the part, its rule card and the value that decided it');
-        await beat(3000);
-      } else closeTrace();
+      closeDrawingPanel();
     }
 
-    // 9. Report: the HTML report for the class review (shown in the page; the button opens it in a new tab).
-    caption('Export the findings: HTML report and CSV', 'Rule references, measured vs required, value provenance, inch → mm conversions');
-    await pointAt('#reportBtn', step);
-    const frame = showReportPreview();
-    await step(1200);
-    for (let i = 1; i <= 6; i++) { frame.contentWindow?.scrollTo({ top: i * 260, behavior: 'smooth' }); await step(650); }
-    await beat(1800);
-    hideReportPreview();
-
-    // 10. Closing frame: the whole scene with every result coloured.
+    // 12. Closing frame: back to the general arrangement (unedited), every result coloured.
+    chapter('Summary');
     hidePointer();
+    if (layout && (S.sc.id !== layout.id || S.edits.size)) { await loadScenario(layout.id); await waitViewer(step, token); }
     showOverview();
-    caption('Complee: deterministic rule checks on the real design model', 'Every result traceable to its rule, its source and the design value · what-ifs never change the model');
-    await beat(4200);
+    caption('Complee: deterministic rule checks, traceable to rule, source and design value',
+      'AI explains, never decides · what-ifs never change the model · drawings become checkable 3D models');
+    await beat(6000);
   } catch (e) {
     if (e.message !== 'stopped') console.error(e);
   } finally {
