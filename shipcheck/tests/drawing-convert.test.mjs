@@ -191,7 +191,7 @@ test('geometry goes to the page with each buffer transferred once', () => {
 // ---------- the whole chain, once the stage modules exist ----------
 
 // A small general arrangement drawn 1:1 in mm: a profile above a main deck plan with three rooms, a door and labels.
-function tinyGA({ numbered = false } = {}) {
+function tinyGA({ numbered = false, swingTwice = false } = {}) {
   const out = [];
   const g = (...pairs) => { for (const [c, v] of pairs) out.push(String(c), String(v)); };
   const line = (layer, [x1, y1], [x2, y2], ltype) => g([0, 'LINE'], [8, layer], ...(ltype ? [[6, ltype]] : []), [10, x1], [20, y1], [30, 0], [11, x2], [21, y2], [31, 0]);
@@ -213,6 +213,8 @@ function tinyGA({ numbered = false } = {}) {
   line('WALL', [5000, -3000], [5000, 3000]);
   line('WALL', [10000, -3000], [10000, 3000]);
   g([0, 'ARC'], [8, 'DOOR'], [10, 5000], [20, 1000], [30, 0], [40, 800], [50, 90], [51, 180]);
+  // some exports draw a swing twice (outline and fill, or once per unit the door belongs to)
+  if (swingTwice) g([0, 'ARC'], [8, 'DOOR2'], [10, 5000], [20, 1000], [30, 0], [40, 800], [50, 90], [51, 180]);
   line('DOOR', [5000, 1000], [5000, 1800]);
   if (numbered) {
     // name / room number / printed area on three lines: the number keeps the area apart from the name
@@ -304,6 +306,47 @@ test('a building floor plan without ship cues is found as the plan; legend symbo
   assert.equal(report.decks.length, 1, 'one floor, no decks made of symbols');
   for (const name of ['Séjour', 'Cuisine', 'Chambre']) assert.ok(report.rooms.some((r) => r.name === name), `${name} is a room`);
   assert.ok(report.rooms.find((r) => r.name === 'Séjour').area > 39 && report.rooms.find((r) => r.name === 'Séjour').area < 41, 'Séjour is 5 m × 8 m');
+});
+
+test('a shaft marked with a corner-to-corner cross is one room; the unit name over a room name stays apart', async () => {
+  const { readPlan } = await import('../src/drawing/plan-read.mjs');
+  const { isUnitLabel } = await import('../src/drawing/vocab.mjs');
+  // two rooms side by side, 3 m × 3 m each, the left one a lift shaft crossed from corner to corner
+  const segs = [[0, 0, 6000, 0, 'a'], [6000, 0, 6000, 3000, 'b'], [6000, 3000, 0, 3000, 'c'], [0, 3000, 0, 0, 'd'], [3000, 0, 3000, 3000, 'e'],
+    [0, 0, 3000, 3000, 'x1'], [0, 3000, 3000, 0, 'x2']];
+  const t = (id, text, x, y) => ({ id, text, c: [x, y], h: 200, angle: 0, box: [x - 400, y - 100, x + 400, y + 100] });
+  const res = readPlan({ segs, texts: [t('t1', 'LIFT', 1500, 2200), t('t2', '2.8 m²', 1500, 1700), t('t3', 'Whg. A', 4500, 1800), t('t4', 'Store', 4500, 1500)] });
+  const lift = res.rooms.find((r) => /LIFT/.test(r.label ?? ''));
+  assert.ok(lift && lift.area > 8.5e6, `the shaft is one 9 m² room, not a triangle: ${res.rooms.map((r) => `${r.label} ${(r.area / 1e6).toFixed(2)}`).join(' | ')}`);
+  const store = res.rooms.find((r) => r.label === 'Store');
+  assert.ok(store, `the room under the unit name keeps its own name: ${res.rooms.map((r) => r.label).join(' | ')}`);
+  for (const s of ['Whg. D', 'App. A', 'Apartment 3', 'Unit 12', 'Flat B']) assert.ok(isUnitLabel(s), s);
+  for (const s of ['Cabin', 'Wheel House', 'Unit cooler', 'Main Deck']) assert.ok(!isUnitLabel(s), s);
+});
+
+test('pieces of one planking hatch on a common grid are no stairs; a single flight of the same lines is', async () => {
+  const { readPlan } = await import('../src/drawing/plan-read.mjs');
+  // a room 12 m × 6 m (mm), with `pieces` flights of 6 equal lines 200 mm apart, all on one 200 mm grid
+  const plan = (pieces) => {
+    const segs = [[0, 0, 12000, 0, 'w1'], [12000, 0, 12000, 6000, 'w2'], [12000, 6000, 0, 6000, 'w3'], [0, 6000, 0, 0, 'w4']];
+    for (let p = 0; p < pieces; p++) for (let k = 0; k < 6; k++) { const x = 1000 + 2400 * p + 200 * k; segs.push([x, 2000, x, 3200, `h${p}-${k}`]); }
+    return readPlan({ segs, texts: [] });
+  };
+  assert.equal(plan(1).stairs.length, 1, 'one flight of six equal lines 200 mm apart reads as a stair');
+  assert.equal(plan(3).stairs.length, 0, 'three such pieces in step on one grid are a hatch cut up by furniture');
+});
+
+test('a door swing drawn twice is one door, not a double door', { skip: skipUnless('sheet.mjs', 'read-dxf.mjs', 'views.mjs', 'interpret.mjs', 'mesh.mjs') }, async () => {
+  const doorsOf = async (opts) => {
+    const [sheet] = await readDrawingFile({ name: 'tiny-swing.dxf', bytes: enc(tinyGA(opts)) });
+    const { model } = await convertDrawing(sheet, {}, { geometry: false });
+    return model.elements.filter((e) => e.type === 'door');
+  };
+  const once = await doorsOf({}), twice = await doorsOf({ swingTwice: true });
+  assert.equal(once.length, 1, 'the tiny GA has one door');
+  assert.equal(twice.length, 1, 'drawn twice: still one door');
+  assert.ok(!twice[0].props.double_leaf, 'not two leaves of a double door');
+  assert.equal(twice[0].props.clear_width.value, once[0].props.clear_width.value, 'the same width as when drawn once');
 });
 
 test('a room named by a label read with OCR says so and is marked to check; one named by text is not', { skip: skipUnless('sheet.mjs', 'read-dxf.mjs', 'views.mjs', 'interpret.mjs', 'mesh.mjs') }, async () => {

@@ -74,8 +74,15 @@ function readPlanAt({ segs, arcs = [], texts = [], strokeMM = () => 0, halfPlan 
   const leafGrid = new SegGrid(work, 1500);
   const doorSized = (a) => a.r >= PLAN.door.r[0] && a.r <= PLAN.door.r[1];
   const swingOk = (a) => (a.sweep >= PLAN.door.sweep[0] && a.sweep <= PLAN.door.sweep[1]) || (a.sweep >= PLAN.door.halfOpen[0] && a.sweep < PLAN.door.sweep[0] && leafOf(a, work, leafGrid, 0.1) >= 0);
-  const doorArcs = arcs.filter((a) => doorSized(a) && swingOk(a) && !isFillet(a, work));
-  stats.fillets = arcs.filter((a) => doorSized(a) && swingOk(a)).length - doorArcs.length;
+  // a swing drawn twice (outline and fill, or two pens) is one swing: otherwise the copy pairs with it as a "double door"
+  const sameArc = (a, b) => Math.abs(a.r - b.r) <= 0.02 * a.r && dist(a.c, b.c) <= 0.02 * a.r
+    && ((dist(a.p0, b.p0) <= 0.05 * a.r && dist(a.p1, b.p1) <= 0.05 * a.r) || (dist(a.p0, b.p1) <= 0.05 * a.r && dist(a.p1, b.p0) <= 0.05 * a.r));
+  const swings = arcs.filter((x) => doorSized(x) && swingOk(x));
+  const notFillets = swings.filter((x) => !isFillet(x, work));
+  const doorArcs = [];
+  for (const a of notFillets) if (!doorArcs.some((b) => sameArc(a, b))) doorArcs.push(a);
+  stats.fillets = swings.length - notFillets.length;
+  stats.duplicateSwings = notFillets.length - doorArcs.length;
   const doors = findDoors(doorArcs, work);
   const leafSegs = new Set(doors.flatMap((d) => d.leafIdx));
   work = work.filter((s, i) => !leafSegs.has(i));
@@ -101,6 +108,11 @@ function readPlanAt({ segs, arcs = [], texts = [], strokeMM = () => 0, halfPlan 
   work = work.filter((s) => !leaderSegs.has(s));
   stats.leaders = labels.filter((g) => g.target).length;
   const namePoints = labels.filter((g) => isRoomLabel(g)).flatMap((g) => (g.target ? [g.c, g.target] : [g.c]));
+  // a space marked with a cross from corner to corner (a lift or service shaft, a void, an opening to the deck below)
+  // is one space with a mark in it: the cross does not cut it into four triangles
+  const crosses = crossMarks(work, [...namePoints, ...labels.filter((g) => g.area != null).map((g) => g.c)]);
+  work = work.filter((s, i) => !crosses.has(i));
+  stats.crossMarks = crosses.size / 2;
   const objects = smallClosedShapes(work, closedRefs).filter((o) => !namePoints.some((p) => boxContains(o.box, p)));
   const thin = thinPen(work, strokeMM);
   const inObject = insideObjects(work, objects, (ref) => thin.ref > 0 && (strokeMM(ref) || 0) > 1.5 * thin.ref);
@@ -330,11 +342,31 @@ function findDoors(doorArcs, segs) {
     doors.push({ arc: a, hinge: a.c, r: a.r, closedEnd: ends[ci], openEnd: ends[1 - ci], leafIdx, closedSure: closedIdx != null,
       evidence: [a.ref, ...leafIdx.map((i) => segs[i][4])], notes: closedIdx == null ? ['which end of the swing is the closed position could not be told from the wall lines'] : [] });
   }
-  // double doors: two swings whose closed ends meet in the middle of one opening
+  // double doors: two swings whose closed ends meet in the middle of one opening. Two single doors side by side (to
+  // two rooms, their frames touching) meet the same way; a double door's leaves open to the same side of the wall, and
+  // no partition ends where they meet.
+  const leafSet = new Set(doors.flatMap((d) => d.leafIdx));
+  const sameSide = (d, e) => {
+    const t = unit(sub(d.closedEnd, d.hinge)), n = [-t[1], t[0]];
+    const sd = dot(sub(d.openEnd, d.hinge), n), se = dot(sub(e.openEnd, e.hinge), n);
+    return sd * se > 0;
+  };
+  const partitionAt = (m, d, e) => {
+    const t = unit(sub(d.closedEnd, d.hinge));
+    const tol = Math.max(40, 0.08 * Math.min(d.r, e.r));
+    for (const i of grid.query([m[0] - tol, m[1] - tol, m[0] + tol, m[1] + tol])) {
+      if (leafSet.has(i)) continue;
+      const s = segs[i];
+      if (segLen(s) < 0.3 * Math.min(d.r, e.r) || Math.abs(dot(dirOf(s), t)) > 0.3) continue; // across the opening only
+      if (dist([s[0], s[1]], m) < tol || dist([s[2], s[3]], m) < tol) return true;
+    }
+    return false;
+  };
   const used = new Set(), out = [];
   doors.forEach((d, i) => {
     if (used.has(i)) return;
-    const j = doors.findIndex((e, k) => k > i && !used.has(k) && dist(e.closedEnd, d.closedEnd) < 0.15 * Math.min(d.r, e.r) && Math.abs(cross(unit(sub(d.closedEnd, d.hinge)), unit(sub(e.closedEnd, e.hinge)))) < 0.1);
+    const j = doors.findIndex((e, k) => k > i && !used.has(k) && dist(e.closedEnd, d.closedEnd) < 0.15 * Math.min(d.r, e.r) && Math.abs(cross(unit(sub(d.closedEnd, d.hinge)), unit(sub(e.closedEnd, e.hinge)))) < 0.1
+      && sameSide(d, e) && !partitionAt([(d.closedEnd[0] + e.closedEnd[0]) / 2, (d.closedEnd[1] + e.closedEnd[1]) / 2], d, e));
     if (j >= 0) {
       const e = doors[j]; used.add(j);
       out.push({ ...d, double: true, leaves: [d, e], width: d.r + e.r, closedEnd: e.hinge, evidence: [...d.evidence, ...e.evidence], notes: [...d.notes, ...e.notes] });
@@ -363,6 +395,7 @@ function parallelFamilies(segs, texts) {
     if (group.length < 3) continue;
     group.sort((a, b) => a.o - b.o);
     const taken = new Set();
+    const stairChains = [];
     for (const kind of ['stair', 'ladder', 'hatch']) {
       for (let k = 0; k < group.length; k++) {
         if (taken.has(k)) continue;
@@ -374,10 +407,24 @@ function parallelFamilies(segs, texts) {
         const box = familyBox(members, segs);
         if (kind === 'ladder' && !ladderWords.some((t) => boxContains(box, t.c, 1500))) continue;
         for (const c of chain) { taken.add(c); remove.add(group[c].i); }
-        if (kind === 'stair') stairs.push(stairOf(members, segs, up, box));
+        if (kind === 'stair') stairChains.push({ members, box });
         else if (kind === 'ladder') ladders.push(ladderOf(members, segs, box));
         else hatchCount += chain.length;
       }
+    }
+    // pieces of one hatch (deck planking, tiles) cut up by furniture look like flights of stairs: three or more with one
+    // pitch whose lines lie on one common grid are that hatch, not stairs (stairs in different places are not in step)
+    const pitchOf = (m) => (m[m.length - 1].o - m[0].o) / (m.length - 1);
+    const inStep = (a, b) => {
+      const p = pitchOf(a.members), q = pitchOf(b.members);
+      if (Math.abs(p - q) > 0.05 * Math.max(p, q)) return false;
+      const ph = (((b.members[0].o - a.members[0].o) % p) + p) % p;
+      return Math.min(ph, p - ph) <= 0.08 * p;
+    };
+    for (const s of stairChains) {
+      const field = stairChains.filter((t) => t === s || inStep(s, t));
+      if (field.length >= 3) hatchCount += s.members.length;
+      else stairs.push(stairOf(s.members, segs, up, s.box));
     }
   }
   return { remove, stairs, ladders, hatchCount };
@@ -728,11 +775,59 @@ export function findOpenings(segs, lines, wallInfo, doors) {
   return openings;
 }
 
+// Cross marks: two straight lines of about one length that cross near both their middles at a clear angle, each
+// ending at other line work at both ends (the corners of the box it marks), with a label inside the box they span.
+// Returns the indices of both lines of each cross.
+function crossMarks(segs, labelPoints) {
+  const out = new Set();
+  if (!labelPoints.length) return out;
+  const grid = new SegGrid(segs, 1500);
+  const endsAt = (p, skip) => {
+    for (const k of grid.query([p[0] - 60, p[1] - 60, p[0] + 60, p[1] + 60])) {
+      if (skip.includes(k)) continue;
+      const s = segs[k];
+      if (dist([s[0], s[1]], p) < 60 || dist([s[2], s[3]], p) < 60 || pointSegment(p, s) < 30) return true;
+    }
+    return false;
+  };
+  for (let i = 0; i < segs.length; i++) {
+    if (out.has(i)) continue;
+    const a = segs[i], La = segLen(a);
+    if (La < 800) continue;
+    for (const j of grid.query([Math.min(a[0], a[2]), Math.min(a[1], a[3]), Math.max(a[0], a[2]), Math.max(a[1], a[3])])) {
+      if (j <= i || out.has(j)) continue;
+      const b = segs[j], Lb = segLen(b);
+      if (Math.abs(La - Lb) > 0.15 * Math.max(La, Lb)) continue;
+      const x = segIntersect(a, b);
+      if (!x || x.t < 0.35 || x.t > 0.65 || x.u < 0.35 || x.u > 0.65) continue;
+      if (Math.abs(cross(dirOf(a), dirOf(b))) < Math.sin(25 * DEG)) continue;
+      const box = [Math.min(a[0], a[2], b[0], b[2]), Math.min(a[1], a[3], b[1], b[3]), Math.max(a[0], a[2], b[0], b[2]), Math.max(a[1], a[3], b[1], b[3])];
+      if (!labelPoints.some((p) => boxContains(box, p))) continue;
+      const ends = [[a[0], a[1]], [a[2], a[3]], [b[0], b[1]], [b[2], b[3]]];
+      if (!ends.every((p) => endsAt(p, [i, j]))) continue;
+      out.add(i); out.add(j);
+      break;
+    }
+  }
+  return out;
+}
+
 // Virtual segments closing a door gap: the hinge line, plus the opposite wall face when the wall is drawn double
 // (two segment ends across the gap, parallel to it and as far apart as the swing is wide).
 function closeGap(h, c, segs) {
-  const out = [[h[0], h[1], c[0], c[1]]];
   const d = unit(sub(c, h)), n = [-d[1], d[0]], w = dist(h, c);
+  if (!(w > 0)) return [];
+  // nothing to add where the drawing closes the gap itself: a door frame or the leaf drawn in the wall, a line along the
+  // hinge line about as long as the door (virtual lines next to it would cut slivers off the rooms)
+  const drawn = segs.some((s) => {
+    const sd = dirOf(s);
+    if (Math.abs(cross(sd, d)) > 0.05 || segLen(s) > 2.0 * w) return false; // a frame or leaf as long as the door, not a wall running past
+    if (Math.abs(dot(sub([s[0], s[1]], h), n)) > Math.max(20, 0.03 * w)) return false;
+    const t0 = dot(sub([s[0], s[1]], h), d), t1 = dot(sub([s[2], s[3]], h), d);
+    return Math.min(Math.max(t0, t1), w) - Math.max(Math.min(t0, t1), 0) >= 0.8 * w;
+  });
+  if (drawn) return [];
+  const out = [[h[0], h[1], c[0], c[1]]];
   const nearH = [], nearC = [];
   for (const s of segs) {
     for (const p of [[s[0], s[1]], [s[2], s[3]]]) {

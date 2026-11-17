@@ -767,7 +767,9 @@ function openDeckOf(d, decks, profile) {
     if (!n) return covered(centroid(r.ring)) ? 1 : 0;
     return c / n;
   };
-  const isOpen = (r) => share(r) < 0.5;
+  // with no deck plan above and no profile the drawing says nothing about what is open (a single floor plan, a lone
+  // deck): nothing is taken as open deck then
+  const isOpen = (r) => (above.length || profile ? share(r) < 0.5 : false);
   // a wall with open deck or the outside on both sides is a rail or bulwark
   const railAt = (w, rooms) => {
     const L = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);

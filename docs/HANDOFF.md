@@ -66,15 +66,24 @@ rule-verification tables are empty (catalog not imported yet: the user should do
   from the walls alone, 5 joined using the printed area as evidence), scale 1:100 confirmed twice, 0 referee issues,
   about 4 s. Head-to-head with SpaceLens on the same 65 Swiss Dwellings plans it benchmarks on (Stoa
   `junction-dataset-preview`, swiss_dwellings, CC BY 4.0; local only in `tools/drawing-samples/stoa-preview/`), 550
-  printed room areas, fully automatic: 87.1 % within 2 % (479/550), or 90.2 % of the 531 areas inside a room we built,
+  printed room areas, fully automatic: 94.2 % within 2 % (518/550), or 95.9 % of the 540 areas inside a room we built,
   median error 0.00 %. SpaceLens: 84.4 % of the 390 areas its fill found, median 0.32 % (it leaves the other 160 out;
-  strict that is about 60 %). Doors, counted per leaf as the dataset does (a double door is 2): 34/65 plans exact
-  (SpaceLens 32/65), mean miss 1.4 (1.3). Scale read on 65/65; median 0.36 s per plan (SpaceLens 0.2 s). Floor plans
+  strict that is about 60 %). Doors against the CAD twins, each door once: 1,572 of 1,589 (98.9 %), 59/65 plans exact,
+  62/65 within one. The answer key counts 1,777: the source data enters 279 doors twice (once per unit) and the PDFs
+  draw them twice; a swing drawn twice is now one door (before, the copy made a false double door: 332 doubles instead
+  of 91, with twice the clear width). Against the key that is 8/65 plans exact (SpaceLens, counting every drawn swing,
+  32/65). Merging the copies first cost 8 room areas (87.1 → 85.6 %); then three general rules raised the areas to
+  94.2 %: unit names ("Whg. D", "App. A") are no part of the room name under them (`vocab.mjs` `isUnitLabel`); a
+  corner-to-corner cross marking a shaft or void does not cut the space into triangles (`plan-read.mjs` `crossMarks`);
+  without a deck plan above and without a profile nothing is taken as open deck. A door gap the drawing closes itself
+  (frame or leaf about as long as the door) gets no extra closing lines. Pieces of one hatch on a common grid (deck
+  planking) are no stairs: the pilot boat has 2 stairs instead of 7. Left: 10 rooms not found, 22 off by more than 2 %
+  (mostly 2–5 %). Scale read on 65/65; median 0.36 s per plan (SpaceLens 0.2 s). Floor plans
   without ship cues are found by their door swings and labels (`views.mjs` `floorPlans`); legend symbols, scale bars and
   border strips are not decks (`dropSymbolPlans`); symmetry counts only for drawings with line work. Remaining misses:
   balconies read as open deck (5–6 % small), apartment names ("App. A") joined to the room name below.
   Tests on data never tuned for (local only, `tools/drawing-samples/stoa-preview/`, `blind/`): the 65 Swiss plans as
-  DXF 89.5 % of 550 areas within 2 %; IFC-rendered plans 54/60 (PDF) and 58/60 (SVG) room areas against the IFC model,
+  DXF 90.5 % of 550 areas within 2 %; IFC-rendered plans 54/60 (PDF) and 58/60 (SVG) room areas against the IFC model,
   12/14 (Molio); an attic plan fails (35 rooms instead of 1); 56 real architecture PDFs run without crash or timeout
   (fixed: argument spreads over 248,000 segments, a cubic arc search), but sheets with 65,000+ paths take 15–45 s per
   page. Blind test on an unseen ship GA (67' pilot boat, expectations written first in `blind/EXPECTED.md`): failed at

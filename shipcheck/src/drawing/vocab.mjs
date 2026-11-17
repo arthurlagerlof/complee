@@ -153,7 +153,16 @@ export function roomOf(text) {
 /** A word that is clearly not a room name but a drawing annotation (stair direction, vent, hatch, …). */
 export function isAnnotationWord(text) {
   const t = normText(text);
-  return /^(UP|DN|DOWN|AUF|AB|OP|NED|VENT|CASING|HATCH|FLUSH HATCH|DOOR|WINDOW|EMG|EXIT|EMG EXIT|EMERGENCY EXIT|CL|C L|BL|AP|FP|PS|SB|FWD|AFT)$/.test(t);
+  return /^(UP|DN|DOWN|AUF|AB|OP|NED|VENT|CASING|HATCH|FLUSH HATCH|DOOR|WINDOW|EMG|EXIT|EMG EXIT|EMERGENCY EXIT|CL|C L|BL|AP|FP|PS|SB|FWD|AFT)$/.test(t)
+    || isUnitLabel(t);
+}
+
+/**
+ * The name of a dwelling or unit written over its first room ("Whg. D", "App. A", "Apartment 3", "Unit 12", "Flat B"):
+ * which unit the rooms belong to, not a room name. Kept apart from the room name under it.
+ */
+export function isUnitLabel(text) {
+  return /^(WHG|WOHNUNG|APP|APPT|APT|APPARTEMENT|APPARTAMENTO|APARTMENT|UNIT|FLAT|LOGEMENT|EINHEIT|SUITE)\s*[A-Z0-9]{1,3}$/.test(normText(text));
 }
 
 /** Stair direction words: 'up' | 'down' | null. */

@@ -109,6 +109,19 @@ for (const f of fs.readdirSync(dir).filter((x) => x.toLowerCase().endsWith('.pdf
     .reduce((n, d) => n + Math.max(1, (d.props?.clear_width?.evidence ?? []).filter((id) => arcIds.has(id)).length), 0);
   const s = sl.find((p) => p.file === f);
   const truth = truthOf.get(f);
+  // the CAD twin's door swings, each counted once: the answer key counts a door that the source data enters twice
+  // (once per unit it belongs to) twice, and the PDF draws it twice; one door in the building
+  const dxf = path.join(dir, f.replace(/\.pdf$/i, '.dxf'));
+  if (fs.existsSync(dxf)) {
+    const t = fs.readFileSync(dxf, 'utf8').split(/\r?\n/), arcs = [];
+    for (let i = 0; i < t.length - 3; i++) if (t[i].trim() === '0' && t[i + 1].trim() === 'ARC') {
+      const g = {}; for (let j = i + 2; j < i + 40; j += 2) { const c = t[j].trim(); if (c === '0') break; g[c] = t[j + 1].trim(); }
+      if (g['8'] === 'DOOR' && !arcs.some((b) => Math.hypot(+g['10'] - b[0], +g['20'] - b[1]) < 0.02 && Math.abs(+g['40'] - b[2]) < 0.02 && Math.abs(+g['50'] - b[3]) < 1)) arcs.push([+g['10'], +g['20'], +g['40'], +g['50']]);
+    }
+    tot.cadPlans = (tot.cadPlans ?? 0) + 1; tot.cadDoors = (tot.cadDoors ?? 0) + arcs.length; tot.ourLeaves = (tot.ourLeaves ?? 0) + doors;
+    if (doors === arcs.length) tot.cadExact = (tot.cadExact ?? 0) + 1;
+    if (Math.abs(doors - arcs.length) <= 1) tot.cadWithin1 = (tot.cadWithin1 ?? 0) + 1;
+  }
   if (truth?.doors != null) {
     tot.doorPlans++; tot.doorAbs += Math.abs(doors - truth.doors); if (doors === truth.doors) tot.doorExact++;
     const slDoors = s?.doorSwings ?? s?.doors; // SpaceLens answers the door question with its door-swing count
@@ -126,5 +139,7 @@ const med = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
 console.log(`\nPLANS ${tot.plans}: converted ${tot.plans - tot.failed}, scale read on ${tot.scaleRead}, median ${med(msList)} ms per plan`);
 console.log(`STRICT (every printed area; not found = miss): ${tot.ok}/${tot.n} = ${pct(tot.ok, tot.n)} % within 2 %`);
 console.log(`AS SPACELENS COUNTS (only areas inside a room we built): ${tot.ok}/${tot.found} = ${pct(tot.ok, tot.found)} % within 2 %, median error ${tot.errs.length ? (100 * med(tot.errs)).toFixed(2) : '—'} %  (SpaceLens: 84.4 % of 390, median 0.32 %)`);
+if (tot.cadPlans) console.log(`DOORS against the CAD twins (each door once): ${tot.ourLeaves}/${tot.cadDoors} leaves = ${pct(tot.ourLeaves, tot.cadDoors)} %; plans exact ${tot.cadExact ?? 0}/${tot.cadPlans}, within ±1 ${tot.cadWithin1 ?? 0}/${tot.cadPlans}`);
+if (tot.doorPlans) console.log(`DOORS against the answer key (counts doors entered twice twice):`);
 if (tot.doorPlans) console.log(`DOORS exact: ours ${tot.doorExact}/${tot.doorPlans} = ${pct(tot.doorExact, tot.doorPlans)} % (mean miss ${(tot.doorAbs / tot.doorPlans).toFixed(1)} per plan); SpaceLens ${tot.slDoorExact}/${tot.slDoorPlans} = ${pct(tot.slDoorExact, tot.slDoorPlans)} % (mean miss ${tot.slDoorPlans ? (tot.slDoorAbs / tot.slDoorPlans).toFixed(1) : '—'})`);
 if (jsonOut) fs.writeFileSync(jsonOut, JSON.stringify({ total: { ...tot, errs: undefined, medianMs: med(msList), medianErr: med(tot.errs) }, rows }, null, 1));
