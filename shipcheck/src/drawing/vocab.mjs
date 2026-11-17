@@ -4,6 +4,7 @@
 //
 // Everything works on normalised text: upper case, umlauts spelled out (Ä→AE), accents and punctuation removed,
 // abbreviations unified (DK→DECK, LVL→LEVEL), ordinals as two-digit levels (1ST→01).
+import { RULES } from './rules.mjs';
 
 /** Upper case, ASCII, words separated by single spaces. "F'cle Deck" → "FCLE DECK", "Brückendeck" → "BRUECKENDECK". */
 export function normText(s) {
@@ -154,7 +155,7 @@ export function roomOf(text) {
 export function isAnnotationWord(text) {
   const t = normText(text);
   return /^(UP|DN|DOWN|AUF|AB|OP|NED|VENT|CASING|HATCH|FLUSH HATCH|DOOR|WINDOW|EMG|EXIT|EMG EXIT|EMERGENCY EXIT|CL|C L|BL|AP|FP|PS|SB|FWD|AFT)$/.test(t)
-    || isUnitLabel(t);
+    || (RULES.unitLabels && isUnitLabel(t));
 }
 
 /**

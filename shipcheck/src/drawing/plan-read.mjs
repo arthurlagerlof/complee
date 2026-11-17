@@ -5,6 +5,7 @@
 // Pure ES module. Everything measured carries the ids of the paths and texts it came from (`evidence`).
 
 import { roomOf, areaOf, stairWord, numericText, isAnnotationWord, normText } from './vocab.mjs';
+import { RULES } from './rules.mjs';
 import {
   dist, segLen, area as ringArea, signedArea, centroid, ringBox, pointInRing, pointSegment, segIntersect, crossingsAtX, crossingsAtY,
   simplifyRing, mergeCollinear, planarGraph, nestFaces, pointInside, SegGrid, PointGrid, boxContains, UnionFind,
@@ -80,7 +81,7 @@ function readPlanAt({ segs, arcs = [], texts = [], strokeMM = () => 0, halfPlan 
   const swings = arcs.filter((x) => doorSized(x) && swingOk(x));
   const notFillets = swings.filter((x) => !isFillet(x, work));
   const doorArcs = [];
-  for (const a of notFillets) if (!doorArcs.some((b) => sameArc(a, b))) doorArcs.push(a);
+  for (const a of notFillets) if (!RULES.dedupeSwings || !doorArcs.some((b) => sameArc(a, b))) doorArcs.push(a);
   stats.fillets = swings.length - notFillets.length;
   stats.duplicateSwings = notFillets.length - doorArcs.length;
   const doors = findDoors(doorArcs, work);
@@ -110,7 +111,7 @@ function readPlanAt({ segs, arcs = [], texts = [], strokeMM = () => 0, halfPlan 
   const namePoints = labels.filter((g) => isRoomLabel(g)).flatMap((g) => (g.target ? [g.c, g.target] : [g.c]));
   // a space marked with a cross from corner to corner (a lift or service shaft, a void, an opening to the deck below)
   // is one space with a mark in it: the cross does not cut it into four triangles
-  const crosses = crossMarks(work, [...namePoints, ...labels.filter((g) => g.area != null).map((g) => g.c)]);
+  const crosses = RULES.crossMarks ? crossMarks(work, [...namePoints, ...labels.filter((g) => g.area != null).map((g) => g.c)]) : new Set();
   work = work.filter((s, i) => !crosses.has(i));
   stats.crossMarks = crosses.size / 2;
   const objects = smallClosedShapes(work, closedRefs).filter((o) => !namePoints.some((p) => boxContains(o.box, p)));
@@ -366,7 +367,7 @@ function findDoors(doorArcs, segs) {
   doors.forEach((d, i) => {
     if (used.has(i)) return;
     const j = doors.findIndex((e, k) => k > i && !used.has(k) && dist(e.closedEnd, d.closedEnd) < 0.15 * Math.min(d.r, e.r) && Math.abs(cross(unit(sub(d.closedEnd, d.hinge)), unit(sub(e.closedEnd, e.hinge)))) < 0.1
-      && sameSide(d, e) && !partitionAt([(d.closedEnd[0] + e.closedEnd[0]) / 2, (d.closedEnd[1] + e.closedEnd[1]) / 2], d, e));
+      && (!RULES.doublePairing || (sameSide(d, e) && !partitionAt([(d.closedEnd[0] + e.closedEnd[0]) / 2, (d.closedEnd[1] + e.closedEnd[1]) / 2], d, e))));
     if (j >= 0) {
       const e = doors[j]; used.add(j);
       out.push({ ...d, double: true, leaves: [d, e], width: d.r + e.r, closedEnd: e.hinge, evidence: [...d.evidence, ...e.evidence], notes: [...d.notes, ...e.notes] });
@@ -423,7 +424,7 @@ function parallelFamilies(segs, texts) {
     };
     for (const s of stairChains) {
       const field = stairChains.filter((t) => t === s || inStep(s, t));
-      if (field.length >= 3) hatchCount += s.members.length;
+      if (RULES.hatchStairs && field.length >= 3) hatchCount += s.members.length;
       else stairs.push(stairOf(s.members, segs, up, s.box));
     }
   }
@@ -826,7 +827,7 @@ function closeGap(h, c, segs) {
     const t0 = dot(sub([s[0], s[1]], h), d), t1 = dot(sub([s[2], s[3]], h), d);
     return Math.min(Math.max(t0, t1), w) - Math.max(Math.min(t0, t1), 0) >= 0.8 * w;
   });
-  if (drawn) return [];
+  if (drawn && RULES.drawnClosure) return [];
   const out = [[h[0], h[1], c[0], c[1]]];
   const nearH = [], nearC = [];
   for (const s of segs) {
@@ -1031,7 +1032,7 @@ function buildRooms(faces, labels, outlineRing, graph) {
     if (g.area == null || isRoomLabel(g)) continue;
     const f = smallestNamed(g.c);
     const ls = f && byFace.get(f);
-    if (!ls || ls.some((x) => x.area != null) || areaText.has(f)) continue;
+    if (!RULES.areaUnderNumber || !ls || ls.some((x) => x.area != null) || areaText.has(f)) continue;
     areaText.set(f, g);
   }
   const printedOf = (f, ls) => ls.map((g) => g.area).find((v) => v != null) ?? areaText.get(f)?.area ?? null;

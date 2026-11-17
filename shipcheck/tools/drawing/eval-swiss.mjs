@@ -18,6 +18,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readPdf } from '../../src/drawing/read-pdf.mjs';
 import { convertDrawing } from '../../src/drawing/convert.mjs';
 import { findViews } from '../../src/drawing/views.mjs';
+import { setRules } from '../../src/drawing/rules.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const argOf = (k) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : null; };
@@ -29,6 +30,9 @@ const jsonOut = argOf('--json');
 const TRUE_SCALE = { site1000_bldg2082_floor9385: 200, site1015_bldg2113_floor9557: 200, site1102_bldg2242_floor10281: 100 };
 const fixScale = process.argv.includes('--scale-from-truth');
 const oneClick = process.argv.includes('--one-click');
+// --off a,b: those recognition rules turned off (src/drawing/rules.mjs), for measuring each one
+const off = argOf('--off');
+if (off) setRules(Object.fromEntries(off.split(',').filter(Boolean).map((k) => [k, false])));
 if (!fs.existsSync(dir)) { console.log(`Samples ${dir} not found: nothing to evaluate.`); process.exit(0); }
 const qFile = argOf('--questions');
 const truthOf = new Map(); // file → { doors, windows }

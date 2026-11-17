@@ -6,6 +6,7 @@
 
 import { viewTitleOf, deckOf, isTitleBlockWord, endWord, frameOf, numericText, principalOf, scaleOf } from './vocab.mjs';
 import { groupSegments, mergeCollinear, boxContains, boxesOverlap, boxUnion, PointGrid, append } from './plan-graph.mjs';
+import { RULES } from './rules.mjs';
 
 // ---------- segments ----------
 
@@ -123,7 +124,7 @@ export function findViews(sheet) {
     const w = b[2] - b[0], h = b[3] - b[1];
     if (w >= 0.9 * W && h >= 0.9 * H) { border.add(i); return; }
     const nearX = b[0] - bbox[0] < edge || bbox[2] - b[2] < edge, nearY = b[1] - bbox[1] < edge || bbox[3] - b[3] < edge;
-    if ((w >= 0.5 * W && h <= 0.01 * H && nearY) || (h >= 0.5 * H && w <= 0.01 * W && nearX)) border.add(i);
+    if (RULES.frameStrips && ((w >= 0.5 * W && h <= 0.01 * H && nearY) || (h >= 0.5 * H && w <= 0.01 * W && nearX))) border.add(i);
   });
   const keep = [];
   for (const s of segs) {
@@ -155,8 +156,8 @@ export function findViews(sheet) {
   // 5. classify
   const views = clusters.map((c, i) => describe(c, i, assigned.get(c) || { inside: [], title: null }, { bbox, diag, gap, sheet }));
   linkShipViews(views);
-  floorPlans(views, diag);
-  dropSymbolPlans(views);
+  if (RULES.floorPlans) floorPlans(views, diag);
+  if (RULES.symbolPlans) dropSymbolPlans(views);
   decideBow(views, sheet);
   return views
     .filter((v) => v.kind !== 'noise')
@@ -305,7 +306,7 @@ function describe(c, i, texts, ctx) {
   const deckLabels = texts.inside.filter((t) => deckOf(t.text) && !/^(BELOW|UNDER)/i.test(t.text.trim())).length;
   if (deckLabels >= 2) { sc.profile += 0.15; ev.profile.push(`${deckLabels} deck names inside`); }
   // symmetry says something only about a drawing with some line work: any empty box or bar is symmetric
-  const drawn = c.segs.length >= 20;
+  const drawn = !RULES.drawnSymmetry || c.segs.length >= 20;
   if (drawn && g.symH >= 0.55 && aspect >= 1.2) { sc.plan += 0.25 + 0.2 * (g.symH - 0.55) / 0.45; ev.plan.push(`mirror-symmetric about a horizontal axis (${Math.round(g.symH * 100)} % of the line ends)`); }
   if (g.centreline && (g.centreline.dashed || drawn)) { sc.plan += 0.2; ev.plan.push(`centre line at sheet y ${g.centreline.y.toFixed(1)}${g.centreline.dashed ? ' (dash-dot)' : ''}`); }
   if (g.halfPlan) { sc.plan += 0.2; ev.plan.push('drawn on one side of a centre line at its edge (half plan)'); }

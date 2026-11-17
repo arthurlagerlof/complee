@@ -78,7 +78,15 @@ rule-verification tables are empty (catalog not imported yet: the user should do
   without a deck plan above and without a profile nothing is taken as open deck. A door gap the drawing closes itself
   (frame or leaf about as long as the door) gets no extra closing lines. Pieces of one hatch on a common grid (deck
   planking) are no stairs: the pilot boat has 2 stairs instead of 7. Left: 10 rooms not found, 22 off by more than 2 %
-  (mostly 2–5 %). Scale read on 65/65; median 0.36 s per plan (SpaceLens 0.2 s). Floor plans
+  (mostly 2–5 %). These 65 plans are the development set: the rules were made on them, so their numbers are flattered.
+  The honest numbers come from a held-out set of 200 Swiss plans never looked at (`tools/drawing/fetch-heldout.mjs`:
+  range requests on the full Stoa archive, fixed selection by SHA-1 of the name, `stoa-heldout/manifest.json`, local
+  only): 86.0 % of all printed areas within 2 %, 92.1 % of the rooms found, doors 98.9 % of the distinct CAD doors with
+  177/200 plans exact. Every newer rule has a switch (`src/drawing/rules.mjs`); `node tools/drawing/ablation.mjs` turns
+  one off at a time on both sets. On the held-out set: floorPlans, areaUnderNumber, unitLabels, crossMarks and
+  drawnClosure help; dedupeSwings is a trade-off (doors right, −1.1 area points); frameStrips, symbolPlans,
+  drawnSymmetry, doublePairing, hatchStairs and openDeckNeedsInfo change nothing on building plans (they were made for
+  ship drawings and are checked by tests and the blind drawings). Scale read on 65/65; median 0.36 s per plan (SpaceLens 0.2 s). Floor plans
   without ship cues are found by their door swings and labels (`views.mjs` `floorPlans`); legend symbols, scale bars and
   border strips are not decks (`dropSymbolPlans`); symmetry counts only for drawings with line work. Remaining misses:
   balconies read as open deck (5–6 % small), apartment names ("App. A") joined to the room name below.

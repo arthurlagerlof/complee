@@ -11,6 +11,7 @@ import { UNIT_TO_MM } from '../checker.mjs';
 import { deckOf, scaleOf, frameSpacingOf, principalOf, elevationOf, normText, shipTypeOf, numericText, roomOf } from './vocab.mjs';
 import { frameRows, textCentre } from './views.mjs';
 import { readPlan } from './plan-read.mjs';
+import { RULES } from './rules.mjs';
 import {
   segLen, area as ringArea, ringBox, crossingsAtX, crossingsAtY, pointInRing, pointSegment, mergeCollinear, planarGraph, simplifyRing, SegGrid, centroid, clipConvex,
 } from './plan-graph.mjs';
@@ -769,7 +770,7 @@ function openDeckOf(d, decks, profile) {
   };
   // with no deck plan above and no profile the drawing says nothing about what is open (a single floor plan, a lone
   // deck): nothing is taken as open deck then
-  const isOpen = (r) => (above.length || profile ? share(r) < 0.5 : false);
+  const isOpen = (r) => (above.length || profile || !RULES.openDeckNeedsInfo ? share(r) < 0.5 : false);
   // a wall with open deck or the outside on both sides is a rail or bulwark
   const railAt = (w, rooms) => {
     const L = Math.hypot(w.b[0] - w.a[0], w.b[1] - w.a[1]);

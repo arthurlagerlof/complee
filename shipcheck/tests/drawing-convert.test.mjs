@@ -324,6 +324,22 @@ test('a shaft marked with a corner-to-corner cross is one room; the unit name ov
   for (const s of ['Cabin', 'Wheel House', 'Unit cooler', 'Main Deck']) assert.ok(!isUnitLabel(s), s);
 });
 
+test('rule switches: each newer rule can be turned off for measuring; unknown names are refused', async () => {
+  const { readPlan } = await import('../src/drawing/plan-read.mjs');
+  const { setRules, resetRules, RULES } = await import('../src/drawing/rules.mjs');
+  assert.ok(Object.values(RULES).every((v) => v === true), 'all on in normal use');
+  assert.throws(() => setRules({ noSuchRule: false }), /unknown rule/);
+  const segs = [[0, 0, 3000, 0, 'a'], [3000, 0, 3000, 3000, 'b'], [3000, 3000, 0, 3000, 'c'], [0, 3000, 0, 0, 'd'], [0, 0, 3000, 3000, 'x1'], [0, 3000, 3000, 0, 'x2']];
+  const texts = [{ id: 't1', text: 'LIFT', c: [1500, 2200], h: 200, angle: 0, box: [1100, 2100, 1900, 2300] }];
+  const liftArea = () => readPlan({ segs, texts }).rooms.find((r) => r.label === 'LIFT')?.area ?? 0;
+  try {
+    assert.ok(liftArea() > 8.5e6, 'on: one 9 m² shaft');
+    setRules({ crossMarks: false });
+    assert.ok(liftArea() < 3e6, 'off: the cross cuts it into triangles again');
+  } finally { resetRules(); }
+  assert.ok(RULES.crossMarks, 'reset');
+});
+
 test('pieces of one planking hatch on a common grid are no stairs; a single flight of the same lines is', async () => {
   const { readPlan } = await import('../src/drawing/plan-read.mjs');
   // a room 12 m × 6 m (mm), with `pieces` flights of 6 equal lines 200 mm apart, all on one 200 mm grid
