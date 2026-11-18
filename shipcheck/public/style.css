@@ -552,6 +552,7 @@ table.dw-views td:last-child { white-space: nowrap; }
 .ic { margin-top: 6px; padding: 6px 8px; border: 1px dashed #e0c36a; border-radius: 6px; background: #fffaf0; font-size: 12px; }
 .ic-head { font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #7a5200; margin-bottom: 4px; }
 .ic-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 2px 0; }
+.ic-row button { white-space: nowrap; flex: none; }
 .ic-row.ok { color: #1d6b3d; }
 .ic-who input { width: 100%; margin-top: 4px; box-sizing: border-box; }
 .ic-who input.need { outline: 2px solid #b42318; }

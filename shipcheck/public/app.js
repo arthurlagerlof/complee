@@ -2506,12 +2506,12 @@ async function demoTypeFix(step, focus, fix) {
   return true;
 }
 
-// Demo run-through, about 4 minutes, every main function once, each on screen long enough to read:
-//  1 general arrangement + check   2 a finding with its rule   3 AI explanation   4 what-if fix
-//  5 escape plan   6 findings register   7 traceability   8 report   9 real 3D production model
-// 10 rule view   11 Drawing → 3D (PDF to 3D model, a finding measured from the drawing)   12 closing frame.
+// Demo run-through, about 3 minutes, every main function once, each on screen long enough to read, in the order of
+// the real process: 1 Drawing → 3D (a PDF general arrangement becomes a checked 3D model; a value from the drawing
+// to confirm)   2 design review   3 a finding with its rule   4 AI explanation   5 what-if fix   6 escape plan
+// 7 findings register   8 traceability   9 report   10 real 3D production model   11 rule view   12 closing frame.
 // Space / → takes over step by step (presenter mode), Esc stops. A chapter whose data is missing here is skipped.
-const DEMO_DRAWING = 'demo/aurora-ga.pdf'; // local only (third-party drawing, internal use): not in Git; without it chapter 11 is skipped
+const DEMO_DRAWING = 'demo/aurora-ga.pdf'; // local only (third-party drawing, internal use): not in Git; without it chapter 1 is skipped
 const DEMO_CHAPTERS = 12;
 async function runDemo() {
   if (S.demo) { S.demo.stop = true; return; }
@@ -2545,16 +2545,68 @@ async function runDemo() {
     closeTrace(); closeRegister(); closeAiPanel(); closeDrawingPanel();
     if (views.three.plan) { views.three.setPlan(false); $('#planBtn').classList.remove('on'); }
 
-    // 1. The general arrangement of the research vessel, checked against the rule catalog.
+    // 1. Drawing → 3D: where a project starts. A PDF general arrangement becomes a checked 3D model, without AI.
+    const pdf = await fetch(DEMO_DRAWING, { cache: 'no-store' }).then((res) => (res.ok ? res.blob() : null)).catch(() => null);
+    if (pdf) {
+      chapter('Drawing → 3D');
+      caption('It starts with a drawing: a PDF general arrangement', 'Drawing → 3D reads its line work and text in the browser: no AI, nothing uploaded');
+      await pointAt('#drawingBtn', step, { click: false });
+      await beat(2500); // a moment on the opening line (in presenter mode: wait for the presenter)
+      const m = await drawingImport();
+      await m.openDrawingImport(drawingHost, { file: new File([pdf], 'aurora_1230-01-01_A_GA.pdf', { type: 'application/pdf' }) });
+      const viewsReady = () => document.querySelectorAll('#detail tr[data-view]').length > 0 && !document.querySelector('#detail #dwConvert')?.disabled;
+      if (await until(viewsReady, 90000)) {
+        const kinds = [...document.querySelectorAll('#detail tr[data-view] select')].map((s) => s.value);
+        const k = (x) => kinds.filter((v) => v === x).length;
+        const scale = $('#dwScale')?.getAttribute('placeholder');
+        caption(`${kinds.length} views found on the sheet: ${k('profile')} profiles, ${k('section')} section, ${k('plan')} deck plans`,
+          `${scale ? `Scale 1:${scale} found on the drawing · ` : ''}every view can be corrected before converting`);
+        await beat(6500);
+        const convert = await pointAt('#dwConvert', step);
+        caption('Converting: rooms from the walls, doors from the swing arcs, decks from the profile', 'Every value says whether it was measured, read from the text, typed or assumed');
+        convert?.click();
+        if (await until(() => document.querySelector('#detail h1')?.textContent === 'Drawing converted to 3D', 120000)) {
+          await step(1500);
+          showOverview();
+          caption(`Converted to 3D: ${S.norm.elements.length} elements on ${S.norm.decks.length} decks, checked at once`,
+            `${S.results.summary.non_compliant} non-compliant · ${S.results.summary.not_enough_info} not enough info · the conversion report lists what was measured and what was assumed`);
+          await beat(7000);
+          const f = findingsOf(S.results).find((x) => x.status === 'non_compliant' && unconfirmedInputs(x).length);
+          if (f) {
+            await openItem(f.element);
+            const r = S.results.elements[f.element].results.find((x) => x.rule_id === f.rule_id);
+            caption(`${elById(f.element)?.name ?? f.element}: ${r.measured} measured from the drawing, required ${r.required}`,
+              'Marked “pre-check: input unconfirmed”: a value from a drawing holds only once a person confirms it');
+            document.querySelectorAll('#dResults .tag.unconfirmed').forEach(pulse);
+            await beat(6500);
+            const confirm = document.querySelector('#dResults .icConfirm');
+            if (confirm) {
+              confirm.closest('.ic')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              await pointAt(confirm, step, { click: false }); // shown, not clicked: the demo writes nothing into the register
+              caption('The engineer checks the value on the drawing and confirms it', 'With their name and the date · it holds only for this value · the result itself never changes');
+              pulse(confirm.closest('.ic'));
+              await beat(5500);
+            }
+          }
+        } else {
+          caption('The conversion did not finish in time', 'The demo continues');
+          await beat(2500);
+        }
+      }
+      closeDrawingPanel();
+    }
+
+    // 2. Design review on a prepared design model of a research vessel, checked against the rule catalog.
     if (layout) {
+      closeDrawingPanel();
       chapter('Design review');
       if (S.sc.id !== layout.id || S.edits.size) await loadScenario(layout.id);
       await waitViewer(step, token);
       if (S.escapeOn) setEscapeMode(false);
       showOverview();
       viewer.paintNeutral();
-      caption(`${S.model.name}`, `${S.norm.decks.length} decks · ${S.norm.elements.length} rooms, doors, stairs, rails and openings · ship/1 design model`);
-      await beat(4000);
+      caption(`The full review on a design model: ${S.model.name}`, `${S.norm.decks.length} decks · ${S.norm.elements.length} rooms, doors, stairs, rails and openings · ship/1 design model`);
+      await beat(3500);
       const run = allRules().filter((r) => !r.draft && Object.values(S.results.elements).some((e) => e.results.some((x) => x.rule_id === r.id)));
       caption(`Checking ${run.length} rules: deterministic, in the browser`, [...new Set(run.map((r) => family(r.source)))].join(' · '));
       await paintProgressively(step);
@@ -2564,7 +2616,7 @@ async function runDemo() {
       pulse('#pills'); pulse('#scorebox'); pulse('#readyBox');
       await beat(5000);
 
-      // 2. One finding: measured against required, with the rule text and its source.
+      // 3. One finding: measured against required, with the rule text and its source.
       const door = findingsOf(S.results).find((f) => f.status === 'non_compliant' && f.element === 'MD-D1')
         ?? findingsOf(S.results).find((f) => f.status === 'non_compliant');
       if (door) {
@@ -2575,7 +2627,7 @@ async function runDemo() {
         document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
         await beat(6500);
 
-        // 3. AI explanation of that finding: plain language, exceptions to check, ways to fix it.
+        // 4. AI explanation of that finding: plain language, exceptions to check, ways to fix it.
         chapter('AI explanation');
         const btn = document.querySelector(`#dResults .explainBtn[data-rule="${CSS.escape(r.rule_id)}"]`);
         if (!aiState.status?.available || !btn) {
@@ -2603,7 +2655,7 @@ async function runDemo() {
         }
       }
 
-      // 4. What-if: the engineer types a new value; re-checked and recoloured at once, the model is not changed.
+      // 5. What-if: the engineer types a new value; re-checked and recoloured at once, the model is not changed.
       const d = S.model.demo || {};
       if (d.focus && S.results.elements[d.focus] && d.fix) {
         chapter('What-if fix');
@@ -2628,7 +2680,7 @@ async function runDemo() {
         }
       }
 
-      // 5. Escape plan: routes from every room to a muster station, from the same model.
+      // 6. Escape plan: routes from every room to a muster station, from the same model.
       if (S.escape || S.escapePending) {
         chapter('Escape plan');
         const eb = await pointAt('#escapeBtn', step);
@@ -2654,7 +2706,7 @@ async function runDemo() {
         }
       }
 
-      // 6. Findings register: how each finding is handled and by whom; never changes the check result.
+      // 7. Findings register: how each finding is handled and by whom; never changes the check result.
       chapter('Findings register');
       const rb = await pointAt('#registerBtn', step);
       if (rb) {
@@ -2665,7 +2717,7 @@ async function runDemo() {
         closeRegister();
       }
 
-      // 7. Traceability: every part against every rule; a cell opens that part and its rule card.
+      // 8. Traceability: every part against every rule; a cell opens that part and its rule card.
       chapter('Traceability');
       caption('Traceability: every part against every rule', 'One click on a cell opens the part and the rule card behind the result');
       const tb = await pointAt('#traceBtn', step);
@@ -2683,7 +2735,7 @@ async function runDemo() {
         closeTrace();
       }
 
-      // 8. Report: the HTML report for the class review (shown in the page; the button opens it in a new tab).
+      // 9. Report: the HTML report for the class review (shown in the page; the button opens it in a new tab).
       chapter('Report');
       caption('Export the findings: HTML report and CSV', 'Rule references, measured vs required, value provenance, what-if values, readiness');
       await pointAt('#reportBtn', step);
@@ -2694,7 +2746,7 @@ async function runDemo() {
       hideReportPreview();
     }
 
-    // 9. The real production model (ShipConstructor, 35 000+ parts), checked with the same rules.
+    // 10. The real production model (ShipConstructor, 35 000+ parts), checked with the same rules.
     if (real) {
       chapter('Real 3D production model');
       caption('Now the real ship: the ShipConstructor production model', 'Loaded from the exported model tiles; the check already ran');
@@ -2723,7 +2775,7 @@ async function runDemo() {
         await beat(6000);
       }
 
-      // 10. Rule view: every part one rule applies to, coloured by that rule, in the real ship.
+      // 11. Rule view: every part one rule applies to, coloured by that rule, in the real ship.
       const h = d.hatch;
       if (h && ruleById(h.rule)) {
         chapter('Rule view');
@@ -2735,48 +2787,6 @@ async function runDemo() {
         const back = document.querySelector('#ruleBack');
         if (back) { await pointAt(back, step); back.click(); await step(800); }
       }
-    }
-
-    // 11. Drawing → 3D: a PDF general arrangement becomes a checked 3D model, without AI.
-    const pdf = await fetch(DEMO_DRAWING, { cache: 'no-store' }).then((res) => (res.ok ? res.blob() : null)).catch(() => null);
-    if (pdf) {
-      chapter('Drawing → 3D');
-      caption('Drawing → 3D: a PDF general arrangement becomes a 3D model', 'Read in the browser from the line work and text of the drawing: no AI, nothing uploaded');
-      await pointAt('#drawingBtn', step, { click: false });
-      const m = await drawingImport();
-      await m.openDrawingImport(drawingHost, { file: new File([pdf], 'aurora_1230-01-01_A_GA.pdf', { type: 'application/pdf' }) });
-      const viewsReady = () => document.querySelectorAll('#detail tr[data-view]').length > 0 && !document.querySelector('#detail #dwConvert')?.disabled;
-      if (await until(viewsReady, 90000)) {
-        const kinds = [...document.querySelectorAll('#detail tr[data-view] select')].map((s) => s.value);
-        const k = (x) => kinds.filter((v) => v === x).length;
-        const scale = $('#dwScale')?.getAttribute('placeholder');
-        caption(`${kinds.length} views found on the sheet: ${k('profile')} profiles, ${k('section')} section, ${k('plan')} deck plans`,
-          `${scale ? `Scale 1:${scale} found on the drawing · ` : ''}every view can be corrected before converting`);
-        await beat(6500);
-        const convert = await pointAt('#dwConvert', step);
-        caption('Converting: rooms from the walls, doors from the swing arcs, decks from the profile', 'Every value says whether it was measured, read from the text, typed or assumed');
-        convert?.click();
-        if (await until(() => document.querySelector('#detail h1')?.textContent === 'Drawing converted to 3D', 120000)) {
-          await step(1500);
-          showOverview();
-          caption(`Converted to 3D: ${S.norm.elements.length} elements on ${S.norm.decks.length} decks, checked at once`,
-            `${S.results.summary.non_compliant} non-compliant · ${S.results.summary.not_enough_info} not enough info · the conversion report lists what was measured and what was assumed`);
-          await beat(7000);
-          const f = findingsOf(S.results).find((x) => x.status === 'non_compliant' && unconfirmedInputs(x).length);
-          if (f) {
-            await openItem(f.element);
-            const r = S.results.elements[f.element].results.find((x) => x.rule_id === f.rule_id);
-            caption(`${elById(f.element)?.name ?? f.element}: ${r.measured} measured from the drawing, required ${r.required}`,
-              'Marked “pre-check: input unconfirmed”: a value from a drawing holds only once a person confirms it');
-            document.querySelectorAll('#dResults .tag.unconfirmed').forEach(pulse);
-            await beat(7500);
-          }
-        } else {
-          caption('The conversion did not finish in time', 'The demo continues');
-          await beat(2500);
-        }
-      }
-      closeDrawingPanel();
     }
 
     // 12. Closing frame: back to the general arrangement (unedited), every result coloured.
