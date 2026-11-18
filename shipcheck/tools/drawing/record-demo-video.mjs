@@ -50,7 +50,7 @@ await page.evaluate(() => {
       await track.applyConstraints({ width: 1920, height: 1080, frameRate: 30, resizeMode: 'crop-and-scale' });
       await new Promise((r) => setTimeout(r, 400));
       const type = ['video/mp4;codecs=avc3.640028', 'video/webm;codecs=vp9'].find((t) => MediaRecorder.isTypeSupported(t));
-      const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 6_000_000 });
+      const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 4_500_000 });
       window.pending = [];
       rec.ondataavailable = (e) => {
         if (!e.data.size) return;

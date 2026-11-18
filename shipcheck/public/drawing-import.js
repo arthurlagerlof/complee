@@ -190,6 +190,57 @@ export function closeDrawingImport() {
   hideTip();
 }
 
+/**
+ * For the demo run-through (app.js): the steps of the reading, shown on the sheet with the controls the engineer has.
+ * Each returns false / null when there is nothing to show (no conversion yet, no such view).
+ */
+export const demoSteps = {
+  // What was recognised, over the drawing: rooms by zone, walls, doors, stairs (or doors only), with the legend.
+  overlay(filter = null) { if (!st.result) return false; openPanel(); setOverlay(true, filter); return true; },
+  // A deck plan in view: the plan of that deck (by name), or the largest plan.
+  showPlan(deckName) {
+    const plans = effectiveViews().filter((v) => v.kind === 'plan' && Array.isArray(v.box));
+    const area = (v) => (v.box[2] - v.box[0]) * (v.box[3] - v.box[1]);
+    const v = plans.find((x) => norm(x.deckName) === norm(deckName)) ?? plans.sort((a, b) => area(b) - area(a))[0];
+    if (!v) return null;
+    ui.view.reveal([(v.box[0] + v.box[2]) / 2, (v.box[1] + v.box[3]) / 2], [v.box[2] - v.box[0], v.box[3] - v.box[1]]);
+    return v.deckName ?? v.title ?? v.id;
+  },
+  // The line work one element was read from (orange) and the element selected; zoom: bring it close (span × zoom).
+  evidence(id, { zoom = 0 } = {}) {
+    if (!st.result) return false;
+    const item = overlayItems().items.find((it) => it.id === id);
+    const ids = evidenceOf(item ?? { id });
+    ui.view.setEvidence(ids);
+    ui.view.selectItem(id);
+    const pts = item?.poly ?? item?.line;
+    if (zoom > 0 && pts?.length) {
+      const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+      const w = Math.max(...xs) - Math.min(...xs), h = Math.max(...ys) - Math.min(...ys), s = Math.max(w, h, 1) * zoom;
+      ui.view.reveal([(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2], [s * 1.6, s]);
+    }
+    return !!ids?.length;
+  },
+  // How many of each kind the overlay shows (room, wall, door, opening, stair).
+  counts() {
+    if (!st.result) return {};
+    const out = {};
+    for (const it of overlayItems().items) out[it.kind] = (out[it.kind] ?? 0) + 1;
+    return out;
+  },
+  // The element of the given type on a deck (by deck name) with the most evidence, for the demo to point at.
+  elementOn(type, deckName) {
+    const els = st.result?.model.elements ?? [];
+    const deck = (st.result?.model.decks ?? []).find((d) => norm(d.name) === norm(deckName));
+    return els.find((e) => e.type === type && (!deck || e.deck === deck.id))?.id ?? null;
+  },
+  deckOf(id) {
+    const m = st.result?.model;
+    const e = m?.elements?.find((x) => x.id === id);
+    return m?.decks?.find((d) => d.id === e?.deck)?.name ?? null;
+  },
+};
+
 /** Shows the conversion report again in the right-hand panel (after the engineer looked at an element). */
 export function showReport() {
   if (st.result) renderReport();

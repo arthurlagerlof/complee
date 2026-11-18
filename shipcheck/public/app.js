@@ -2566,12 +2566,40 @@ async function runDemo() {
         caption('Converting: rooms from the walls, doors from the swing arcs, decks from the profile', 'Every value says whether it was measured, read from the text, typed or assumed');
         convert?.click();
         if (await until(() => document.querySelector('#detail h1')?.textContent === 'Drawing converted to 3D', 120000)) {
-          await step(1500);
+          await step(1200);
+          const f = findingsOf(S.results).find((x) => x.status === 'non_compliant' && unconfirmedInputs(x).length);
+          const deckName = f ? m.demoSteps.deckOf(f.element) : null;
+          // The reading in 2D: what was recognised, drawn in colour over the drawing, on the deck plan of the finding.
+          if (m.demoSteps.overlay()) {
+            hidePointer();
+            $('#caption').classList.add('top'); // the legend of the overlay is at the bottom of the sheet
+            const plan = m.demoSteps.showPlan(deckName);
+            const c = m.demoSteps.counts();
+            caption(`Recognised on the drawing: ${c.room ?? 0} rooms, ${c.door ?? 0} doors, ${c.stair ?? 0} stairs`,
+              `Rooms from closed walls, coloured by use · doors from the swing arcs · stairs from the treads${plan ? ` · here: ${plan}` : ''}`);
+            await beat(7500);
+            if (f && m.demoSteps.evidence(f.element, { zoom: 5 })) {
+              caption('Every element keeps the line work it was read from', `${elById(f.element)?.name ?? 'Element'} ${f.element}: its lines on the drawing in orange · hover any element to see its own`);
+              await beat(6000);
+            }
+          }
+          // …and in 3D: the deck plans become decks (pulled apart first, then at their heights).
+          $('#caption').classList.remove('top');
+          closeDrawingPanel();
+          const deckSel = $('#deck');
+          if (S.norm.decks.length > 1 && deckSel.querySelector('option[value="exploded"]')) {
+            deckSel.value = 'exploded';
+            deckSel.dispatchEvent(new Event('change'));
+            showOverview();
+            caption(`From 2D to 3D: the ${S.norm.decks.length} deck plans become decks`, 'Pulled apart here to show each deck · walls raised to the deck heights measured in the profile view');
+            await beat(6000);
+            deckSel.value = 'all';
+            deckSel.dispatchEvent(new Event('change'));
+          }
           showOverview();
           caption(`Converted to 3D: ${S.norm.elements.length} elements on ${S.norm.decks.length} decks, checked at once`,
             `${S.results.summary.non_compliant} non-compliant · ${S.results.summary.not_enough_info} not enough info · the conversion report lists what was measured and what was assumed`);
-          await beat(7000);
-          const f = findingsOf(S.results).find((x) => x.status === 'non_compliant' && unconfirmedInputs(x).length);
+          await beat(6000);
           if (f) {
             await openItem(f.element);
             const r = S.results.elements[f.element].results.find((x) => x.rule_id === f.rule_id);
@@ -2805,6 +2833,7 @@ async function runDemo() {
     document.body.classList.remove('demo-running');
     S.demo = null;
     caption('');
+    $('#caption').classList.remove('top');
     $('#demoBtn').innerHTML = '&#9654; Demo run-through';
   }
 }
