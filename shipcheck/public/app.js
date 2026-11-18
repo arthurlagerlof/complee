@@ -2519,9 +2519,20 @@ async function runDemo() {
   const step = async (ms) => { await sleep(ms); if (token.stop) throw new Error('stopped'); };
   // A beat is a pause in the story. Autoplay waits ms; Space / → / Page Down skips ahead and switches to presenter
   // mode, where every beat waits for the next key press (presentation clickers send → or Page Down).
+  // Narration (optional): a page that records the demo as a video may set window.__demoVoice(key) → a promise that
+  // resolves when the spoken line for that caption has ended. A caption waits for the line before it, and a beat
+  // lasts at least as long as the line it stands under, so voice and screen never drift apart. Without it: silent.
+  token.speaking = null;
+  const show = async (text, sub = '') => {
+    if (token.speaking) await token.speaking;
+    if (token.stop) throw new Error('stopped');
+    caption(text, sub);
+    token.speaking = typeof window.__demoVoice === 'function'
+      ? Promise.resolve(window.__demoVoice(`${token.chapter}|${text}`)).catch(() => {}) : null;
+  };
   const beat = async (ms) => {
     const key = new Promise((resolve) => { token.next = resolve; });
-    await (token.manual ? key : Promise.race([sleep(ms), key]));
+    await (token.manual ? key : Promise.race([Promise.all([sleep(ms), token.speaking]), key]));
     token.next = null;
     if (token.stop) throw new Error('stopped');
   };
@@ -2549,7 +2560,7 @@ async function runDemo() {
     const pdf = await fetch(DEMO_DRAWING, { cache: 'no-store' }).then((res) => (res.ok ? res.blob() : null)).catch(() => null);
     if (pdf) {
       chapter('Drawing → 3D');
-      caption('It starts with a drawing: a PDF general arrangement', 'Drawing → 3D reads its line work and text in the browser: no AI, nothing uploaded');
+      await show('It starts with a drawing: a PDF general arrangement', 'Drawing → 3D reads its line work and text in the browser: no AI, nothing uploaded');
       await pointAt('#drawingBtn', step, { click: false });
       await beat(2500); // a moment on the opening line (in presenter mode: wait for the presenter)
       const m = await drawingImport();
@@ -2559,11 +2570,11 @@ async function runDemo() {
         const kinds = [...document.querySelectorAll('#detail tr[data-view] select')].map((s) => s.value);
         const k = (x) => kinds.filter((v) => v === x).length;
         const scale = $('#dwScale')?.getAttribute('placeholder');
-        caption(`${kinds.length} views found on the sheet: ${k('profile')} profiles, ${k('section')} section, ${k('plan')} deck plans`,
+        await show(`${kinds.length} views found on the sheet: ${k('profile')} profiles, ${k('section')} section, ${k('plan')} deck plans`,
           `${scale ? `Scale 1:${scale} found on the drawing · ` : ''}every view can be corrected before converting`);
         await beat(6500);
         const convert = await pointAt('#dwConvert', step);
-        caption('Converting: rooms from the walls, doors from the swing arcs, decks from the profile', 'Every value says whether it was measured, read from the text, typed or assumed');
+        await show('Converting: rooms from the walls, doors from the swing arcs, decks from the profile', 'Every value says whether it was measured, read from the text, typed or assumed');
         convert?.click();
         if (await until(() => document.querySelector('#detail h1')?.textContent === 'Drawing converted to 3D', 120000)) {
           await step(1200);
@@ -2575,11 +2586,11 @@ async function runDemo() {
             $('#caption').classList.add('top'); // the legend of the overlay is at the bottom of the sheet
             const plan = m.demoSteps.showPlan(deckName);
             const c = m.demoSteps.counts();
-            caption(`Recognised on the drawing: ${c.room ?? 0} rooms, ${c.door ?? 0} doors, ${c.stair ?? 0} stairs`,
+            await show(`Recognised on the drawing: ${c.room ?? 0} rooms, ${c.door ?? 0} doors, ${c.stair ?? 0} stairs`,
               `Rooms from closed walls, coloured by use · doors from the swing arcs · stairs from the treads${plan ? ` · here: ${plan}` : ''}`);
             await beat(7500);
             if (f && m.demoSteps.evidence(f.element, { zoom: 5 })) {
-              caption('Every element keeps the line work it was read from', `${elById(f.element)?.name ?? 'Element'} ${f.element}: its lines on the drawing in orange · hover any element to see its own`);
+              await show('Every element keeps the line work it was read from', `${elById(f.element)?.name ?? 'Element'} ${f.element}: its lines on the drawing in orange · hover any element to see its own`);
               await beat(6000);
             }
           }
@@ -2591,19 +2602,19 @@ async function runDemo() {
             deckSel.value = 'exploded';
             deckSel.dispatchEvent(new Event('change'));
             showOverview();
-            caption(`From 2D to 3D: the ${S.norm.decks.length} deck plans become decks`, 'Pulled apart here to show each deck · walls raised to the deck heights measured in the profile view');
+            await show(`From 2D to 3D: the ${S.norm.decks.length} deck plans become decks`, 'Pulled apart here to show each deck · walls raised to the deck heights measured in the profile view');
             await beat(6000);
             deckSel.value = 'all';
             deckSel.dispatchEvent(new Event('change'));
           }
           showOverview();
-          caption(`Converted to 3D: ${S.norm.elements.length} elements on ${S.norm.decks.length} decks, checked at once`,
+          await show(`Converted to 3D: ${S.norm.elements.length} elements on ${S.norm.decks.length} decks, checked at once`,
             `${S.results.summary.non_compliant} non-compliant · ${S.results.summary.not_enough_info} not enough info · the conversion report lists what was measured and what was assumed`);
           await beat(6000);
           if (f) {
             await openItem(f.element);
             const r = S.results.elements[f.element].results.find((x) => x.rule_id === f.rule_id);
-            caption(`${elById(f.element)?.name ?? f.element}: ${r.measured} measured from the drawing, required ${r.required}`,
+            await show(`${elById(f.element)?.name ?? f.element}: ${r.measured} measured from the drawing, required ${r.required}`,
               'Marked “pre-check: input unconfirmed”: a value from a drawing holds only once a person confirms it');
             document.querySelectorAll('#dResults .tag.unconfirmed').forEach(pulse);
             await beat(6500);
@@ -2611,13 +2622,13 @@ async function runDemo() {
             if (confirm) {
               confirm.closest('.ic')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
               await pointAt(confirm, step, { click: false }); // shown, not clicked: the demo writes nothing into the register
-              caption('The engineer checks the value on the drawing and confirms it', 'With their name and the date · it holds only for this value · the result itself never changes');
+              await show('The engineer checks the value on the drawing and confirms it', 'With their name and the date · it holds only for this value · the result itself never changes');
               pulse(confirm.closest('.ic'));
               await beat(5500);
             }
           }
         } else {
-          caption('The conversion did not finish in time', 'The demo continues');
+          await show('The conversion did not finish in time', 'The demo continues');
           await beat(2500);
         }
       }
@@ -2633,13 +2644,13 @@ async function runDemo() {
       if (S.escapeOn) setEscapeMode(false);
       showOverview();
       viewer.paintNeutral();
-      caption(`The full review on a design model: ${S.model.name}`, `${S.norm.decks.length} decks · ${S.norm.elements.length} rooms, doors, stairs, rails and openings · ship/1 design model`);
+      await show(`The full review on a design model: ${S.model.name}`, `${S.norm.decks.length} decks · ${S.norm.elements.length} rooms, doors, stairs, rails and openings · ship/1 design model`);
       await beat(3500);
       const run = allRules().filter((r) => !r.draft && Object.values(S.results.elements).some((e) => e.results.some((x) => x.rule_id === r.id)));
-      caption(`Checking ${run.length} rules: deterministic, in the browser`, [...new Set(run.map((r) => family(r.source)))].join(' · '));
+      await show(`Checking ${run.length} rules: deterministic, in the browser`, [...new Set(run.map((r) => family(r.source)))].join(' · '));
       await paintProgressively(step);
       const s = S.results.summary;
-      caption(`${s.non_compliant} non-compliant · ${s.not_enough_info} not enough info · ${s.compliant} compliant`,
+      await show(`${s.non_compliant} non-compliant · ${s.not_enough_info} not enough info · ${s.compliant} compliant`,
         `Checked in ${S.lastCheckMs.toFixed(1)} ms · same input, same result · pass/fail never comes from AI`);
       pulse('#pills'); pulse('#scorebox'); pulse('#readyBox');
       await beat(5000);
@@ -2651,7 +2662,7 @@ async function runDemo() {
         chapter('A finding and its rule');
         await openItem(door.element);
         const r = S.results.elements[door.element].results.find((x) => x.rule_id === door.rule_id);
-        caption(`${elById(door.element)?.name ?? door.element}: ${r.measured}, required ${r.required}`, `“${ruleQuote(r)}” (${r.source.split(':')[0]})`);
+        await show(`${elById(door.element)?.name ?? door.element}: ${r.measured}, required ${r.required}`, `“${ruleQuote(r)}” (${r.source.split(':')[0]})`);
         document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
         await beat(6500);
 
@@ -2659,10 +2670,10 @@ async function runDemo() {
         chapter('AI explanation');
         const btn = document.querySelector(`#dResults .explainBtn[data-rule="${CSS.escape(r.rule_id)}"]`);
         if (!aiState.status?.available || !btn) {
-          caption('AI explanation: not available here', 'It needs the Complee backend with an API key; everything else works without it');
+          await show('AI explanation: not available here', 'It needs the Complee backend with an API key; everything else works without it');
           await beat(3500);
         } else {
-          caption('✦ Explain: the AI explains the finding in plain language', 'Exceptions to check and ways to fix it · the result itself stays with the checker');
+          await show('✦ Explain: the AI explains the finding in plain language', 'Exceptions to check and ways to fix it · the result itself stays with the checker');
           const key = explainKey(door.element, r);
           if (!S.explain.get(key)?.data) { await pointAt(btn, step); btn.click(); } // a second click would fold it away
           const card = () => document.querySelector(`#dResults .res[data-rule="${CSS.escape(r.rule_id)}"]`);
@@ -2674,10 +2685,10 @@ async function runDemo() {
             hidePointer(); // the answer grows under the Explain button: keep the pointer off the text
             box?.scrollIntoView({ block: 'center', behavior: 'smooth' });
             if (box) pulse(box);
-            caption('AI answer: summary and concrete fixes', `${modelLabel(st.data.model)} · ${((st.data.duration_ms ?? 0) / 1000).toFixed(1)} s · ${cents(st.data.cost_usd)} · the finding stays non-compliant until the design changes`);
+            await show('AI answer: summary and concrete fixes', `${modelLabel(st.data.model)} · ${((st.data.duration_ms ?? 0) / 1000).toFixed(1)} s · ${cents(st.data.cost_usd)} · the finding stays non-compliant until the design changes`);
             await beat(11000);
           } else {
-            caption('The AI did not answer in time', st?.error ?? 'The check results are not affected');
+            await show('The AI did not answer in time', st?.error ?? 'The check results are not affected');
             await beat(3000);
           }
         }
@@ -2691,17 +2702,17 @@ async function runDemo() {
         const fe = S.results.elements[d.focus];
         const bad = fe.results.filter((r) => r.status === 'non_compliant');
         if (bad.length) {
-          caption(`${elById(d.focus).name}: ${bad[0].measured} fails ${bad.length} overlapping rule${bad.length > 1 ? 's' : ''}`,
+          await show(`${elById(d.focus).name}: ${bad[0].measured} fails ${bad.length} overlapping rule${bad.length > 1 ? 's' : ''}`,
             `${bad.map((r) => `${r.rule_id} (${r.required})`).join(' + ')} · inch values converted to mm`);
           document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
           await beat(5500);
         }
-        caption(`What-if: ${d.fix.prop.replace(/_/g, ' ')} = ${d.fix.value} ${d.fix.unit || 'mm'}`, 'Labelled "what-if, not in model"; re-checked and recoloured instantly');
+        await show(`What-if: ${d.fix.prop.replace(/_/g, ' ')} = ${d.fix.value} ${d.fix.unit || 'mm'}`, 'Labelled "what-if, not in model"; re-checked and recoloured instantly');
         await step(800);
         if (await demoTypeFix(step, d.focus, d.fix)) {
           await step(600);
           const now = S.results.elements[d.focus].worst;
-          caption(`${d.focus} is now ${LABEL[now].toLowerCase()} (what-if, not in model)`, `Re-checked in ${S.lastCheckMs.toFixed(1)} ms · reset restores the model value; the model itself is never changed`);
+          await show(`${d.focus} is now ${LABEL[now].toLowerCase()} (what-if, not in model)`, `Re-checked in ${S.lastCheckMs.toFixed(1)} ms · reset restores the model value; the model itself is never changed`);
           $('#detail').scrollTo({ top: 0, behavior: 'smooth' });
           pulse('#dStatus');
           await beat(5000);
@@ -2717,7 +2728,7 @@ async function runDemo() {
         if (S.escape) {
           const rooms = escapeRooms();
           const count = (st) => rooms.filter((o) => o.status === st).length;
-          caption('Escape plan: every room to a muster station, computed from the layout',
+          await show('Escape plan: every room to a muster station, computed from the layout',
             `${count('two_routes') + count('direct')} rooms with two independent routes · ${count('shared_route')} share a corridor · ${count('single_route')} with a single route only`);
           pulse('#escapeBox');
           await beat(6000);
@@ -2725,7 +2736,7 @@ async function runDemo() {
           if (one) {
             select(one.id);
             await step(600);
-            caption(`${elById(one.id)?.name ?? one.id}: single route only`, `${one.primary.length_mm ? `${(one.primary.length_mm / 1000).toFixed(1)} m to the muster station · ` : ''}a route analysis next to the rule check, not a pass/fail`);
+            await show(`${elById(one.id)?.name ?? one.id}: single route only`, `${one.primary.length_mm ? `${(one.primary.length_mm / 1000).toFixed(1)} m to the muster station · ` : ''}a route analysis next to the rule check, not a pass/fail`);
             await beat(6000);
           }
           setEscapeMode(false);
@@ -2740,14 +2751,14 @@ async function runDemo() {
       if (rb) {
         openRegister();
         const s2 = registerSummary(registerRows(S.results, S.register));
-        caption(`Findings register: ${s2.total} findings, ${s2.open} open`, 'Disposition, responsible person and justification per finding · carried over to the next revision · CSV and report');
+        await show(`Findings register: ${s2.total} findings, ${s2.open} open`, 'Disposition, responsible person and justification per finding · carried over to the next revision · CSV and report');
         await beat(6500);
         closeRegister();
       }
 
       // 8. Traceability: every part against every rule; a cell opens that part and its rule card.
       chapter('Traceability');
-      caption('Traceability: every part against every rule', 'One click on a cell opens the part and the rule card behind the result');
+      await show('Traceability: every part against every rule', 'One click on a cell opens the part and the rule card behind the result');
       const tb = await pointAt('#traceBtn', step);
       if (tb) {
         openTrace();
@@ -2757,7 +2768,7 @@ async function runDemo() {
         const cell = d.focus && await pointAt(`#tracePanel td.cell[data-id="${CSS.escape(d.focus)}"]`, step);
         if (cell) {
           cell.click();
-          caption(`${d.focus}: compliant with the what-if value`, 'From the table straight to the part, its rule card and the value that decided it');
+          await show(`${d.focus}: compliant with the what-if value`, 'From the table straight to the part, its rule card and the value that decided it');
           await beat(4000);
         }
         closeTrace();
@@ -2765,7 +2776,7 @@ async function runDemo() {
 
       // 9. Report: the HTML report for the class review (shown in the page; the button opens it in a new tab).
       chapter('Report');
-      caption('Export the findings: HTML report and CSV', 'Rule references, measured vs required, value provenance, what-if values, readiness');
+      await show('Export the findings: HTML report and CSV', 'Rule references, measured vs required, value provenance, what-if values, readiness');
       await pointAt('#reportBtn', step);
       const frame = showReportPreview();
       await step(1400);
@@ -2777,18 +2788,18 @@ async function runDemo() {
     // 10. The real production model (ShipConstructor, 35 000+ parts), checked with the same rules.
     if (real) {
       chapter('Real 3D production model');
-      caption('Now the real ship: the ShipConstructor production model', 'Loaded from the exported model tiles; the check already ran');
+      await show('Now the real ship: the ShipConstructor production model', 'Loaded from the exported model tiles; the check already ran');
       await pointAt('#scenario', step, { click: false });
       await loadScenario(real.id);
       await waitViewer(step, token);
       const c = S.model.counts;
-      caption('OSU RCRV: real ShipConstructor production model', `${c ? `${c.objects.toLocaleString('en')} objects in the model · ` : ''}${S.norm.elements.length.toLocaleString('en')} parts checked · inches converted to mm`);
+      await show('OSU RCRV: real ShipConstructor production model', `${c ? `${c.objects.toLocaleString('en')} objects in the model · ` : ''}${S.norm.elements.length.toLocaleString('en')} parts checked · inches converted to mm`);
       showOverview();
       viewer.paintNeutral();
       await beat(3500);
       await paintProgressively(step);
       const s = S.results.summary;
-      caption(`${s.non_compliant} non-compliant · ${s.not_enough_info.toLocaleString('en')} not enough info · ${s.compliant.toLocaleString('en')} compliant`,
+      await show(`${s.non_compliant} non-compliant · ${s.not_enough_info.toLocaleString('en')} not enough info · ${s.compliant.toLocaleString('en')} compliant`,
         S.baseline ? `Ground truth: ${S.baseline.line ?? scoreLine(S.baseline)}` : 'Deterministic checker: same input, same result');
       pulse('#pills'); pulse('#scorebox'); pulse('#accBadge');
       await beat(4500);
@@ -2797,7 +2808,7 @@ async function runDemo() {
       if (first) {
         await openItem(first.element);
         const r = S.results.elements[first.element].results.find((x) => x.rule_id === first.rule_id);
-        caption(`${first.element}: ${r.measured} in hull structure (SWBS ${elById(first.element)?.props?.swbs_group?.value ?? '1xx'})`,
+        await show(`${first.element}: ${r.measured} in hull structure (SWBS ${elById(first.element)?.props?.swbs_group?.value ?? '1xx'})`,
           `“${ruleQuote(r, d.quote_match)}” (${r.source.split(':')[0]})`);
         document.querySelectorAll('#dResults .res.st-non_compliant').forEach(pulse);
         await beat(6000);
@@ -2809,7 +2820,7 @@ async function runDemo() {
         chapter('Rule view');
         const row = await pointAt(`#rulesBox .ruleRow[data-rule="${CSS.escape(h.rule)}"]`, step);
         if (row) row.click(); else showRule(h.rule);
-        caption(`Rule view: ${countLine(ruleHits(h.rule))}`, 'Every part the rule applies to, coloured by that rule, in the real ship');
+        await show(`Rule view: ${countLine(ruleHits(h.rule))}`, 'Every part the rule applies to, coloured by that rule, in the real ship');
         pulse('#ruleCount');
         await beat(5500);
         const back = document.querySelector('#ruleBack');
@@ -2822,7 +2833,7 @@ async function runDemo() {
     hidePointer();
     if (layout && (S.sc.id !== layout.id || S.edits.size)) { await loadScenario(layout.id); await waitViewer(step, token); }
     showOverview();
-    caption('Complee: deterministic rule checks, traceable to rule, source and design value',
+    await show('Complee: deterministic rule checks, traceable to rule, source and design value',
       'AI explains, never decides · what-ifs never change the model · drawings become checkable 3D models');
     await beat(6000);
   } catch (e) {

@@ -4,7 +4,9 @@
 //
 // Needs: the viewer running (node server.mjs, port 8080), for the AI chapter the backend (port 8000), the demo drawing
 // demo/aurora-ga.pdf (local only), and Chrome. Usage:
-//   node tools/drawing/record-demo-video.mjs [out.mp4] [--url http://localhost:8080/index.html]
+//   node tools/drawing/record-demo-video.mjs [out.mp4] [--url http://localhost:8080/index.html] [--voice [dir]]
+// --voice: the voice-over clips of demo-voiceover.mjs (default tools/drawing/out/voiceover) play at their captions
+// (window.__demoVoice) and are recorded with the picture (MP4 H.264 + AAC); the demo waits for each line to end.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -32,6 +34,16 @@ await page.waitForFunction(() => !/AI …/.test(document.querySelector('#aiPill'
 await sleep(2500);
 console.log('AI:', await page.$eval('#aiPill', (p) => p.textContent.trim()));
 
+// Voice-over clips (optional), handed to the page as base64 with the lines that say when each one plays.
+const voiceAt = process.argv.indexOf('--voice');
+const VOICE_DIR = voiceAt > 0 ? path.resolve(ROOT, process.argv[voiceAt + 1] && !process.argv[voiceAt + 1].startsWith('--') ? process.argv[voiceAt + 1] : 'tools/drawing/out/voiceover') : null;
+if (VOICE_DIR) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(VOICE_DIR, 'manifest.json'), 'utf8'));
+  const lines = manifest.lines.map((l) => ({ id: l.id, chapter: l.chapter ?? null, match: l.match ?? null, intro: !!l.intro, b64: fs.readFileSync(path.join(VOICE_DIR, l.file)).toString('base64') }));
+  await page.evaluate((ls) => { window.__voiceLines = ls; }, lines);
+  console.log('voice-over:', lines.length, 'lines,', manifest.voice);
+}
+
 let bytes = 0;
 const out = fs.openSync(OUT, 'w');
 await page.exposeFunction('saveChunk', (b64) => { const b = Buffer.from(b64, 'base64'); bytes += b.length; fs.writeSync(out, b); });
@@ -49,8 +61,44 @@ await page.evaluate(() => {
       await new Promise((r) => setTimeout(r, 1200));
       await track.applyConstraints({ width: 1920, height: 1080, frameRate: 30, resizeMode: 'crop-and-scale' });
       await new Promise((r) => setTimeout(r, 400));
-      const type = ['video/mp4;codecs=avc3.640028', 'video/webm;codecs=vp9'].find((t) => MediaRecorder.isTypeSupported(t));
-      const rec = new MediaRecorder(stream, { mimeType: type, videoBitsPerSecond: 4_500_000 });
+      let recStream = stream, types = ['video/mp4;codecs=avc3.640028', 'video/webm;codecs=vp9'];
+      if (window.__voiceLines?.length) {
+        // The voice goes into the recording (not to speakers): Web Audio → a media stream track next to the video.
+        const ctx = new AudioContext({ sampleRate: 48000 });
+        await ctx.resume();
+        const dest = ctx.createMediaStreamDestination();
+        // An inaudible noise bed (about -68 dBFS): Chrome writes no audio frames for silence, and the MP4 audio
+        // fragments carry no time of their own, so without it the voice would move earlier at every pause.
+        const bed = ctx.createBufferSource(), bedBuf = ctx.createBuffer(1, 48000, 48000), bd = bedBuf.getChannelData(0);
+        for (let i = 0; i < bd.length; i++) bd[i] = (Math.random() * 2 - 1) * 0.0004;
+        bed.buffer = bedBuf; bed.loop = true; bed.connect(dest); bed.start();
+        const buffers = new Map();
+        for (const l of window.__voiceLines) {
+          const bin = Uint8Array.from(atob(l.b64), (c) => c.charCodeAt(0));
+          buffers.set(l.id, await ctx.decodeAudioData(bin.buffer));
+        }
+        const play = (id) => new Promise((resolve) => {
+          const buf = buffers.get(id);
+          if (!buf) { resolve(); return; }
+          const src = ctx.createBufferSource();
+          src.buffer = buf;
+          src.connect(dest);
+          src.onended = () => setTimeout(resolve, 350); // a short breath between lines
+          src.start();
+        });
+        // The demo asks for the line of a caption: "<n> / 12 · Title|Caption text" (see tools/drawing/demo-narration.mjs).
+        window.__demoVoice = (key) => {
+          const [chap, ...rest] = String(key).split('|');
+          const text = rest.join('|'), n = Number(/^(\d+)\s*\//.exec(chap)?.[1]);
+          const l = window.__voiceLines.find((x) => !x.intro && (x.chapter == null || x.chapter === n) && new RegExp(x.match).test(text));
+          return l ? play(l.id) : null;
+        };
+        window.__playIntro = () => play(window.__voiceLines.find((x) => x.intro)?.id);
+        recStream = new MediaStream([...stream.getVideoTracks(), ...dest.stream.getAudioTracks()]);
+        types = ['video/mp4;codecs=avc3.640028,mp4a.40.2', 'video/webm;codecs=vp9,opus'];
+      }
+      const type = types.find((t) => MediaRecorder.isTypeSupported(t));
+      const rec = new MediaRecorder(recStream, { mimeType: type, videoBitsPerSecond: 4_500_000, audioBitsPerSecond: 128_000 });
       window.pending = [];
       rec.ondataavailable = (e) => {
         if (!e.data.size) return;
@@ -78,7 +126,8 @@ await page.waitForFunction(() => window.recInfo, null, { timeout: 15000 });
 const info = await page.evaluate(() => window.recInfo);
 if (info.error) throw new Error(`Tab recording failed: ${info.error}`);
 console.log('recording as', info.type);
-await sleep(4000);
+// The title card stays at least 4 s, and until the intro line has been spoken.
+await Promise.all([sleep(4000), page.evaluate(() => window.__playIntro?.())]);
 await page.evaluate(() => { const d = document.getElementById('videoTitle'); d.style.opacity = '0'; setTimeout(() => d.remove(), 900); });
 await sleep(900);
 
