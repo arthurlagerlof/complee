@@ -85,6 +85,7 @@ await page.evaluate(() => {
           src.connect(dest);
           src.onended = () => setTimeout(resolve, 350); // a short breath between lines
           src.start();
+          window.__syncLog?.push({ t: performance.now() - window.__recT0, kind: 'voice', id, seconds: buf.duration });
         });
         // The demo asks for the line of a caption: "<n> / 12 · Title|Caption text" (see tools/drawing/demo-narration.mjs).
         window.__demoVoice = (key) => {
@@ -110,6 +111,16 @@ await page.evaluate(() => {
         }));
       };
       rec.start(1000);
+      // Sync log on the recording's clock: when each caption appears and each line starts (written next to the video).
+      window.__recT0 = performance.now();
+      window.__syncLog = [];
+      const cap = document.querySelector('#caption');
+      let lastCap = '';
+      if (cap) new MutationObserver(() => {
+        const text = cap.hidden ? '' : (cap.innerText ?? '').split('\n').slice(0, 2).join(' | ');
+        if (text && text !== lastCap) window.__syncLog.push({ t: performance.now() - window.__recT0, kind: 'caption', text });
+        lastCap = text;
+      }).observe(cap, { childList: true, subtree: true, characterData: true, attributes: true });
       window.rec = rec;
       window.recInfo = { type };
     } catch (e) { window.recInfo = { error: `${e.name}: ${e.message}` }; }
@@ -145,6 +156,20 @@ await sleep(1500);
 await page.evaluate(() => new Promise((r) => { window.rec.onstop = r; window.rec.stop(); }));
 await page.evaluate(() => Promise.all(window.pending));
 fs.closeSync(out);
+const syncLog = await page.evaluate(() => window.__syncLog ?? []);
+fs.writeFileSync(OUT.replace(/\.(mp4|webm)$/i, '') + '.sync.json', JSON.stringify(syncLog, null, 1));
+// Each line against the caption it belongs to: the caption shown last before the line started.
+const voices = syncLog.filter((e) => e.kind === 'voice');
+if (voices.length) {
+  let worst = 0;
+  for (const v of voices) {
+    const cap = syncLog.filter((e) => e.kind === 'caption' && e.t <= v.t + 1).at(-1);
+    const d = cap ? v.t - cap.t : null;
+    if (d != null) worst = Math.max(worst, Math.abs(d));
+    console.log(`  voice ${v.id.padEnd(13)} at ${(v.t / 1000).toFixed(2).padStart(7)} s  ${cap ? `${d >= 0 ? '+' : ''}${(d / 1000).toFixed(3)} s after "${cap.text.split(' | ')[1]?.slice(0, 45) ?? ''}"` : '(title card)'}`);
+  }
+  console.log(`sync: ${voices.length} lines, largest gap between a caption and its line ${(worst / 1000).toFixed(3)} s`);
+}
 await browser.close();
 console.log(`${OUT}: ${(bytes / 1e6).toFixed(1)} MB, ${((Date.now() - t0) / 1000 + 5).toFixed(0)} s`);
 if (errors.length) { console.log('browser errors:', errors); process.exitCode = 1; }
