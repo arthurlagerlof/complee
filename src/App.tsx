@@ -1,150 +1,129 @@
 import { Suspense, lazy, useEffect, useRef, useState } from 'react'
 import { gsap } from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
-import {
-  ArrowDown,
-  ArrowRight,
-  Check,
-  ChevronRight,
-  CircleAlert,
-  FileCheck2,
-  FileText,
-  Menu,
-  ShieldCheck,
-  Ship,
-  X,
-} from 'lucide-react'
-import { inspectionPoints, reviewExamples } from './inspectionData'
-import VesselViewer from './VesselViewer'
+import { ArrowDown, ArrowRight, Check, ChevronDown, FileSearch, Layers3, Ship, Sparkles } from 'lucide-react'
+import LandingScene from './LandingScene'
+import './landing.css'
 
-// The workspaces (and with them three.js, the glTF loader and the API clients) load only when they are opened:
-// the landing page itself stays a small bundle.
 const EvidenceIntake = lazy(() => import('./EvidenceIntake'))
 const AiWorkspace = lazy(() => import('./AiWorkspace'))
 const FindingsWorkspace = lazy(() => import('./FindingsWorkspace'))
 const workspaceFallback = <div className="workspace-loading" role="status"><span className="loading-spinner" /> Loading…</div>
+const SHIPCHECK_REVIEW_URL = import.meta.env.VITE_SHIPCHECK_REVIEW_URL || '/inspection/index.html?scenario=rcrv-3d'
 
 gsap.registerPlugin(ScrollTrigger)
 
-const SHIPCHECK_REVIEW_URL = import.meta.env.VITE_SHIPCHECK_REVIEW_URL || '/inspection/index.html?scenario=rcrv-3d'
-
-function ProductName() {
-  return (
-    <a className="brand" href="#top" aria-label="Complee home">
-      <span className="brand-mark"><Ship size={17} strokeWidth={1.8} /></span>
-      Complee
-    </a>
-  )
-}
+const statistics = [
+  {
+    value: '3.0%',
+    title: 'Global ship detention rate (2024)',
+    description: 'Around 3% of inspected ships were detained worldwide in 2024 due to serious deficiencies, highlighting the ongoing challenge of maritime safety and regulatory compliance.',
+    source: 'International Maritime Organization (IMO), 2024 Port State Control statistics.',
+  },
+  {
+    value: '21%',
+    title: 'Applications affected by approval issues',
+    description: 'AMSA reported that 21% of applications in its 2023–2024 certification campaign experienced delays related to plan approval and fire-system issues, demonstrating how design compliance can become a bottleneck in the approval process.',
+    source: 'Australian Maritime Safety Authority (AMSA), Survey Matters, June 2024.',
+  },
+  {
+    value: '32%',
+    title: 'Higher design and construction labour costs',
+    description: 'A four-ship case study found that design rework was associated with a 32% increase in design and construction labour costs, illustrating the financial impact of identifying design problems too late.',
+    source: 'Ship design and construction rework study, four-ship case study.',
+  },
+  {
+    value: '200–1,000+',
+    title: 'Drawings requiring approval',
+    description: 'Depending on vessel complexity, class approval can involve hundreds or even over a thousand drawings, creating a substantial workload for engineers and reviewers.',
+    source: 'International Institute of Marine Surveying, June 2025.',
+  },
+  {
+    value: '200+ days',
+    title: 'Plan approval delays',
+    description: 'Some reported cases of class and flag plan approval have taken over 200 days to return with comments, highlighting the time-consuming nature of the review and revision process.',
+    source: 'International Institute of Marine Surveying, June 2025.',
+  },
+]
 
 function App() {
-  const root = useRef<HTMLDivElement>(null)
-  const [selectedId, setSelectedId] = useState(inspectionPoints[0].id)
-  const [reviewId, setReviewId] = useState(reviewExamples[0].id)
-  const [menuOpen, setMenuOpen] = useState(false)
+  const [route, setRoute] = useState(() => window.location.hash)
   const [loginOpen, setLoginOpen] = useState(false)
-  const [continuePromptOpen, setContinuePromptOpen] = useState(false)
-  const loginOpenRef = useRef(false)
-  const [showConcept, setShowConcept] = useState(() => window.location.hash !== '#evidence')
-  const [showAi, setShowAi] = useState(() => window.location.hash === '#ai-settings')
-  const [showFindings, setShowFindings] = useState(() => window.location.hash === '#findings')
-  // Workflow step links (#evidence, #findings, #ai-settings, #top) switch views without a reload.
+  const [headerVisible, setHeaderVisible] = useState(false)
+  const [statIndex, setStatIndex] = useState(0)
+  const landingRef = useRef<HTMLDivElement>(null)
+  const statRef = useRef<HTMLDivElement>(null)
+  const isLanding = !['#findings', '#ai-settings', '#evidence'].includes(route)
+
   useEffect(() => {
-    const sync = () => {
-      const hash = window.location.hash
-      setShowFindings(hash === '#findings')
-      setShowAi(hash === '#ai-settings')
-      setShowConcept(hash !== '#evidence')
-    }
-    window.addEventListener('hashchange', sync)
-    return () => window.removeEventListener('hashchange', sync)
+    const syncRoute = () => setRoute(window.location.hash)
+    window.addEventListener('hashchange', syncRoute)
+    return () => window.removeEventListener('hashchange', syncRoute)
   }, [])
-  const [evidenceCount, setEvidenceCount] = useState(0)
-  const selectedPoint = inspectionPoints.find((point) => point.id === selectedId) ?? inspectionPoints[0]
-  const selectedReview = reviewExamples.find((item) => item.id === reviewId) ?? reviewExamples[0]
 
   useEffect(() => {
-    if (!showConcept || showAi) return
-    try { setEvidenceCount(JSON.parse(sessionStorage.getItem('compleeEvidenceFiles') || '[]').length) } catch { setEvidenceCount(0) }
-    const context = gsap.context(() => {
-      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (!isLanding) return
+    const revealHeader = () => setHeaderVisible(true)
+    window.addEventListener('pointermove', revealHeader, { once: true })
+    window.addEventListener('scroll', revealHeader, { once: true })
+    window.addEventListener('touchstart', revealHeader, { once: true })
+    window.addEventListener('keydown', revealHeader, { once: true })
+    if (window.scrollY > 0) revealHeader()
+    return () => {
+      window.removeEventListener('pointermove', revealHeader)
+      window.removeEventListener('scroll', revealHeader)
+      window.removeEventListener('touchstart', revealHeader)
+      window.removeEventListener('keydown', revealHeader)
+    }
+  }, [isLanding])
 
-      if (!reducedMotion) {
-        gsap.from('.hero-copy > *', {
-          y: 22,
-          opacity: 0,
-          duration: 0.75,
-          stagger: 0.12,
-          ease: 'power2.out',
+  useEffect(() => {
+    if (!isLanding) return
+    const timer = window.setInterval(() => setStatIndex((index) => (index + 1) % statistics.length), 5000)
+    return () => window.clearInterval(timer)
+  }, [isLanding])
+
+  useEffect(() => {
+    if (!isLanding || !landingRef.current) return
+    const context = gsap.context(() => {
+      const motion = gsap.matchMedia()
+      motion.add('(prefers-reduced-motion: no-preference)', () => {
+        gsap.from('.landing-copy > *, .landing-actions, .landing-example-card, .landing-stat', {
+          opacity: 0, y: 22, duration: 1.1, stagger: 0.1, ease: 'power3.out',
         })
-        gsap.from('.hero-vessel', { y: 24, opacity: 0, duration: 0.9, delay: 0.25, ease: 'power2.out' })
-        gsap.utils.toArray<HTMLElement>('[data-reveal]').forEach((element) => {
+        gsap.utils.toArray<HTMLElement>('.landing-reveal').forEach((element) => {
           gsap.from(element, {
-            y: 22,
-            opacity: 0,
-            duration: 0.65,
-            ease: 'power2.out',
+            opacity: 0, y: 28, duration: 1, ease: 'power3.out',
             scrollTrigger: { trigger: element, start: 'top 88%', once: true },
           })
         })
-        gsap.from('.process-connector', {
-          scaleX: 0,
-          transformOrigin: 'left center',
-          duration: 0.8,
-          stagger: 0.2,
-          ease: 'power2.out',
-          scrollTrigger: { trigger: '.process-steps', start: 'top 78%', once: true },
+      })
+      motion.add('(hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference)', () => {
+        const panels = landingRef.current?.querySelectorAll<HTMLElement>('.landing-stat, .landing-example-card')
+        if (!panels) return
+        const cleanups = Array.from(panels, (panel) => {
+          const animation = gsap.to(panel, { scale: 1.06, duration: 0.55, ease: 'power2.out', paused: true })
+          const expand = () => animation.play()
+          const shrink = () => animation.reverse()
+          panel.addEventListener('mouseenter', expand)
+          panel.addEventListener('mouseleave', shrink)
+          return () => {
+            panel.removeEventListener('mouseenter', expand)
+            panel.removeEventListener('mouseleave', shrink)
+          }
         })
-      }
-    }, root)
-
+        return () => cleanups.forEach((cleanup) => cleanup())
+      })
+      return () => motion.revert()
+    }, landingRef)
     return () => context.revert()
-  }, [showConcept, showAi])
-
-  const closeMenu = () => setMenuOpen(false)
-  const continueToInspection = () => {
-    window.location.assign(SHIPCHECK_REVIEW_URL)
-  }
-  const backToMain = () => {
-    window.history.pushState(null, '', '#top')
-    setShowAi(false)
-    setShowConcept(true)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-  const startLogin = () => {
-    setMenuOpen(false)
-    setContinuePromptOpen(false)
-    setLoginOpen(true)
-  }
-  loginOpenRef.current = loginOpen
+  }, [isLanding])
 
   useEffect(() => {
-    if (!showConcept || showAi || showFindings) return
-    if (sessionStorage.getItem('compleeLoginHint')) return
-    const timer = window.setTimeout(() => {
-      if (loginOpenRef.current) return
-      setContinuePromptOpen(true)
-      sessionStorage.setItem('compleeLoginHint', 'shown')
-    }, 10000)
-    return () => window.clearTimeout(timer)
-  }, [showConcept, showAi, showFindings])
-
-  useEffect(() => {
-    if (!continuePromptOpen) return
-    const mobile = window.matchMedia('(max-width: 800px)')
-    let timer = 0
-    const arm = () => {
-      window.clearTimeout(timer)
-      if (!mobile.matches) return
-      timer = window.setTimeout(() => setContinuePromptOpen(false), 6000)
-    }
-    arm()
-    mobile.addEventListener('change', arm)
-    return () => {
-      window.clearTimeout(timer)
-      mobile.removeEventListener('change', arm)
-    }
-  }, [continuePromptOpen])
+    if (!isLanding || !statRef.current || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const animation = gsap.fromTo(statRef.current, { opacity: 0, y: 8 }, { opacity: 1, y: 0, duration: 0.55, ease: 'power2.out' })
+    return () => { animation.kill() }
+  }, [isLanding, statIndex])
 
   useEffect(() => {
     if (!loginOpen) return
@@ -158,9 +137,7 @@ function App() {
       sessionStorage.setItem('compleeLoginHint', 'login')
       window.history.pushState(null, '', '#evidence')
       setLoginOpen(false)
-      setShowAi(false)
-      setShowFindings(false)
-      setShowConcept(false)
+      setRoute('#evidence')
       window.scrollTo({ top: 0 })
     }, reducedMotion ? 900 : 3800)
     return () => {
@@ -168,263 +145,127 @@ function App() {
       window.clearTimeout(timer)
     }
   }, [loginOpen])
-  if (showFindings) return <Suspense fallback={workspaceFallback}><FindingsWorkspace onBack={() => { setShowFindings(false); backToMain() }} /></Suspense>
-  if (showAi) return <Suspense fallback={workspaceFallback}><AiWorkspace onBack={backToMain} /></Suspense>
-  if (!showConcept) return <Suspense fallback={workspaceFallback}><EvidenceIntake onContinue={continueToInspection} onBack={backToMain} /></Suspense>
+
+  const backToMain = () => {
+    window.location.hash = 'top'
+    setRoute('#top')
+    window.scrollTo({ top: 0 })
+  }
+
+  if (route === '#findings') return <Suspense fallback={workspaceFallback}><FindingsWorkspace onBack={backToMain} /></Suspense>
+  if (route === '#ai-settings') return <Suspense fallback={workspaceFallback}><AiWorkspace onBack={backToMain} /></Suspense>
+  if (route === '#evidence') return <Suspense fallback={workspaceFallback}><EvidenceIntake onContinue={() => window.location.assign(SHIPCHECK_REVIEW_URL)} onBack={backToMain} /></Suspense>
 
   return (
-    <div ref={root} id="top">
-      <header className="site-header">
-        <div className="header-inner">
-          <ProductName />
-          <nav className="desktop-nav" aria-label="Main navigation">
-            <a href="#challenge">The challenge</a>
-            <a href="#inspection">Vessel inspection</a>
-            <a href="#workflow">How it works</a>
-            <a href="#architecture">The platform</a>
+    <div className="landing" id="top" ref={landingRef}>
+      <header className={`landing-header${headerVisible ? ' is-visible' : ''}`}>
+        <div className="landing-header-inner">
+          <a className="landing-brand" href="#top" aria-label="Complee home">
+            <span className="landing-brand-mark"><Ship size={17} strokeWidth={1.8} /></span>
+            complee<span className="landing-brand-period">.</span>
+          </a>
+          <nav className="landing-nav" aria-label="Main navigation" inert={!headerVisible}>
+            <a className="landing-nav-link" href="#how-it-works">How it works</a>
+            <button type="button" className="landing-nav-cta" onClick={() => setLoginOpen(true)}>Login <ArrowRight size={15} /></button>
           </nav>
-          <div className="header-actions">
-            <button type="button" className={continuePromptOpen ? 'nav-cta is-prompted' : 'nav-cta'} onClick={startLogin} aria-describedby={continuePromptOpen ? 'login-prompt' : undefined}>Login</button>
-            <button
-              type="button"
-              className="menu-toggle"
-              onClick={() => setMenuOpen((open) => !open)}
-              aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
-              aria-expanded={menuOpen}
-              aria-controls="mobile-navigation"
-            >
-            {menuOpen ? <X size={20} /> : <Menu size={20} />}
-          </button>
-          </div>
         </div>
-        <nav id="mobile-navigation" className={`mobile-nav${menuOpen ? ' menu-open' : ''}`} aria-label="Mobile navigation" aria-hidden={!menuOpen}>
-          <a href="#challenge" onClick={closeMenu}>The challenge <ArrowRight size={16} /></a>
-          <a href="#inspection" onClick={closeMenu}>Vessel inspection <ArrowRight size={16} /></a>
-          <a href="#workflow" onClick={closeMenu}>How it works <ArrowRight size={16} /></a>
-          <a href="#architecture" onClick={closeMenu}>The platform <ArrowRight size={16} /></a>
-        </nav>
       </header>
 
       <main>
-        <section className="hero-section">
-          <div className="hero-grid" aria-hidden="true" />
-          <div className="hero-wrap">
-            <div className="hero-copy">
-              <span className="eyebrow"><span className="eyebrow-dot" /> EARLIER DESIGN. CLEARER DECISIONS.</span>
-              <h1>Find compliance gaps before they become <span>expensive engineering problems.</span></h1>
-              <p className="hero-description">
-                Complee connects the design model, engineering documents and the regulation library. An engineer adds a drawing or a 3D model, opens it in the 3D view, and sees the parts that need attention highlighted.
-              </p>
-              <ul className="hero-points">
-                <li>See possible gaps earlier in the design.</li>
-                <li>Read the requirement next to the evidence.</li>
-                <li>Review the highlighted parts on the model.</li>
-              </ul>
-              <div className="hero-actions">
-                <a className="button-primary" href="#inspection">Explore the vessel <ArrowRight size={16} /></a>
-                <a className="text-link" href="#workflow">How it works <ArrowDown size={14} /></a>
-              </div>
-              <div className="hero-note"><ShieldCheck size={16} /><span>Complee prepares the review. <strong>The engineer checks it and decides.</strong></span></div>
-            </div>
-            <div className="hero-vessel">
-              <div className="hero-vessel-label"><span>VESSEL MODEL</span><span>R/V TAANI · INTERACTIVE</span></div>
-              <VesselViewer className="hero-viewer" initialAutoRotate />
-              <div className="hero-vessel-caption"><span>Drag to inspect</span><span>Challenge model · not a Meyer Turku design</span></div>
+        <section className="landing-hero">
+          <LandingScene />
+          <div className="landing-hero-inner">
+            <div className="landing-copy">
+              <h1>Find compliance gaps before it's too late.</h1>
             </div>
           </div>
-          <a className="hero-scroll" href="#challenge"><span>01</span> THE DESIGN CHALLENGE <ArrowDown size={13} /></a>
+          <div className="landing-actions">
+            <button type="button" className="landing-primary" onClick={() => setLoginOpen(true)}>Start a review <ArrowRight size={17} /></button>
+            <a className="landing-secondary" href="#how-it-works">See how it works <ArrowDown size={14} /></a>
+          </div>
+          <div className="landing-example-card">
+            <div className="landing-card-heading"><span className="landing-card-icon"><Sparkles size={14} /></span><span>EXAMPLE CHECK</span><span className="landing-card-status">REVIEW</span></div>
+            <strong>Stair clear width</strong>
+            <div className="landing-card-values"><span>Drawing <b>751 mm</b></span><span>Example limit <b>900 mm</b></span></div>
+            <p>Below the example limit. Confirm the measurement and applicable rule.</p>
+          </div>
+          <div className="landing-stat">
+            <div className="landing-stat-heading"><span>THE SCALE OF THE CHALLENGE</span><span>0{statIndex + 1} / 05</span></div>
+            <div className="landing-stat-content" ref={statRef} aria-live="off">
+              <strong>{statistics[statIndex].value}</strong><span>{statistics[statIndex].title}</span>
+            </div>
+            <a href="#industry-context">Explore the numbers <ArrowRight size={13} /></a>
+          </div>
+          <div className="landing-demo-disclaimer">Illustrative geometry and values · not a real finding</div>
         </section>
 
-        <section className="challenge-section section-pad" id="challenge">
-          <div className="section-container">
-            <div className="section-heading" data-reveal>
-              <span className="section-kicker">01 — THE CHALLENGE</span>
-              <h2>Compliance becomes expensive when problems are found too late.</h2>
-              <p className="section-intro">Early design brings together complex rules, incomplete information and decisions that shape the vessel. Finding a gap later can mean revisiting work that is already underway.</p>
+        <section className="landing-process" id="how-it-works">
+          <div className="landing-process-inner">
+            <div className="landing-process-title landing-reveal">
+              <span className="landing-section-label">A SIMPLER WAY TO REVIEW</span>
+              <h2>From design to decision.</h2>
+              <p>Bring the information together, see what needs attention, and keep the engineer in control.</p>
             </div>
-            <div className="challenge-grid">
-              <article className="challenge-card" data-reveal><span className="card-index">01 / COMPLEXITY</span><h3>Many overlapping requirements</h3><p>Engineers navigate extensive regulations, standards and project-specific requirements.</p></article>
-              <article className="challenge-card" data-reveal><span className="card-index">02 / SEARCH</span><h3>Manual document searching</h3><p>Finding relevant passages across large rule documents takes time and context.</p></article>
-              <article className="challenge-card" data-reveal><span className="card-index">03 / CONTEXT</span><h3>Rules meet design decisions</h3><p>It can be difficult to see how a requirement connects to a specific design element.</p></article>
+            <div className="landing-steps">
+              <article className="landing-reveal"><span className="landing-step-number">01</span><Layers3 size={22} /><h3>Bring your design</h3><p>Add your documents, drawings or model to a review.</p></article>
+              <article className="landing-reveal"><span className="landing-step-number">02</span><FileSearch size={22} /><h3>See what matters</h3><p>Explore checks, source information and gaps in the design.</p></article>
+              <article className="landing-reveal"><span className="landing-step-number">03</span><Check size={22} /><h3>Make the call</h3><p>Review the evidence, confirm the inputs and decide what comes next.</p></article>
             </div>
-            <div className="stage-track" data-reveal>
-              {['Concept design', 'Detailed engineering', 'Procurement', 'Fabrication', 'Installation', 'Commissioning'].map((stage) => (
-                <span key={stage}><i />{stage}</span>
-              ))}
-            </div>
-            <p className="stage-caption" data-reveal>Earlier in this sequence, a change is still a design edit. Later, the same issue can disturb materials, schedule and work already underway.</p>
+            <p className="landing-process-note">Complee supports engineering review; it does not provide class approval or a final compliance decision.</p>
           </div>
         </section>
-
-        <section className="inspection-section section-pad" id="inspection">
-          <div className="section-container">
-            <div className="section-heading inspection-heading" data-reveal>
-              <span className="section-kicker section-kicker-light">02 — INTERACTIVE CONCEPT</span>
-              <h2>Explore compliance in the design.</h2>
-              <p>Connect physical design elements with regulatory requirements, supporting evidence and engineering decisions.</p>
+        <section className="landing-technical" aria-labelledby="technical-title">
+          <div className="landing-technical-inner">
+            <div className="landing-technical-heading landing-reveal">
+              <span className="landing-technical-label">UNDER THE HOOD</span>
+              <h2 id="technical-title">Separate parts, one Complee review.</h2>
+              <p>From model data to an explainable finding, every step is designed to keep the engineer in control.</p>
             </div>
-            <div className="inspection-workspace" data-reveal>
-              <div className="inspection-vessel">
-              <div className="workspace-bar"><span><span className="live-dot" /> R/V TAANI · DESIGN VIEW</span><span>{evidenceCount ? `${evidenceCount} EVIDENCE FILES · ` : ''}PRELOADED MODEL · ILLUSTRATIVE DEMO</span></div>
-                <VesselViewer
-                  className="inspection-viewer"
-                  selectedPointId={selectedId}
-                  onSelectPoint={setSelectedId}
-                  showMarkers
-                />
-                <div className="inspection-footnote"><CircleAlert size={14} /><span>Numbered markers are illustrative, not geometry-verified locations or findings about this vessel.</span></div>
-              </div>
-              <aside className="inspection-panel" aria-live="polite">
-                <div className="panel-overline"><span>ILLUSTRATIVE INSPECTION POINT {selectedPoint.number}</span><span className={`assessment-dot ${selectedPoint.statusTone}`} /></div>
-                <h3>{selectedPoint.component}</h3>
-                <div className={`assessment-badge ${selectedPoint.statusTone}`}>{selectedPoint.status}</div>
-                <div className="inspection-detail"><span>DESIGN OBSERVATION</span><p>{selectedPoint.observation}</p></div>
-                <div className="inspection-detail"><span>REGULATORY CONSIDERATION</span><p>{selectedPoint.regulatoryConsideration}</p></div>
-                <div className="evidence-row"><FileText size={15} /><span><small>AVAILABLE EVIDENCE</small>{selectedPoint.evidence}</span></div>
-                <div className="engineer-action"><span>Suggested engineer action</span><p>{selectedPoint.action}</p></div>
-                <div className="point-selector" role="group" aria-label="Choose an illustrative inspection point">
-                  {inspectionPoints.map((point) => (
-                    <button
-                      type="button"
-                      key={point.id}
-                      className={point.id === selectedId ? 'point-option selected' : 'point-option'}
-                      onClick={() => setSelectedId(point.id)}
-                      aria-pressed={point.id === selectedId}
-                    >
-                      <span>{point.number}</span>{point.shortLabel}<ChevronRight size={14} />
-                    </button>
-                  ))}
-                </div>
-              </aside>
-            </div>
-            <p className="demo-disclaimer"><ShieldCheck size={15} /> Demonstration scenarios only. These are not verified findings about R/V Taani or confirmed interpretations of class rules.</p>
-          </div>
-        </section>
-
-        <section className="workflow-section section-pad" id="workflow">
-          <div className="section-container">
-            <div className="section-heading workflow-heading" data-reveal>
-              <span className="section-kicker section-kicker-light">03 — THE PROPOSED WORKFLOW</span>
-              <h2>From the design model to a review the engineer can check.</h2>
-              <p className="section-intro">Complee reads the design, finds the provisions that may apply, and prepares a review. The engineer then checks that review.</p>
-            </div>
-            <div className="process-steps">
-              <article className="process-step" data-reveal><span className="process-number">01</span><span className="process-icon"><FileText size={19} /></span><h3>Understand the design</h3><p>The engineer adds documents, a 2D drawing and the 3D model. Complee keeps the parts, the values and the file they came from.</p></article>
-              <span className="process-connector" aria-hidden="true" />
-              <article className="process-step" data-reveal><span className="process-number">02</span><span className="process-icon"><FileCheck2 size={19} /></span><h3>Find the provisions</h3><p>Search the regulation library for provisions that may apply to this design, and keep the source text.</p></article>
-              <span className="process-connector" aria-hidden="true" />
-              <article className="process-step" data-reveal><span className="process-number">03</span><span className="process-icon"><CircleAlert size={19} /></span><h3>Prepare the review</h3><p>Compare the design with those provisions. Measurable values are calculated. The review shows what matches, what is missing and what to inspect on the model.</p></article>
-              <span className="process-connector" aria-hidden="true" />
-              <article className="process-step" data-reveal><span className="process-number">04</span><span className="process-icon"><Check size={19} /></span><h3>Engineer check</h3><p>The engineer opens the highlighted part, reads the evidence and confirms or corrects the review.</p></article>
-            </div>
-            <div className="process-note"><span className="note-line" /> Complee prepares the review. The engineer checks it again before it is treated as decided.</div>
-          </div>
-        </section>
-
-        <section className="integration-section section-pad" id="integration">
-          <div className="section-container">
-            <div className="section-heading" data-reveal>
-              <span className="section-kicker">YOUR DESIGN FILES</span>
-              <h2>The review sits beside the design work, not in place of it.</h2>
-              <p className="section-intro">Complee is not another CAD system. Engineers bring the documents, the drawing and the model into the review, open the ship in the 3D view, and select a highlighted part to read the requirement and the evidence.</p>
-            </div>
-            <div className="challenge-grid">
-              <article className="challenge-card" data-reveal><span className="card-index">01 / ADD</span><h3>Add the design files</h3><p>Documents, a 2D drawing and the 3D model go in with the revision. Each value keeps a link to the file it came from.</p></article>
-              <article className="challenge-card" data-reveal><span className="card-index">02 / VIEW</span><h3>Select a part on the model</h3><p>The 3D view highlights the parts tied to the review. The engineer selects one and reads the requirement next to the evidence.</p></article>
-              <article className="challenge-card" data-reveal><span className="card-index">03 / CONNECT</span><h3>Use it with the yard’s tools</h3><p>The design software stays in place. A yard system can send the same design information and open this review.</p></article>
-            </div>
-          </div>
-        </section>
-
-        <section className="finding-section section-pad" id="review">
-          <div className="section-container finding-layout">
-            <div className="section-heading" data-reveal>
-              <span className="section-kicker">THE REVIEW</span>
-              <h2>From the list to the requirement.</h2>
-              <p className="section-intro">Each row is one check, with the same fields as the 3D review. Select a row to read the measured value, the required value, where the number came from, and the provision text.</p>
-            </div>
-            <div className="review-board" data-reveal>
-              <div className="review-list" role="listbox" aria-label="Illustrative checks">
-                {reviewExamples.map((item) => (
-                  <button
-                    type="button"
-                    key={item.id}
-                    className={item.id === selectedReview.id ? 'review-row selected' : 'review-row'}
-                    onClick={() => setReviewId(item.id)}
-                    aria-pressed={item.id === selectedReview.id}
-                  >
-                    <span className={`status-dot ${item.status}`} />
-                    <span>
-                      <strong>{item.part}</strong>
-                      <small>{item.ruleId}</small>
-                      <em>{item.statusLabel}</em>
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <article className="finding-card ship-result" aria-live="polite">
-                <div className="finding-card-head">
-                  <span className="finding-label">{selectedReview.ruleId}</span>
-                  <span className={`ship-badge ${selectedReview.status}`}>{selectedReview.statusLabel}</span>
-                </div>
-                <p className="ship-source">{selectedReview.source} — {selectedReview.clause}</p>
-                <h3>{selectedReview.part}</h3>
-                <table className="ship-kv">
-                  <tbody>
-                    <tr><th>Measured</th><td>{selectedReview.measured}</td></tr>
-                    <tr><th>Required</th><td>{selectedReview.required}</td></tr>
-                  </tbody>
-                </table>
-                <p className="ship-expl">{selectedReview.explanation}</p>
-                <p className="ship-inputs"><span>Inputs</span> {selectedReview.inputs}</p>
-                <blockquote>“{selectedReview.provision}”</blockquote>
-                <div className="ship-tags">
-                  {selectedReview.tags.map((tag) => <span key={tag}>{tag}</span>)}
-                </div>
+            <div className="landing-technical-grid">
+              <article className="landing-reveal">
+                <span>01 / MODEL DATA</span>
+                <h3>Turn the design into reviewable elements.</h3>
+                <p>Complee reads IFC, DXF and ship JSON models. Revit files are converted to IFC through Autodesk Platform Services. Imported properties and geometry provide the values used in the review; an import report identifies what is still missing.</p>
+              </article>
+              <article className="landing-reveal">
+                <span>02 / RULE CHECKING</span>
+                <h3>Apply rules, not predictions.</h3>
+                <p>A deterministic checker selects applicable rules using details such as vessel type, size, area, class and construction date. It compares available values with the rule requirements. Missing inputs are marked “not enough info” rather than guessed.</p>
+              </article>
+              <article className="landing-reveal">
+                <span>03 / TRACEABLE FINDINGS</span>
+                <h3>See the evidence in context.</h3>
+                <p>Findings are linked to model elements in the 3D viewer, alongside the rule, measured and required values, and their sources. Engineers can inspect results, try what-if changes, compare revisions and export reports without changing the source model.</p>
+              </article>
+              <article className="landing-reveal">
+                <span>04 / AI ASSISTANCE</span>
+                <h3>Explain and explore, with a human in charge.</h3>
+                <p>Optional AI can explain findings, suggest escape routes and draft replies to class comments. Suggested routes are recomputed by the checker. AI does not decide pass or fail, and the engineer remains responsible for the review.</p>
               </article>
             </div>
-          </div>
-          <div className="section-container"><p className="demo-disclaimer finding-disclaimer"><ShieldCheck size={15} /> Illustrative checks, using the review’s own fields. Rule values are not yet verified against the official text. Selecting a row does not move the model above.</p></div>
-        </section>
-
-        <section className="architecture-section section-pad" id="architecture">
-          <div className="section-container architecture-layout">
-            <div className="section-heading" data-reveal>
-              <span className="section-kicker section-kicker-light">05 — THE PLATFORM</span>
-              <h2>Separate parts, one Complee review.</h2>
-              <p className="section-intro">These parts of Complee can change without rebuilding the rest. A new file reader does not require a new regulation search. A different language model does not require a new check. A local model can be used, so the design text need not be sent to an external service.</p>
-            </div>
-            <div className="architecture-points">
-              <article data-reveal><span>01</span><h3>Design records</h3><p>Projects, revisions, parts and the file each value came from.</p></article>
-              <article data-reveal><span>02</span><h3>File reading</h3><p>Documents, DXF drawings and glTF models are read into those records. A new file type is another reader.</p></article>
-              <article data-reveal><span>03</span><h3>Regulation library</h3><p>Search for provisions that may apply, and keep the source text with the review.</p></article>
-              <article data-reveal><span>04</span><h3>Engineering checks</h3><p>Distance, clearance and numeric comparisons run as their own checks, not inside a prompt.</p></article>
-              <article data-reveal><span>05</span><h3>Language models</h3><p>The model that interprets a provision can be swapped. The readers and the checks stay.</p></article>
-              <article data-reveal><span>06</span><h3>3D view</h3><p>The ship model in Complee, with the parts under review highlighted for the engineer.</p></article>
-            </div>
+            <p className="landing-technical-note landing-reveal">Bundled rule texts are paraphrases marked unverified until checked against official sources. Complee is a pre-check; class and flag retain approval authority.</p>
           </div>
         </section>
-
-        <section className="closing-section">
-          <div className="closing-grid" aria-hidden="true" />
-          <div className="closing-inner" data-reveal>
-            <span className="section-kicker section-kicker-light">DESIGN AWARENESS, EARLIER</span>
-            <h2>Better-informed design.<br /><span>Fewer unanswered questions.</span></h2>
-            <p>Bring regulatory awareness into the earliest stages of ship design, where potential problems are easier to understand and resolve.</p>
+        <section className="landing-context" id="industry-context">
+          <div className="landing-context-inner landing-reveal">
+            <span className="landing-section-label">THE BIGGER PICTURE</span>
+            <details>
+              <summary><span>The scale of the ship compliance problem</span><ChevronDown size={22} /></summary>
+              <div className="landing-stat-list">
+                {statistics.map((stat) => (
+                  <article key={stat.title}>
+                    <strong>{stat.value}</strong>
+                    <div><h3>{stat.title}</h3><p>{stat.description}</p><small>Source: {stat.source}</small></div>
+                  </article>
+                ))}
+              </div>
+            </details>
           </div>
         </section>
       </main>
-
       {loginOpen && (
         <div className="login-overlay" onClick={() => setLoginOpen(false)}>
-          <div
-            className="login-card"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="login-title"
-            tabIndex={-1}
-            onClick={(event) => event.stopPropagation()}
-          >
+          <div className="login-card" role="dialog" aria-modal="true" aria-labelledby="login-title" tabIndex={-1} onClick={(event) => event.stopPropagation()}>
             <span className="login-kicker">SIGNING IN</span>
             <h2 id="login-title">Demo session</h2>
             <p>Checking a sample engineer profile.</p>
@@ -437,21 +278,7 @@ function App() {
           </div>
         </div>
       )}
-      {continuePromptOpen && !loginOpen && (
-        <aside className="continue-prompt" id="login-prompt" role="status">
-          <p><strong>Hey, hackathon participant.</strong> To view our solution, press Login.</p>
-          <button type="button" className="continue-dismiss" onClick={() => setContinuePromptOpen(false)} aria-label="Dismiss">×</button>
-        </aside>
-      )}
-
-      <footer className="site-footer">
-        <div className="footer-main">
-          <ProductName />
-          <span className="footer-concept">HACKATHON CONCEPT</span>
-          <p>Developed for the Meyer Turku challenge.<br /><span>No official endorsement is implied. R/V Taani is a challenge-provided model.</span></p>
-        </div>
-        <div className="footer-bottom"><span>© COMPLEE · DESIGN COMPLIANCE ASSISTANT</span><span>ILLUSTRATIVE DEMONSTRATION · ENGINEER REVIEW REQUIRED</span></div>
-      </footer>
+      <footer className="landing-footer"><span>complee<span>.</span></span><p>Design review with an engineer in the loop.</p><small>ILLUSTRATIVE DEMONSTRATION</small></footer>
     </div>
   )
 }

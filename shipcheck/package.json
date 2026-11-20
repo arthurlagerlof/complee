@@ -12,6 +12,7 @@
     "test": "node --test --test-concurrency=1",
     "check": "node scripts/check.mjs",
     "prepare-model": "node scripts/prepare-model.mjs",
+    "download-vultr": "node scripts/download-vultr.mjs",
     "report": "node scripts/check.mjs --report"
   },
   "dependencies": {

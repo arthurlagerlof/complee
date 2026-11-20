@@ -34,6 +34,8 @@ desktop.ini
 
 # Local viewer model chunks (exported from the RCRV model; too big for Git; deployed with deploy.sh / deploy.ps1)
 model/
+# Local backup of the Vultr bucket
+vultr-download/
 # Export tooling dependencies and intermediate files
 tools/export/node_modules/
 tools/export/work/

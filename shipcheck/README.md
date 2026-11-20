@@ -329,6 +329,12 @@ the ship is cut open 1.5 m above the deck, the camera dives in, and only the fou
 
 Model files can live on a different host: see [separate model server](docs/model-serving.md) for `MODEL_BASE_URL`, CORS and read-only server commands. Legacy APS viewer code remains in the repository but is not used by the review UI.
 
+To back up the entire Vultr bucket locally, install the AWS CLI and run `npm run download-vultr` from `shipcheck/`.
+The command reads credentials through the app's configuration loader from `deploy/deploy.env`, downloads into the
+gitignored `vultr-download/` directory, and refuses to overwrite an existing destination. Pass a different, new
+destination after `--`. It verifies sizes, available single-part MD5 ETags, and that the bucket listing did not change.
+Empty directory markers are counted rather than saved as files.
+
 **Model from Vultr Object Storage.** `MODEL_SOURCE=vultr` plus `VULTR_S3_ENDPOINT`, `VULTR_S3_BUCKET`, `VULTR_S3_ACCESS_KEY`,
 `VULTR_S3_SECRET_KEY` (optional `VULTR_S3_REGION`, `VULTR_S3_PREFIX`; in the environment or in the gitignored
 `shipcheck/.env`) make the server answer `/model/...` from the private bucket, which holds the exported `model/` folder
